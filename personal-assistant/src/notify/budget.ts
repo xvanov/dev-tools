@@ -23,6 +23,11 @@
 // "Never the same subject twice without new evidence" is notify()'s
 // `dedupe_key`, not a rule here: a second notify with the same key never
 // reaches decide().
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Quiet = { from: number; to: number };
+type DecideArgs = { priority?: string; kind?: string; weight?: number; pushedToday?: number; budget?: number; quietHours?: string | Quiet | null; now?: Date };
 
 const PRIORITIES = ['urgent', 'normal', 'digest'];
 const DELIVERIES = ['push', 'digest', 'feed'];
@@ -41,7 +46,7 @@ const STEP = 1.25;
  * Quiet hours as "from-to" local hours ("19-08", "22-7", "13:00-14:30").
  * '' / 'off' / 'none' → null (never quiet). from == to → null.
  */
-function parseQuietHours(spec) {
+function parseQuietHours(spec: unknown): Quiet | null {
   const s = String(spec ?? '').trim().toLowerCase();
   if (!s || s === 'off' || s === 'none' || s === '0') return null;
   const m = /^(\d{1,2})(?::(\d{2}))?\s*-\s*(\d{1,2})(?::(\d{2}))?$/.exec(s);
@@ -54,7 +59,7 @@ function parseQuietHours(spec) {
 }
 
 /** Is local time `now` inside the quiet window? Wraps midnight. */
-function inQuietHours(quiet, now) {
+function inQuietHours(quiet: string | Quiet | null | undefined, now: Date) {
   const q = typeof quiet === 'string' || quiet == null ? parseQuietHours(quiet) : quiet;
   if (!q) return false;
   const t = now.getHours() * 60 + now.getMinutes();
@@ -72,12 +77,12 @@ function inQuietHours(quiet, now) {
  * @param {Date}   a.now
  * @returns {'push'|'digest'|'feed'}
  */
-function decide(a) {
+function decide(a?: DecideArgs) {
   return explain(a).delivery;
 }
 
 /** decide() with the reason, for logs and `pa notify why`. */
-function explain({ priority = 'normal', weight = 1, pushedToday = 0, budget = 4, quietHours = null, now = new Date() } = {}) {
+function explain({ priority = 'normal', weight = 1, pushedToday = 0, budget = 4, quietHours = null, now = new Date() }: DecideArgs = {}) {
   const p = PRIORITIES.includes(priority) ? priority : 'normal';
   const w = Number.isFinite(Number(weight)) ? Number(weight) : 1;
   if (p !== 'urgent' && w <= FEED_BELOW) return { delivery: 'feed', reason: `weight ${w.toFixed(2)} at the floor` };
@@ -94,7 +99,7 @@ function explain({ priority = 'normal', weight = 1, pushedToday = 0, budget = 4,
  * had (changing your mind takes the old step back first); same twice is a
  * no-op. Bounded to [WEIGHT_MIN, WEIGHT_MAX].
  */
-function nextWeight(weight, prev, next) {
+function nextWeight(weight: number, prev: unknown, next: unknown) {
   let w = Number.isFinite(Number(weight)) ? Number(weight) : 1;
   if (prev === next) return clamp(w);
   if (prev === 'up') w /= STEP;
@@ -104,7 +109,7 @@ function nextWeight(weight, prev, next) {
   return clamp(w);
 }
 
-function clamp(w) {
+function clamp(w: number) {
   return Math.round(Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, w)) * 1000) / 1000;
 }
 
@@ -114,17 +119,17 @@ function clamp(w) {
  * info rows are split by their dedupe key's prefix ("run-wait:12:…" →
  * "info:run-wait"). Every other kind is already specific.
  */
-function attentionKind({ kind, dedupeKey, dedupe_key: dk } = {}) {
+function attentionKind({ kind, dedupeKey, dedupe_key: dk }: { kind?: string | null | undefined; dedupeKey?: unknown; dedupe_key?: unknown } = {}) {
   const key = dedupeKey ?? dk;
   if (kind === 'info' && key) {
-    const prefix = String(key).split(':')[0].replace(/[^a-z0-9_-]/gi, '').slice(0, 40);
+    const prefix = (String(key).split(':')[0] as string).replace(/[^a-z0-9_-]/gi, '').slice(0, 40);
     if (prefix) return `info:${prefix}`;
   }
   return String(kind || 'info');
 }
 
 /** Local midnight of `now` — where "today" starts for the budget. */
-function startOfLocalDay(now) {
+function startOfLocalDay(now: Date) {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   return d;

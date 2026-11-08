@@ -715,7 +715,7 @@ function createSdkFeed({
     if (approvals.size) return { ok: false, reason: 'waiting on an approval' };
     if (status !== 'idle') return { ok: false, reason: `state ${status}` };
     if (!(Date.now() - idleSince >= minIdleMs)) return { ok: false, reason: 'idle too briefly' };
-    const text = require('../notify/chat').nudgeText(n);
+    const text = require('../notify/chat.ts').nudgeText(n);
     publish({ id: `u-${crypto.randomUUID()}`, type: 'user', text, at: now() });
     setStatus('thinking');
     input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, ...(sessionId ? { session_id: sessionId } : {}) });

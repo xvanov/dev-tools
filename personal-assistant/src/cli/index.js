@@ -905,7 +905,7 @@ const commands = {
     if (sub === 'ack') {
       if (a === 'all') {
         await repository.notifications.markAllRead();
-        await require('../notify/chat').writeInbox().catch(() => {});
+        await require('../notify/chat.ts').writeInbox().catch(() => {});
         return out('All read.');
       }
       if (!Number(a)) return fail('usage: pa notify ack <id>|all');
@@ -926,7 +926,7 @@ const commands = {
     }
     if (sub === 'digest') {
       // Preview only: the worker writes digests at their slots, once each.
-      const p = await require('../notify/digest').preview();
+      const p = await require('../notify/digest.ts').preview();
       out(p.title);
       if (p.body) out(`\n${p.body}`);
       return;
@@ -1364,7 +1364,7 @@ const commands = {
     // working in a reduced way on purpose, never silently.
     mark(true, 'platform', platform.label);
     for (const l of await platform
-      .doctor({ ntfyConfigured: require('../notify/ntfy').configured(), audioEnabled: config.audio.enabled })
+      .doctor({ ntfyConfigured: require('../notify/ntfy.ts').configured(), audioEnabled: config.audio.enabled })
       .catch((err) => [{ ok: false, label: 'platform', detail: err.message }])) {
       mark(l.ok, `  ${l.label}`, l.detail);
     }
@@ -1653,8 +1653,8 @@ const commands = {
     // The interrupt budget and digests (src/notify). A typo in either knob
     // would silently mean "never quiet" or "no digest", so it is shown here.
     try {
-      const budget = require('../notify/budget');
-      const digest = require('../notify/digest');
+      const budget = require('../notify/budget.ts');
+      const digest = require('../notify/digest.ts');
       let quiet;
       try {
         const q = budget.parseQuietHours(config.notify.quietHours);
@@ -1670,7 +1670,7 @@ const commands = {
         quiet += ` · BAD ${err.message} — no digests`;
       }
       const a = await repository.system.attention(budget.startOfLocalDay(new Date()));
-      const inbox = require('../notify/chat').inboxPath();
+      const inbox = require('../notify/chat.ts').inboxPath();
       lines.push(
         `  attention: ${a.pushed}/${config.notify.pushBudget} pushes today · ${quiet} · ${a.held} held for the digest` +
           ` · digests ${times && times.length ? times.map((t) => `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`).join(', ') : 'off'}` +

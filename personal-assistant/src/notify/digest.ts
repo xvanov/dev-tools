@@ -22,6 +22,11 @@
 // now is ever considered, and `digest.slot` is unique — so a worker that was
 // down over two slots writes one digest when it comes back, never a
 // backlog, and two processes cannot both write the same one.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Slot = { h: number; m: number };
 
 const { config } = require('../config.ts');
 const repo = require('../repo');
@@ -33,21 +38,21 @@ const WAITING_DAYS = 3;
 const LIST_MAX = 8;
 
 /** "09:00,14:00" → [{h:9,m:0},{h:14,m:0}], sorted, deduplicated. */
-function parseDigestTimes(spec) {
-  const out = [];
-  for (const part of String(spec ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
+function parseDigestTimes(spec: unknown): Slot[] {
+  const out: Slot[] = [];
+  for (const part of String(spec ?? '').split(',').map((s: string) => s.trim()).filter(Boolean)) {
     const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(part);
     if (!m || Number(m[1]) > 23 || Number(m[2] || 0) > 59) throw new Error(`PA_DIGEST_TIMES "${spec}": "${part}" is not HH:MM`);
     out.push({ h: Number(m[1]), m: Number(m[2] || 0) });
   }
   out.sort((a, b) => a.h * 60 + a.m - (b.h * 60 + b.m));
-  return out.filter((t, i) => i === 0 || t.h * 60 + t.m !== out[i - 1].h * 60 + out[i - 1].m);
+  return out.filter((t, i) => i === 0 || t.h * 60 + t.m !== (out[i - 1] as Slot).h * 60 + (out[i - 1] as Slot).m);
 }
 
-const pad = (n) => String(n).padStart(2, '0');
+const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Local 'YYYY-MM-DD HH:MM' — sorts as text in time order. */
-function slotLabel(d) {
+function slotLabel(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
@@ -56,9 +61,9 @@ function slotLabel(d) {
  * `now` (today's, or yesterday's last) is a candidate, and only if it is
  * newer than the last digest written: a missed slot runs once, never a backlog.
  */
-function dueSlot({ times, now, lastSlot = null }) {
+function dueSlot({ times, now, lastSlot = null }: { times?: Slot[]; now: Date; lastSlot?: unknown }) {
   if (!times || !times.length) return null;
-  let latest = null;
+  let latest: Date | null = null;
   for (const dayOffset of [0, -1]) {
     for (const t of times) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, t.h, t.m, 0, 0);
@@ -71,20 +76,20 @@ function dueSlot({ times, now, lastSlot = null }) {
   return lastSlot && String(lastSlot) >= label ? null : label;
 }
 
-const clip = (s, n) => {
+const clip = (s: unknown, n: number) => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
-function daysAgo(at, now) {
-  return Math.max(0, Math.floor((now - new Date(at)) / 86_400_000));
+function daysAgo(at: Date | string | number, now: Date) {
+  return Math.max(0, Math.floor((now.getTime() - new Date(at).getTime()) / 86_400_000));
 }
 
 /**
  * Pure. The digest's title and body from the four lists.
  * @returns {{title: string, body: string, count: number}}
  */
-function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = [], now = new Date() }) {
+function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = [], now = new Date() }: { slot?: string | null; closed?: Row[]; proposals?: Row[]; waiting?: Row[]; held?: Row[]; now?: Date }) {
   const count = closed.length + proposals.length + waiting.length + held.length;
   const time = String(slot || '').slice(11) || slotLabel(now).slice(11);
   const parts = [
@@ -95,8 +100,8 @@ function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = 
   ].filter(Boolean);
   const title = count ? `Digest ${time} · ${parts.join(' · ')}` : `Digest ${time} · nothing new`;
 
-  const lines = [];
-  const section = (head, list, line, more) => {
+  const lines: string[] = [];
+  const section = (head: string, list: Row[], line: (x: Row) => string, more?: string) => {
     if (!list.length) return;
     if (lines.length) lines.push('');
     lines.push(`${head} (${list.length})${more ? ` — ${more}` : ''}`);
@@ -104,20 +109,20 @@ function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = 
     if (list.length > LIST_MAX) lines.push(`- …and ${list.length - LIST_MAX} more on the dashboard`);
   };
   section('Closed for you', closed,
-    (c) => `#${c.commitment_id} ${clip(c.summary, 90)} — ${c.actor}${c.reason ? `: ${clip(c.reason, 70)}` : ''}`,
+    (c: Row) => `#${c.commitment_id} ${clip(c.summary, 90)} — ${c.actor}${c.reason ? `: ${clip(c.reason, 70)}` : ''}`,
     'undo: pa ledger undo <id>');
   section('Looks done?', proposals,
-    (p) => `[${p.id}] #${p.commitment_id} ${clip(p.summary, 90)} — ${Math.round(Number(p.confidence) * 100)}% sure`,
+    (p: Row) => `[${p.id}] #${p.commitment_id} ${clip(p.summary, 90)} — ${Math.round(Number(p.confidence) * 100)}% sure`,
     'pa ledger looks-done <id> --yes|--no');
   section(`Waiting on others, overdue or over ${WAITING_DAYS} days`, waiting,
-    (w) => `#${w.id} ${clip(w.summary, 90)} — ${[w.who, w.due_at && new Date(w.due_at) < now ? 'overdue' : null, `${daysAgo(w.extracted_at, now)}d`].filter(Boolean).join(', ')}`);
-  section('Held back for this digest', held, (n) => `[${n.id}] ${clip(n.title, 110)}`);
+    (w: Row) => `#${w.id} ${clip(w.summary, 90)} — ${[w.who, w.due_at && new Date(w.due_at) < now ? 'overdue' : null, `${daysAgo(w.extracted_at, now)}d`].filter(Boolean).join(', ')}`);
+  section('Held back for this digest', held, (n: Row) => `[${n.id}] ${clip(n.title, 110)}`);
   return { title, body: lines.join('\n'), count };
 }
 
 // ------------------------------------------------------------------ store ----
 
-async function gather({ since, now = new Date() }) {
+async function gather({ since, now = new Date() }: { since?: Date | string | number | null; now?: Date }) {
   const closed = await repo.notifications.closedForYouSince(since);
   const proposals = await require('../ledger/reconcile').proposals().catch(() => []);
   const waiting = await repo.notifications.waitingOnOthers(now, WAITING_DAYS);
@@ -126,33 +131,33 @@ async function gather({ since, now = new Date() }) {
 }
 
 /** What the digest would say right now, without writing anything. */
-async function preview({ now = new Date() } = {}) {
+async function preview({ now = new Date() }: { now?: Date } = {}) {
   const last = await repo.notifications.lastDigest();
-  const since = last ? last.created_at : new Date(now - 86_400_000);
+  const since = last ? last.created_at : new Date(now.getTime() - 86_400_000);
   const lists = await gather({ since, now });
   return { ...renderDigest({ slot: slotLabel(now), ...lists, now }), since, lists };
 }
 
 /** The worker's minute tick: writes the due digest, if any. */
-async function runDue({ now = new Date() } = {}) {
+async function runDue({ now = new Date() }: { now?: Date } = {}) {
   const times = parseDigestTimes(config.notify.digestTimes);
   const last = await repo.notifications.lastDigest();
   const slot = dueSlot({ times, now, lastSlot: last?.slot });
   if (!slot) return null;
-  const since = last ? last.created_at : new Date(now - 86_400_000);
+  const since = last ? last.created_at : new Date(now.getTime() - 86_400_000);
   const lists = await gather({ since, now });
   const text = renderDigest({ slot, ...lists, now });
   const items = {
-    closed: lists.closed.map((c) => Number(c.id)),
-    proposals: lists.proposals.map((p) => Number(p.id)),
-    waiting: lists.waiting.map((w) => Number(w.id)),
-    held: lists.held.map((n) => Number(n.id)),
+    closed: lists.closed.map((c: Row) => Number(c.id)),
+    proposals: lists.proposals.map((p: Row) => Number(p.id)),
+    waiting: lists.waiting.map((w: Row) => Number(w.id)),
+    held: lists.held.map((n: Row) => Number(n.id)),
   };
   const row = await repo.notifications.insertDigest(slot, text.count ? `${text.title}\n\n${text.body}` : '', items);
   if (!row) return null; // another process wrote this slot
   if (items.held.length) await repo.notifications.attachToDigest(row.id, items.held);
   if (text.count) {
-    const { notify, dashboardUrl } = require('./index');
+    const { notify, dashboardUrl } = require('./index.ts');
     await notify({
       kind: 'digest',
       title: text.title,

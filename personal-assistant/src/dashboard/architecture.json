@@ -439,7 +439,7 @@
         "personal-assistant/src/chat/sdkFeed.js",
         "personal-assistant/src/chat/sdkView.js",
         "personal-assistant/src/chat/transcript.js",
-        "personal-assistant/src/notify/chat.js",
+        "personal-assistant/src/notify/chat.ts",
         "personal-assistant/src/chat/permission.js"
       ]
     },
@@ -887,9 +887,9 @@
         }
       ],
       "code": [
-        "personal-assistant/src/notify/index.js",
-        "personal-assistant/src/notify/chat.js",
-        "personal-assistant/src/notify/ntfy.js"
+        "personal-assistant/src/notify/notify.ts",
+        "personal-assistant/src/notify/chat.ts",
+        "personal-assistant/src/notify/ntfy.ts"
       ]
     },
     {

@@ -128,7 +128,7 @@ const darwin = platform.select('darwin');
   const mac = darwin.toastCommand(spec);
   assert.ok(mac.args.includes('-rf Stand-up') && !mac.args.slice(0, 6).join(' ').includes('Stand-up'), 'osascript reads the title from argv, never from the script');
 
-  const ntfy = require('../src/notify/ntfy');
+  const ntfy = require('../src/notify/ntfy.ts');
   const r = ntfy.request({ server: 'https://ntfy.example/', topic: 'secret-topic', title: 'Brief: café', body: 'quote from mail', url: 'http://127.0.0.1:7300/' });
   assert.strictEqual(r.url, 'https://ntfy.example/', 'the topic is in the JSON body, never the URL');
   const body = JSON.parse(r.body);

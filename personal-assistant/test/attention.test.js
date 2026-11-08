@@ -7,9 +7,9 @@
 // permission prompt.
 
 const assert = require('assert');
-const budget = require('../src/notify/budget');
-const digest = require('../src/notify/digest');
-const chat = require('../src/notify/chat');
+const budget = require('../src/notify/budget.ts');
+const digest = require('../src/notify/digest.ts');
+const chat = require('../src/notify/chat.ts');
 const { settingsJson, claudeMd } = require('../src/chat');
 
 const L = (y, mo, d, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi); // local time

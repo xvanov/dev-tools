@@ -43,6 +43,11 @@
 // Otherwise the nudge is skipped. The toast still goes and INBOX.md is still
 // written: the chat reads it on your next turn. A skipped nudge costs a few
 // minutes; a wrong Enter costs an approved action.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Post = (url: string, body: Row) => Promise<Row>;
 
 const fs = require('fs');
 const path = require('path');
@@ -61,7 +66,7 @@ function inboxPath() {
 
 // One line, no control characters: the file is markdown the chat reads, and
 // a title must not be able to forge an entry header.
-function oneLine(s, max = 300) {
+function oneLine(s: unknown, max: number = 300) {
   return String(s ?? '')
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -70,7 +75,7 @@ function oneLine(s, max = 300) {
 }
 
 /** Pure: the INBOX.md text for these notification rows (oldest first). */
-function renderInbox(list, { now = new Date() } = {}) {
+function renderInbox(list: Row[], { now = new Date() }: { now?: Date } = {}) {
   const out = [
     '# PA inbox',
     '',
@@ -86,7 +91,7 @@ function renderInbox(list, { now = new Date() } = {}) {
     out.push(`Title: ${oneLine(n.title)}`);
     const body = String(n.body || '')
       .split(/\r?\n/)
-      .map((l) => oneLine(l, 400))
+      .map((l: string) => oneLine(l, 400))
       .filter(Boolean)
       .slice(0, 12);
     // Quoted, so a body line can never become a heading of its own.
@@ -136,18 +141,18 @@ const PLACEHOLDER = /^Try "/;
  * stripped): '' for empty, the text when typed into, null when it cannot be
  * told — no box found, or unexplained text after it.
  */
-function promptContent(screen) {
+function promptContent(screen: unknown) {
   const lines = String(screen || '').split('\n');
   let at = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (PROMPT_LINE.test(lines[i])) { at = i; break; }
+    if (PROMPT_LINE.test(lines[i] as string)) { at = i; break; }
   }
   if (at < 0) return null;
   for (const l of lines.slice(at + 1)) {
     if (!l.trim()) continue;
     if (!CHROME.some((re) => re.test(l))) return null;
   }
-  const typed = PROMPT_LINE.exec(lines[at])[1].trim();
+  const typed = ((PROMPT_LINE.exec(lines[at] as string) as RegExpExecArray)[1] as string).trim();
   return PLACEHOLDER.test(typed) ? '' : typed;
 }
 
@@ -155,7 +160,7 @@ function promptContent(screen) {
  * Pure. May the PA chat session be nudged (text typed and Enter pressed)?
  * Fails closed: every condition must be positively true.
  */
-function nudgeDecision({ session, screen, minIdleMs = 2 * 60_000 } = {}) {
+function nudgeDecision({ session, screen, minIdleMs = 2 * 60_000 }: { session?: Row | null; screen?: unknown; minIdleMs?: number } = {}) {
   if (!session) return { ok: false, reason: 'no PA chat session' };
   if (session.alive === false) return { ok: false, reason: 'session ended' };
   // The input-box reading below is Claude Code's screen. An opencode chat (or
@@ -172,11 +177,11 @@ function nudgeDecision({ session, screen, minIdleMs = 2 * 60_000 } = {}) {
   return { ok: true, reason: 'idle at an empty prompt' };
 }
 
-function nudgeText(id) {
+function nudgeText(id: number | string) {
   return `PA inbox: notification ${Number(id)} is waiting. Read INBOX.md.`;
 }
 
-function sameDir(a, b) {
+function sameDir(a: unknown, b: unknown) {
   return path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
 }
 
@@ -187,11 +192,11 @@ function sameDir(a, b) {
  * same conditions as nudgeDecision (running, idle long enough, nothing pending).
  * `post` is injectable for tests.
  */
-async function ringSdk(id, minIdleMs, post = null) {
+async function ringSdk(id: number | string, minIdleMs: number, post: Post | null = null) {
   const host = config.dispatch.host === '0.0.0.0' ? '127.0.0.1' : config.dispatch.host;
-  const send = post || (async (url, body) => {
+  const send: Post = post || (async (url: string, body: Row) => {
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: JSON.stringify(body), signal: AbortSignal.timeout(3000) });
-    const data = await res.json().catch(() => ({}));
+    const data = (await res.json().catch(() => ({}))) as Row;
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   });
@@ -204,19 +209,19 @@ async function ringSdk(id, minIdleMs, post = null) {
  * chat home exists), the nudge only when nudgeDecision allows. Never starts a
  * session. Returns whether the chat got it ('inbox' and/or 'nudged').
  */
-async function deliver(row) {
-  const out = { inbox: false, nudged: false, reason: null };
+async function deliver(row: Row) {
+  const out: { inbox: boolean; nudged: boolean; reason: string | null } = { inbox: false, nudged: false, reason: null };
   try {
     out.inbox = await writeInbox();
   } catch (err) {
-    log.warn('inbox not written', { message: err.message });
+    log.warn('inbox not written', { message: (err as Error).message });
   }
   if (!out.inbox || !config.notify.chatNudge) return out;
   if (require('../chat/feed').engine() === 'sdk') {
     try {
       Object.assign(out, await ringSdk(row.id, config.notify.chatNudgeIdleMinutes * 60_000));
     } catch (err) {
-      out.reason = err.message;
+      out.reason = (err as Error).message;
     }
     log.debug('chat delivery', { id: row.id, ...out });
     return out;
@@ -226,7 +231,7 @@ async function deliver(row) {
     const home = path.dirname(inboxPath());
     const payload = await termhub.api('/api/sessions', { timeoutMs: 3000 });
     const sessions = payload?.sessions || payload || [];
-    const session = sessions.find((s) => s.alive !== false && sameDir(s.cwd, home));
+    const session = sessions.find((s: Row) => s.alive !== false && sameDir(s.cwd, home));
     // Read the screen only when the cheap checks pass: it opens a websocket.
     let decision = nudgeDecision({ session, screen: '', minIdleMs: config.notify.chatNudgeIdleMinutes * 60_000 });
     if (decision.reason === 'cannot read the input box') {
@@ -239,7 +244,7 @@ async function deliver(row) {
       out.nudged = true;
     }
   } catch (err) {
-    out.reason = err.message;
+    out.reason = (err as Error).message;
   }
   log.debug('chat delivery', { id: row.id, ...out });
   return out;

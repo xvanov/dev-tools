@@ -12,7 +12,7 @@ const { agentOf, modelArg } = require('../src/agentCli.ts');
 const agent = require('../src/chat/agent');
 const { dispatchCommand } = require('../src/dispatch/agent');
 const chat = require('../src/chat');
-const notifyChat = require('../src/notify/chat');
+const notifyChat = require('../src/notify/chat.ts');
 
 // ------------------------------------------------------- model → CLI ----
 

@@ -254,7 +254,7 @@ const sdkMsg = {
       run.emit(sdkMsg.result());
       await until(() => got.filter((e) => e.type === 'status' && e.text === 'idle').length === 3, 'idle after the doorbell');
       const rung = [];
-      const r = await require('../src/notify/chat').ringSdk(7, 120_000, async (url, body) => {
+      const r = await require('../src/notify/chat.ts').ringSdk(7, 120_000, async (url, body) => {
         rung.push([url, body]);
         return { ok: true, reason: 'idle, nothing waiting' };
       });

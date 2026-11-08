@@ -17,6 +17,11 @@
 //    did not show; `always` pushes every time; `off` never.
 //
 // Best effort: a network failure costs a missed push, never a failed pass.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Db = import('../repo/types.ts').Db;
 
 const { config, secret } = require('../config.ts');
 
@@ -34,13 +39,13 @@ function configured() {
  * Pure: the JSON publish request (POST to the server root, topic in the body),
  * which carries any title — ntfy's header form cannot take non-ASCII text.
  */
-function request({ server, topic: t, title, body, url, includeBody = false }) {
+function request({ server, topic: t, title, body, url, includeBody = false }: { server?: unknown; topic?: string | null; title?: string | null | undefined; body?: string | null | undefined; url?: string | null | undefined; includeBody?: boolean }) {
   const message = includeBody
     ? String(body || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join('\n').slice(0, 600)
     : '';
-  const payload = { topic: t, title: String(title ?? '').slice(0, 120), message: message || String(title ?? '').slice(0, 120) };
+  const payload: Record<string, unknown> = { topic: t, title: String(title ?? '').slice(0, 120), message: message || String(title ?? '').slice(0, 120) };
   // A loopback link (the dashboard) means nothing on the phone that gets it.
-  if (/^https?:\/\//.test(url || '') && !/^https?:\/\/(127\.|localhost|\[::1\])/i.test(url)) payload.click = url;
+  if (/^https?:\/\//.test(url || '') && !/^https?:\/\/(127\.|localhost|\[::1\])/i.test(url as string)) payload.click = url;
   return {
     url: `${String(server || 'https://ntfy.sh').replace(/\/+$/, '')}/`,
     method: 'POST',
@@ -49,7 +54,7 @@ function request({ server, topic: t, title, body, url, includeBody = false }) {
   };
 }
 
-async function send({ title, body, url }) {
+async function send({ title, body, url }: { title?: string | null | undefined; body?: string | null | undefined; url?: string | null | undefined }) {
   const t = topic();
   if (!t || config.notify.ntfyMode === 'off') return false;
   const req = request({ server: config.notify.ntfyServer, topic: t, title, body, url, includeBody: config.notify.ntfyBody });

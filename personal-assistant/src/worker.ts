@@ -505,7 +505,7 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   // closed, what waits for a yes, who is late, and what the interrupt budget
   // held back. One query when no slot is due; a missed slot runs once.
   every(60, 'digest', async () => {
-    await require('./notify/digest').runDue();
+    await require('./notify/digest.ts').runDue();
   });
 
   // Deterministic retrieval eval; a no-op with no cases, at most once a day.
