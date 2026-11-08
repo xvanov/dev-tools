@@ -75,17 +75,37 @@ resolve_health() {
   HEALTH_ADDRS="$(printf '%s\n' "$HEALTH_ADDRS" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
 }
 
-wait_healthy() {   # seconds — true if ANY candidate address serves ok:true
-  local deadline body a
+# wait_healthy <seconds> [<commit>]
+#   0  some candidate address serves ok:true (and, given a commit, serves THAT commit)
+#   1  nothing healthy answered
+#   2  healthy, but serving another commit for the whole window: the restart did not
+#      replace the process that answers. "ok:true" alone used to pass here, so a termhub
+#      left over from before the restart (a hand-started server.js holding the port;
+#      the unit's new process then refuses to start beside it) was reported as "healthy
+#      on the new build" while it kept serving old code - the front that answers 404 on
+#      a route the new build added. Rolling git back cannot fix that, so the caller
+#      does not; it names the process instead.
+wait_healthy() {
+  local deadline body a want="${2:-}" stale=""
   resolve_health
   deadline=$(( $(date +%s) + ${1:-60} ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     for a in $HEALTH_ADDRS; do
       body="$(curl -sS -m 3 "http://$a:$HEALTH_PORT/api/health" 2>/dev/null || true)"
-      case "$body" in *'"ok":true'*) return 0 ;; esac
+      case "$body" in
+        *'"ok":true'*)
+          if [ -z "$want" ]; then return 0; fi
+          case "$body" in *"\"commit\":\"$want\""*) return 0 ;; esac
+          stale="$body"
+          ;;
+      esac
     done
     sleep 2
   done
+  if [ -n "$stale" ]; then
+    echo "a termhub answers healthy but does not serve $want: $stale"
+    return 2
+  fi
   echo "health check failed on all of: $HEALTH_ADDRS (port $HEALTH_PORT)"
   return 1
 }
@@ -249,12 +269,23 @@ if [ "${1:-}" = "--finish" ]; then
     systemctl --user status "$SERVICE" --no-pager -n 20 2>&1 || true
   fi
 
-  if wait_healthy 60; then
-    echo "OK: termhub is healthy on the new build ($(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null))"
+  NEW="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null)"
+  wait_healthy 60 "$NEW"
+  rc=$?
+  if [ "$rc" = 0 ]; then
+    echo "OK: termhub is healthy on the new build (${NEW:0:7})"
     # Cheap belt-and-braces: if the pull introduced or changed the watchdog units,
     # make sure they are in place now that the new code is on disk.
     bash "$PROJECT_DIR/watchdog/install-watchdog.sh" --ensure 2>&1 || true
     exit 0
+  fi
+  if [ "$rc" = 2 ]; then
+    echo "The restart did not replace the termhub that answers, so the new build is NOT serving."
+    echo "Something outside the '$SERVICE' unit holds the port. Not rolling back (that cannot help):"
+    systemctl --user status "$SERVICE" --no-pager -n 20 2>&1 || true
+    pgrep -af 'node .*(server|front|sessiond)\.js' 2>/dev/null || true
+    echo "Stop the stray process, then: systemctl --user restart $SERVICE"
+    exit 1
   fi
 
   echo "termhub did not become healthy within 60s of the restart."
@@ -329,7 +360,8 @@ fi
 
 # 3b) The rest of the stack, BEFORE the restart for the same reason as 4): one pull
 # updated the whole repo, so the assistant is redeployed to the same commit (deps,
-# pa-worker restart, pa-voice if its code changed) and the factory's deps synced.
+# a zero-downtime roll of pa-worker through its supervisor - a restart only to
+# bootstrap it - pa-voice if its code changed) and the factory's deps synced.
 # Non-fatal. Open pages reload themselves (nav.js api/version).
 if [ -f "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" ]; then
   bash "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" "$ROLLBACK" 2>&1 || true

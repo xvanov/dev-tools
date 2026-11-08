@@ -95,6 +95,13 @@ check('setsid survives only as the documented fallback, not as the hand-off',
   sh.indexOf('systemd-run') < sh.lastIndexOf('setsid'),
   `systemd-run@${sh.indexOf('systemd-run')} setsid@${sh.lastIndexOf('setsid')}`);
 
+// "Healthy" is not "the new build": a termhub left over from before the restart
+// answers ok:true too, and the finish phase used to call that success while the
+// old front kept serving (it answered 404 on the then-new /api/version).
+check('the --finish health check requires the new commit',
+  /wait_healthy 60 "\$NEW"/.test(sh) && /"\\"commit\\":\\"\$want\\""/.test(sh),
+  'wait_healthy must be passed the new HEAD and match it in /api/health');
+
 // ---- platform override hygiene ---------------------------------------------
 check('process.platform was restored', process.platform === realPlatform, process.platform);
 
