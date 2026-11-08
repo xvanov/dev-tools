@@ -566,6 +566,16 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **2.5b Real dev-tools context through a docs job (open).** After 2.5, file a docs job so
   the onboarder writes `software-factory/apps/dev-tools/context/` in a worktree and delivers it
   as a PR (context is tracked by design; do not gitignore it).
+  2026-11-08: docs job dev-tools:019 (draft_pr) delivered PR #69, open and ready for review,
+  not merged. The first run's onboarder wrote the set, but its commit ran the repo's
+  pre-commit hook in the fresh worktree, which had no venv, so pytest `-n` exited 4 (fixed
+  in 0df69a3). Auto-recovery then sent the docs story to `sm_done`, which dispatched dev
+  (fixed in cba272a: docs stories recover and resume on the docs chain). `factory job resume`
+  picked point `docs`, reused the onboarder's uncommitted output without a model call and
+  opened the PR about 1.5 minutes later. Cost $0.1288 in total; the resume added nothing.
+  A review commit on the PR (5c5514f) corrects the facts the onboarder got wrong (Node
+  versions, desktop and disk-janitor tests/CI, the factory's test count and model routes, a
+  hostname) and adds the root CLAUDE.md conventions it dropped. Tick when #69 merges.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
 
 ## Phase 3: storage to SQLite (D2)
@@ -1086,6 +1096,10 @@ not in the Map is not done, and a new one gets added there first.
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
     turns exploring. Generate the context on the work factory (local, untracked), and keep the
     Onboarder text out of other personas' prompts.
+    2026-11-08: the work factory generated it as docs job dev-tools:019, delivered as PR #69
+    (tracked, per 2.5b; review fixes in 5c5514f; the job's fixes are 0df69a3 and cba272a).
+    Once #69 merges and the work checkout pulls, dev steps get the set. The Onboarder text in
+    other personas' prompts is still open.
   - [x] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
     delivers a ready PR, and the factory forbids the agent from opening one.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
