@@ -381,8 +381,17 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **4.1** TypeScript/Bun core absorbs the PA worker, dashboard, MCP server and termhub
   front; strict TS, module by module.
-- [ ] **4.2** Chat moves to the Agent SDK: approvals become typed callbacks instead of reading
-  the terminal screen.
+- [x] **4.2** Chat moves to the Agent SDK: approvals become typed callbacks instead of reading
+  the terminal screen. (cdae3d5) Behind `PA_CHAT_ENGINE=sdk` (`src/chat/sdkFeed.js`); the
+  default stays `terminal` until the SDK path is proven live. Same tools (pa-chat MCP server),
+  same surfaces (the Waiting for your yes card on Plan/Build/Ask, a spoken yes on Talk), answers
+  stream into `/api/chat/stream`. A PreToolUse hook routes every call through 4.3's policy;
+  `canUseTool` waits for an answer, which goes through `policy.enforce`; no answer in 5 min is
+  an audited deny. Billing: the SDK's bundled Claude Code uses the machine's Claude login (work
+  laptop: Team subscription, `apiKeySource: none`, no API key), and the API keys are stripped
+  from its environment. Mock-SDK tests (`test/chatSdk.test.js`) plus one real smoke run.
+  Gaps on the SDK engine: prompts for anything but the six action tools are refused (no
+  terminal to answer them), the INBOX doorbell does not reach it, no termhub tab to drill into.
 - [x] **4.3** Policy engine: every tool call is allow / deny / ask, with an audit log
   (hash-chained). (7621d29) Declarative policy (`src/policy`, tracked defaults plus an untracked
   per-stack override); defaults are the old allow/ask split; a locked rule bars voice from merges,
