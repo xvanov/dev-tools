@@ -154,10 +154,21 @@ def test_persona_dev(
 # --------------------------------------------------------------------------- #
 
 
-def _ensure_github_client() -> Any:
+def _app_repo(app_name: str) -> str | None:
+    """``owner/name`` of an app's GitHub repo, or None if its config can't load."""
+    try:
+        from factory.app_config import load_app_config
+
+        return load_app_config(app_name, _FACTORY_ROOT).repo
+    except Exception:  # noqa: BLE001 - best effort; falls back to the default chain
+        return None
+
+
+def _ensure_github_client(repo: str | None = None) -> Any:
     """Construct a ``pygithub.Github`` client. Fails with a clear message if no token.
 
-    Token precedence: ``GITHUB_TOKEN`` env > ``GH_TOKEN`` env > ``gh auth token``.
+    With ``repo`` the token is chosen by the repo's owner (``factory.gh_auth``);
+    without it: ``GITHUB_TOKEN`` env > ``GH_TOKEN`` env > ``gh auth token``.
     The ``gh`` CLI fallback means an operator who has run ``gh auth login`` once
     does not need to also paste the token into ``.env``.
 
@@ -168,7 +179,7 @@ def _ensure_github_client() -> Any:
     """
     from factory.providers.github import build_github_client
 
-    client = build_github_client()
+    client = build_github_client(repo)
     if client is None:
         console.print(
             "[red]error:[/red] no GitHub token available. Either set "
@@ -858,7 +869,7 @@ def directions_backfill_tracker_issue_cmd(
     from factory.directions.tracker_backfill import backfill_tracker_issues
 
     app_config = load_app_config(app_name, _FACTORY_ROOT)
-    github_client = _ensure_github_client()
+    github_client = _ensure_github_client(app_config.repo)
 
     result = backfill_tracker_issues(
         app_config,
@@ -910,7 +921,7 @@ def pm_sync_cmd(
         if not ok:
             console.print("[red]error:[/red] real pm-sync requires an LLM provider key. " + hint)
             raise typer.Exit(code=2)
-        github_client = _ensure_github_client()
+        github_client = _ensure_github_client(_app_repo(app_name))
 
     summary = pm_sync(
         app=app_name,
@@ -974,7 +985,7 @@ def reconcile_issues_cmd(
     from factory.directions.tracker_issue import reconcile_completed_issues
 
     app_config = load_app_config(app_name, _FACTORY_ROOT)
-    github_client = _ensure_github_client()
+    github_client = _ensure_github_client(app_config.repo)
 
     report = reconcile_completed_issues(
         app_config,
@@ -1020,7 +1031,7 @@ def ingest_issue(
 
     from factory.directions.ingester import ingest_github_direction_issue
 
-    github_client = _ensure_github_client()
+    github_client = _ensure_github_client(_app_repo(app_name))
     direction = ingest_github_direction_issue(
         issue_number=issue_number,
         app=app_name,
@@ -1824,24 +1835,28 @@ def inbox_cmd(
             and drow.status in RESOLVED_DIRECTION_STATUSES
         ][:20]
         if direction_candidates:
-            gh_client = build_github_client()
-            if gh_client is None:
-                tracker_check_skip_note = "no GitHub token available"
-            else:
-                app_cfg_cache: dict[str, Any] = {}
-                for drow in direction_candidates:
-                    tracker_issue_num = drow.tracker_issue
-                    if tracker_issue_num is None:
-                        continue  # filtered above; mypy can't see through the comprehension
-                    if drow.app not in app_cfg_cache:
-                        app_cfg_cache[drow.app] = load_app_config(drow.app, _FACTORY_ROOT)
-                    cfg = app_cfg_cache[drow.app]
-                    repo = gh_client.get_repo(cfg.repo)
-                    issue = repo.get_issue(int(tracker_issue_num))
-                    if str(getattr(issue, "state", "")).lower() == "open":
-                        tracker_open_rows.append(
-                            (drow.app, drow.direction_id, drow.status, f"#{tracker_issue_num}")
-                        )
+            app_cfg_cache: dict[str, Any] = {}
+            # One client per repo: the token is chosen by the repo's owner.
+            gh_clients: dict[str, Any] = {}
+            for drow in direction_candidates:
+                tracker_issue_num = drow.tracker_issue
+                if tracker_issue_num is None:
+                    continue  # filtered above; mypy can't see through the comprehension
+                if drow.app not in app_cfg_cache:
+                    app_cfg_cache[drow.app] = load_app_config(drow.app, _FACTORY_ROOT)
+                cfg = app_cfg_cache[drow.app]
+                if cfg.repo not in gh_clients:
+                    gh_clients[cfg.repo] = build_github_client(cfg.repo)
+                gh_client = gh_clients[cfg.repo]
+                if gh_client is None:
+                    tracker_check_skip_note = "no GitHub token available"
+                    break
+                repo = gh_client.get_repo(cfg.repo)
+                issue = repo.get_issue(int(tracker_issue_num))
+                if str(getattr(issue, "state", "")).lower() == "open":
+                    tracker_open_rows.append(
+                        (drow.app, drow.direction_id, drow.status, f"#{tracker_issue_num}")
+                    )
     except Exception as exc:  # noqa: BLE001 - the GH tracker check must never crash inbox
         tracker_check_skip_note = tracker_check_skip_note or str(exc)[:160]
 
@@ -3286,7 +3301,7 @@ def auto_merge_cmd(
 
     gh: Any = None
     if not dry_run:
-        gh = _ensure_github_client()
+        gh = _ensure_github_client(_app_repo(app_name))
 
     actions = auto_merge_tick(_FACTORY_ROOT, app_name, dry_run=dry_run, github_client=gh)
 
@@ -3422,7 +3437,7 @@ def deploy_cmd(
 
     gh: Any = None
     if not dry_run:
-        gh = _ensure_github_client()
+        gh = _ensure_github_client(_app_repo(app_name))
 
     actions: list[Any]
     if pr is not None:
@@ -3784,7 +3799,7 @@ def status_sync_cmd(
         console.print(Panel(body, title=f"factory-status (dry-run) — app={app_name}"))
         return
 
-    gh = _ensure_github_client()
+    gh = _ensure_github_client(_app_repo(app_name))
     number = update_status_issue(
         app=app_name,
         software_factory_root=_FACTORY_ROOT,

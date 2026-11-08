@@ -248,7 +248,7 @@ def test_inbox_tracker_check_error_path_prints_skip_note_not_a_crash(
 
     monkeypatch.setattr(
         "factory.providers.github.build_github_client",
-        lambda: _FakeGithubClient(),
+        lambda repo=None: _FakeGithubClient(),
     )
 
     runner, cli_mod = _runner_with_root(seeded_root)
@@ -279,7 +279,7 @@ def test_inbox_tracker_check_reports_open_tracker_on_closed_direction(
 
     monkeypatch.setattr(
         "factory.providers.github.build_github_client",
-        lambda: _FakeGithubClient(),
+        lambda repo=None: _FakeGithubClient(),
     )
 
     runner, cli_mod = _runner_with_root(seeded_root)

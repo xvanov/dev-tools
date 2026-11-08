@@ -155,8 +155,59 @@ def test_repo_from_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     assert gh_auth.repo_from_cwd(tmp_path) == "xvanov/dev-tools"
 
 
-@pytest.mark.skipif(__import__("sys").platform == "win32", reason="Windows uses the Popen hook")
+def _fake_real_gh(tmp_path: Any) -> Any:
+    import sys
+
+    d = tmp_path / "real"
+    d.mkdir()
+    if sys.platform == "win32":
+        (d / "gh.cmd").write_text(
+            "@echo off\r\n"
+            'if "%1 %2"=="auth token" (\r\n'
+            '  if "%3"=="--user" (echo tok-%4) else (echo tok-active)\r\n'
+            "  exit /b 0\r\n)\r\n"
+            "echo ran: %* GH_TOKEN=%GH_TOKEN%\r\n"
+        )
+    else:
+        f = d / "gh"
+        f.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1 $2" = "auth token" ]; then\n'
+            '  if [ "$3" = "--user" ]; then echo "tok-$4"; else echo tok-active; fi; exit 0; fi\n'
+            'echo "ran: $* GH_TOKEN=$GH_TOKEN"\n'
+        )
+        f.chmod(0o755)
+    return d
+
+
+def test_shim_end_to_end_with_fake_gh(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Run bin/gh for real: pins xvanov, leaves other owners alone, no recursion."""
+    import os
+    import sys
+
+    real_dir = _fake_real_gh(tmp_path)
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(gh_auth.shim_dir()), str(real_dir), env.get("PATH", "")])
+    for n in ("GH_TOKEN", "GITHUB_TOKEN", "FACTORY_GITHUB_TOKEN", "FACTORY_GH_OWNER_MAP"):
+        env.pop(n, None)
+    shim = str(gh_auth.shim_dir() / "gh")
+
+    def run(*args: str) -> str:
+        r = subprocess.run(
+            [sys.executable, shim, *args], capture_output=True, text=True, env=env, timeout=60
+        )
+        assert r.returncode == 0, r.stderr
+        return r.stdout
+
+    assert "GH_TOKEN=tok-xvanov" in run("pr", "view", "1", "--repo", "xvanov/dev-tools")
+    assert "GH_TOKEN=tok-xvanov" in run("api", "repos/xvanov/dev-tools/pulls")
+    other = run("pr", "view", "1", "--repo", "someorg/app")
+    assert "GH_TOKEN=tok-" not in other and "GH_TOKEN=\n" in other.replace("\r", "")
+
+
 def test_install_shim_on_path_idempotent_and_optout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess.Popen, "__init__", subprocess.Popen.__init__)  # restore later
+    monkeypatch.setattr(gh_auth, "_hook_installed", gh_auth._hook_installed)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("FACTORY_GH_SHIM", "0")
     gh_auth.install_shim_on_path()
@@ -221,3 +272,16 @@ def test_popen_hook_injects_token_only_for_pinned_gh(monkeypatch: pytest.MonkeyP
     assert seen[0]["env"]["GH_TOKEN"] == "tok-xvanov/dev-tools"
     assert seen[1]["env"]["GH_TOKEN"] == "tok-xvanov/x" and seen[1]["env"]["A"] == "1"
     assert [s["env"] for s in seen[2:]] == [None, None, None]
+
+
+def test_cli_threads_app_repo_into_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    from factory import cli
+    from factory.providers import github as gh_provider
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(gh_provider, "build_github_client", lambda repo=None: seen.append(repo) or object())
+    cli._ensure_github_client("xvanov/dev-tools")
+    cli._ensure_github_client()
+    assert seen == ["xvanov/dev-tools", None]
+    assert cli._app_repo("dev-tools") == "xvanov/dev-tools"
+    assert cli._app_repo("no-such-app") is None

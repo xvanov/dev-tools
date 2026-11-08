@@ -239,8 +239,11 @@ def install_shim_on_path() -> None:
     if os.environ.get("FACTORY_GH_SHIM", "1") == "0":
         return
     if sys.platform == "win32":
+        # The factory's own list-style subprocess calls never resolve gh.cmd
+        # (CreateProcess only appends .exe), so hook Popen for those; shells
+        # and agent sessions get bin\gh.cmd via PATH below.
         install_popen_hook()
-        return
+        os.environ.setdefault("FACTORY_PYTHON", sys.executable)
     d = shim_dir()
     if not (d / "gh").is_file():
         return
