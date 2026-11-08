@@ -41,7 +41,11 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄─
   blue/green alternative and what it buys.
 - **Updates** (`windows/update.ps1`): swap the `front` for the newly pulled one and verify it before
   keeping it. `sessiond` is never touched, so terminals survive. See *Two-tier layout & safe
-  updates* below.
+  updates* below. `test/frontSwap.test.js` proves it (plan Z5): a session prints ticks while its
+  front is killed and another started; the reconnect through the new front replays every tick and
+  sessiond's pid is unchanged. `test/spareTermhub.js` starts that throwaway two-tier termhub (the
+  PA's deploy test uses it too). On Linux termhub is one process, so an update there still ends
+  its terminals.
 - For **local dev**, `node server.js` runs both tiers in one process on `:7000`. It **refuses to
   start** when a real deployment is already up, because it would shadow it — see *One process per
   port* below.
