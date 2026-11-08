@@ -279,7 +279,7 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
   const termhubDir = path.join(__dirname, '..', '..', 'termhub');
   if (!owns()) {
     // another shard runs the through-termhub leg
-  } else if (fs.existsSync(path.join(termhubDir, 'lib', 'exec.js')) && fs.existsSync(path.join(termhubDir, 'node_modules'))) {
+  } else if (fs.existsSync(path.join(termhubDir, 'lib', 'exec.ts')) && fs.existsSync(path.join(termhubDir, 'node_modules'))) {
     const { createFront } = require(path.join(termhubDir, 'front.js'));
     const front = createFront({ sessiondPort: 1, port: 0, paUrl: '' });
     // The test's synchronous git calls block this process's loop (client and front share it) past

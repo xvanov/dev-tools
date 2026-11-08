@@ -21,9 +21,9 @@ const { WebSocketServer } = require('ws');
 const { client } = require('../src/dispatch/termhub');
 
 const termhubDir = path.join(__dirname, '..', '..', 'termhub');
-const haveTermhub = fs.existsSync(path.join(termhubDir, 'lib', 'requestGuard.js'))
+const haveTermhub = fs.existsSync(path.join(termhubDir, 'lib', 'requestGuard.ts'))
   && fs.existsSync(path.join(termhubDir, 'node_modules'));
-const guard = haveTermhub ? require(path.join(termhubDir, 'lib', 'requestGuard.js')) : null;
+const guard = haveTermhub ? require(path.join(termhubDir, 'lib', 'requestGuard.ts')) : null;
 
 // A stand-in sessiond: answers the few routes the client uses, records every
 // request, and — when termhub is installed — refuses exactly what termhub would.
