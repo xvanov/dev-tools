@@ -310,6 +310,57 @@ Rollback, Linux: the front: `TERMHUB_FRONT=node`, then `bash linux/update.sh` (t
 survive on ptyd). ptyd: `TERMHUB_PTYD=0`, then `bash linux/update.sh` (back on node-pty; ptyd's
 terminals come back Restorable), then `bash linux/ptyd-unit.sh --remove`.
 
+## Design: the in-process front (Exit 4; not built)
+
+Target: one jarvisd per machine owns both public ports, termhub's 7000 and the dashboard's
+7300, plus ptyd and agent runs as children. Today the supervisor already is a reverse proxy in
+front of rolling generations on 7300 (flip, drain, a standby for rollback), and the front is a
+separate process the termhub scripts swap with a 1 to 2 s gap. So the front moves into the
+**generation**, not the supervisor: the supervisor stays the small, rarely restarted process,
+and front code rolls with every deploy at no gap, under the same flip and rollback.
+
+Steps, each behind `PA_TERMHUB_FRONT=inproc` (off by default):
+
+1. **Generation.** With the flag, the generation (`jarvisd generation`) also runs termhub's
+   `createFront({ sessiondPort })` on `127.0.0.1:0` and reports `frontPort` in its `ready`
+   message. The front's `/pa/` proxy goes straight to the generation's own dashboard.
+2. **Supervisor.** A second listener on termhub's publish port and bind (`PA_TERMHUB_PORT`, 7000;
+   `127.0.0.1` behind Serve, or the tailnet IP in plain-HTTP mode) proxies HTTP and upgrades to
+   the current generation's `frontPort`. Routing state stays one value, the current generation,
+   so a flip or rollback moves both ports together.
+3. **Drain.** Terminal and voice WebSockets never go idle, so at the flip the old generation's
+   front closes them (as the dashboard's SSE streams are closed now); browsers reconnect
+   through the new one and sessiond replays the screen. A roll then costs what a front swap
+   costs today, with no refused connections.
+4. **termhub's scripts.** `TERMHUB_FRONT=pa` (a third value in `lib/launch.ts`): `update.ps1` and
+   `restart-front.ps1` start no front and only verify that 7000 serves the expected commit
+   (the PA redeploy that follows the pull rolls it); `Start-VerifiedFront`'s pid check accepts
+   the generation's pid. On Linux `server.js` runs sessiond only. The watchdog's front-down
+   remedies restart pa-worker instead of starting `node front.js`.
+5. **Tests.** A supervisor test whose fixture generation serves a front port: a WebSocket
+   through 7000 survives a roll by reconnecting, and a rollback flips both ports. Then
+   `frontSwap.test.js` with the front in a supervised generation (no ticks lost across a roll),
+   and the Z6 deploy test checking 7000 as well as 7300.
+6. **Rehearsal, then the stacks.** On spare ports (supervisor 7399 owning a spare front port,
+   a scratch sessiond), then each stack by one line in `personal-assistant/.env`; rollback is
+   deleting it and `TERMHUB_FRONT=jarvisd` (or `node`) in `termhub/.env`.
+
+Risks:
+
+- **Privilege.** `/api/exec` and the transcript reader run in the front. The work stack's
+  pa-worker task runs elevated, so in-process they would run elevated. That has to be settled
+  before step 1: move `/api/exec` to sessiond, or run the PA task with limited rights.
+- **Shared fate.** A supervisor crash or restart (its own code changed, a runtime switch) now
+  takes termhub's UI down with the dashboard. Terminals survive in sessiond and ptyd, but the
+  way back runs through the PA's task, which the watchdog has to know.
+- **Interrupted streams.** Every PA deploy closes the terminal and voice sockets once. Today
+  every update already swaps the front, so the count is the same, but a dictation in progress
+  is cut at a roll.
+- **Bind and Serve.** The supervisor binds loopback today; plain-HTTP mode needs it on the
+  tailnet IP, and single-port mode needs Serve re-asserted by the PA's deploy, not termhub's.
+- **Two owners in transition.** While both layouts exist, a node front and the supervisor
+  can race for 7000. The switch must stop termhub's front first, as the runbook above does.
+
 ## Build
 
 `node scripts/build.js --only jarvisd` runs `bun build --compile jarvisd/src/main.ts`: one
@@ -356,7 +407,8 @@ setup; T7's cargo and Bun caches apply.
   `TERMHUB_PTYD` in `termhub/.env`, read by the update scripts (`-DryRun` / `--dry-run`), ptyd
   as a logon task / user unit from an installed copy (runbook above).
 - [ ] Left: switch the stacks (the lead does it, from the runbook above); then the in-process
-  front (one jarvisd process owns 7000 and 7300, Exit 4); modules to ES exports (then `Repos`,
+  front (one jarvisd process owns 7000 and 7300, Exit 4; designed above, *Design: the in-process
+  front*; settle `/api/exec`'s privilege first); modules to ES exports (then `Repos`,
   `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API; chunk D (dispatch,
   e2e) finishing; `test/supervisor.test.js` fails ~1 in 3 under the full parallel suite (~150 s,
   passes alone): a load-dependent timeout to fix.
