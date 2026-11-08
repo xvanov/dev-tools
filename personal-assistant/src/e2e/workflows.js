@@ -149,10 +149,14 @@ async function whatsOn(acc, o, deps, folder) {
   const t0 = deps.now();
   const tr = JSON.parse(await deps.post(`${deps.paBase}/api/talk/transcribe`, audio, { timeoutMs: 30_000 }));
   const tTranscribed = deps.now();
-  measured.whisper = { ms: tr.ms ?? tTranscribed - t0, note: `request ${tTranscribed - t0} ms, whisper ${tr.ms} ms` };
+  const heard = String(tr.text || '').trim();
+  measured.whisper = heard
+    ? { ms: tr.ms ?? tTranscribed - t0, note: `request ${tTranscribed - t0} ms, whisper ${tr.ms} ms` }
+    : { ms: null, note: `transcription came back empty in ${tTranscribed - t0} ms` };
+  if (!heard) notes.push('transcription was empty: the rest of the turn was timed with the question text itself, so the hops after it are a lower bound');
   let firstDelta = null;
   let buf = '';
-  const turnText = await deps.post(`${deps.paBase}/api/talk/turn`, { text: tr.text }, {
+  const turnText = await deps.post(`${deps.paBase}/api/talk/turn`, { text: heard || question }, {
     timeoutMs: 60_000,
     onChunk: (c) => {
       buf += c.toString('utf8');
@@ -172,7 +176,7 @@ async function whatsOn(acc, o, deps, folder) {
     await deps.post(`${deps.paBase}/api/talk/tts`, { text: first }, { raw: true, timeoutMs: 30_000, onChunk: () => { if (tFirstAudio == null) tFirstAudio = deps.now(); } });
     if (tFirstAudio != null) measured.voice = { ms: tFirstAudio - t0, note: `whole path; TTS first byte ${tFirstAudio - tSpeak} ms` };
   }
-  checks.push(check('ask', 'transcribed the question', /what/i.test(tr.text || ''), tr.text));
+  checks.push(check('ask', 'transcribed the question', /what/i.test(heard), heard || 'empty transcription'));
   checks.push(check('ask', 'answered locally (route answer)', (decision.route || done.route) === 'answer', `route ${decision.route || done.route || 'none'}`));
   checks.push(check('ask', 'spoke an answer', said.trim().length > 0));
   transcripts.push(deps.writeEvidence(folder, 'transcripts/turn.txt', [`question (TTS): ${question}`, `transcribed: ${tr.text}`, `route: ${decision.route || done.route}`, `answer: ${said}`].join('\n')));

@@ -578,6 +578,20 @@ not in the Map is not done, and a new one gets added there first.
   stack (with a dummy input where the real one would touch other people, e.g. a test chat
   instead of a colleague), and collects evidence: per-hop timings, every link, transcripts,
   screenshots of each view, cost.
+  (65e500e) `pa e2e <workflow> [--dry-run]`, `pa e2e all --dry-run`; evidence in
+  `<PA data dir>/e2e/<stamp>-<workflow>/summary.json`. Status on the work stack, 2026-11-08:
+  - whats-on: dry run OK. Real run (09:09Z): answered locally (route answer, $0), fast lane first
+    words 669 ms (target 200), first audio 1682 ms (target 700). Both are lower bounds, because:
+  - [ ] **8.2.1 Talk transcription is always empty on the work stack.** POST /api/talk/transcribe
+    returns `{"text":""}` in about 4 ms for any WAV. The transcriber's log shows WinError 10054 and
+    `No such file or directory: C:\Temp\pa-talk-<pid>-….wav`. The generation's socket closes early,
+    askWhisper resolves that as empty text, and the WAV is deleted before whisper opens it. The same file
+    sent to :47821 directly is transcribed in 300-600 ms. askWhisper also turns a transcriber
+    error into a silent empty answer.
+  - research, deepseek-pr, review-fix: dry runs fail on `factory app list --json`. Through factory
+    serve's /api/cli it returns code 0 with empty stdout; job list and status are fine (sent to
+    factory-native).
+  - teams-ask: dry run OK. A real run needs a test chat with only you in it, so it is refused.
 - [ ] **8.3 Reviewer sessions.** For each workflow, a separate reviewer session (a fresh agent
   that did not implement it, on Claude Code) runs `e2e <workflow>`, inspects the evidence and
   the outputs themselves (reads the PR, the report, the board card), and scores the workflow

@@ -45,12 +45,14 @@ function browser() {
 }
 
 /** One page to a PNG. Resolves {ok, file} or {ok:false, error}; never rejects. */
+// `--timeout` (not --virtual-time-budget): pages that hold a live feed or a
+// voice model open never let virtual time settle, and the shell then hangs.
 function shoot(exe, url, file, { width = 1440, height = 1000, budgetMs = 8000, timeoutMs = 60_000 } = {}) {
   return new Promise((resolve) => {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-shot-'));
     const args = [
       '--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-      `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--virtual-time-budget=${budgetMs}`,
+      `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--timeout=${budgetMs}`,
       `--screenshot=${file}`, url,
     ];
     execFile(exe, args, { timeout: timeoutMs, windowsHide: true }, (err) => {
