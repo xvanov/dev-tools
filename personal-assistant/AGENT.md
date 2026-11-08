@@ -242,7 +242,10 @@ server still runs the call. It is applied in the MCP server's `handle` (every to
 (a chat approval, with the channel it came from: dashboard or voice) and in `factory.approve`. A locked
 rule denies the voice channel anything tagged `merge`, `push_main` or `secret_reveal` and no override
 can loosen it (a voice yes to a factory job's approval looks the job's delivery up and is refused for
-auto_merge / push_to_main, or when the job cannot be looked up); do not add a path that approves those from voice (passkeys, 7.1, are the later way).
+auto_merge / push_to_main, or when the job cannot be looked up); do not add a path that approves those from voice. With PA_PASSKEYS=on, `enforce` also refuses (`STEPUP_REQUIRED`, rule `stepup-required`) a
+non-voice approval tagged merge / push_main / secret_reveal until a passkey grant exists for its
+`subject` (src/auth/stepup.js); the policy only looks at the grant, and `consumeStepUp` spends it right
+after `enforce` passes: a new caller that runs such an approval must do both.
 Each decision is a row of `audit_log` (`src/repo/audit.js`), hash-chained; arguments are stored as a
 digest only. `pa audit verify` recomputes the chain, `pa audit tail` lists it, `pa audit check <tool>`
 dry-runs the policy. Adding a tool: add it to the default policy (an unlisted tool asks).

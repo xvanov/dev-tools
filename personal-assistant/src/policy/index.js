@@ -193,13 +193,38 @@ function subjectOf(req) {
 
 const argsHash = (args) => (args == null ? '' : crypto.createHash('sha256').update(JSON.stringify(args) || '').digest('hex'));
 
+const STEPUP_RULE = 'stepup-required';
+
+/**
+ * Passkey step-up (plan 7.1, src/auth/stepup.js), only with PA_PASSKEYS=on: an
+ * approval that would be allowed or asked, tagged merge, push_main or
+ * secret_reveal, becomes `ask` (rule stepup-required) until the dashboard has
+ * recorded a passkey assertion for this exact approval id (`subject`). It only
+ * looks at the grant; the code that runs the action consumes it. A deny stays a
+ * deny (the voice lock is first), and a store that cannot be read is a refusal.
+ */
+async function withStepUp(res, request, { repo = null, stepup = null, stepUp = true } = {}) {
+  if (!stepUp || res.decision === 'deny' || request.action !== 'approve') return res;
+  const S = stepup || require('../auth/stepup');
+  const needs = res.tags.filter((t) => S.requiresStepUp(t));
+  if (!needs.length) return res;
+  let ok = false;
+  try {
+    ok = (await S.hasStepUp(request.subject, repo ? { repos: repo } : {})).ok;
+  } catch {
+    ok = false;
+  }
+  if (ok) return res;
+  return { ...res, decision: 'ask', rule: STEPUP_RULE, reason: `a ${needs.join('/')} approval needs a passkey tap for this approval (${request.subject || 'no id'})` };
+}
+
 /**
  * Evaluates and records. Audit trouble is logged, not thrown: an unreachable
  * database must not turn every read tool into an error. (A deny is still a
  * deny.) Pass `audit: false` to evaluate only (a hot path that logs elsewhere).
  */
-async function authorize(request, { audit = true, repo = null } = {}) {
-  const res = evaluate(request);
+async function authorize(request, { audit = true, repo = null, stepup = null, stepUp = true } = {}) {
+  const res = await withStepUp(evaluate(request), request, { repo, stepup, stepUp });
   if (audit) {
     try {
       const r = repo || require('../repo');
@@ -210,7 +235,7 @@ async function authorize(request, { audit = true, repo = null } = {}) {
         tool: request.tool,
         decision: res.decision,
         rule: res.rule,
-        reason: res.decision === 'deny' ? res.reason : '',
+        reason: res.decision === 'deny' || res.rule === STEPUP_RULE ? res.reason : '',
         subject: subjectOf(request),
         argsHash: argsHash(request.args),
       });
@@ -221,16 +246,38 @@ async function authorize(request, { audit = true, repo = null } = {}) {
   return res;
 }
 
+/**
+ * Uses up the step-up grant an enforced approval relied on (one use, bound to
+ * its approval id). Call it right after enforce() passes, before the action
+ * runs; a no-op when the approval needed no step-up.
+ */
+async function consumeStepUp(request, res, { repo = null, stepup = null } = {}) {
+  const S = stepup || require('../auth/stepup');
+  if (request.action !== 'approve' || !(res.tags || []).some((t) => S.requiresStepUp(t))) return false;
+  return (await S.hasStepUp(request.subject, { ...(repo ? { repos: repo } : {}), consume: true })).ok;
+}
+
 /** authorize(), throwing on deny so a caller cannot forget to look. */
 async function enforce(request, opts) {
   const res = await authorize(request, opts);
   if (res.decision === 'deny') {
     const err = new Error(`denied by policy (${res.rule}): ${res.reason || request.tool}`);
     err.code = 'POLICY_DENIED';
+    err.status = 403;
+    err.policy = res;
+    throw err;
+  }
+  // An approval that waits on a passkey tap must not run: `ask` elsewhere means the host prompts, here it is the tap.
+  if (res.rule === STEPUP_RULE) {
+    const err = new Error(`needs a passkey: ${res.reason}`);
+    err.code = 'STEPUP_REQUIRED';
+    err.status = 403;
+    err.needsStepUp = true;
+    err.approvalId = request.subject || null;
     err.policy = res;
     throw err;
   }
   return res;
 }
 
-module.exports = { evaluate, classify, withJobDelivery, JOB_TOOLS, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };
+module.exports = { evaluate, classify, withJobDelivery, consumeStepUp, STEPUP_RULE, JOB_TOOLS, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };

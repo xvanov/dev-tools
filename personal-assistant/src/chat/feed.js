@@ -152,9 +152,10 @@ function createFeed({
       const policy = require('../policy');
       // A voice yes to a factory job's approval is judged by the job's delivery (looked up now; fails closed).
       const req = await policy.withJobDelivery({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId, args: lastTool?.args }, jobLookup);
-      await policy.enforce(req);
+      const verdict = await policy.enforce(req);
+      await policy.consumeStepUp(req, verdict); // a passkey tap is spent on this one approval
     } catch (err) {
-      if (err.code === 'POLICY_DENIED') throw httpError(403, err.message);
+      if (err.code === 'POLICY_DENIED' || err.code === 'STEPUP_REQUIRED') throw Object.assign(httpError(403, err.message), err.needsStepUp ? { needsStepUp: true, approvalId: err.approvalId } : {});
       throw err;
     }
     for (const key of d.keys) await h.say(session.id, key, { submit: key === '' });

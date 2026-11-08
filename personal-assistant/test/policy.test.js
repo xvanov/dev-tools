@@ -213,6 +213,51 @@ function memoryRepo() {
   const spoof = await P.withJobDelivery(voice('factory_approve', 'app:0001', { args: { job: 'app:0001', delivery: 'pr' } }), lookup);
   assert.strictEqual(spoof.args.delivery, 'auto_merge');
 
+  // ---- passkey step-up (7.1): ask until a grant for this approval id exists; voice stays denied first ----
+  {
+    const grants = new Set();
+    const consumed = [];
+    const mk = (on) => ({
+      requiresStepUp: (k) => on && ['merge', 'push_main', 'secret_reveal'].includes(k),
+      hasStepUp: async (id, o = {}) => {
+        if (o.consume) { consumed.push(id); return { ok: grants.delete(id) }; }
+        return { ok: grants.has(id) };
+      },
+    });
+    const on = mk(true);
+    const merge = { tool: 'factory_approve', action: 'approve', channel: 'dashboard', subject: 'app:0001', args: { job: 'app:0001', delivery: 'auto_merge' } };
+    const rows0 = repo.rows.length;
+    const r1 = await P.authorize(merge, { repo, stepup: on });
+    assert.deepStrictEqual([r1.decision, r1.rule], ['ask', 'stepup-required'], 'no grant: ask');
+    assert.strictEqual(repo.rows[rows0].decision, 'ask');
+    assert.match(repo.rows[rows0].reason, /passkey/);
+    await assert.rejects(() => P.enforce(merge, { repo, stepup: on }), (e) => e.code === 'STEPUP_REQUIRED' && e.status === 403 && e.approvalId === 'app:0001', 'enforce refuses until tapped');
+    grants.add('app:0001');
+    assert.strictEqual((await P.authorize(merge, { repo, stepup: on })).decision, 'allow', 'a grant for this id: allowed');
+    assert.strictEqual(consumed.length, 0, 'looking does not spend the grant');
+    const res = await P.enforce(merge, { repo, stepup: on });
+    assert.strictEqual(await P.consumeStepUp(merge, res, { stepup: on }), true);
+    assert.deepStrictEqual(consumed, ['app:0001']);
+    await assert.rejects(() => P.enforce(merge, { repo, stepup: on }), /passkey/, 'one use');
+    grants.add('other');
+    await assert.rejects(() => P.enforce({ ...merge, subject: 'app:0002' }, { repo, stepup: on }), /passkey/, 'bound to the exact id');
+    // not for other tags, other actions, other tools
+    assert.strictEqual((await P.authorize({ ...merge, args: { delivery: 'pr' } }, { repo, stepup: on })).decision, 'allow');
+    assert.strictEqual((await P.authorize({ ...merge, action: 'deny' }, { repo, stepup: on })).rule !== 'stepup-required', true);
+    assert.strictEqual(await P.consumeStepUp({ ...merge, args: { delivery: 'pr' } }, { tags: [] }, { stepup: on }), false);
+    // off: nothing changes
+    assert.strictEqual((await P.authorize(merge, { repo, stepup: mk(false) })).decision, 'allow');
+    // opted out for the chat path (its prompt was the gate)
+    assert.strictEqual((await P.authorize(merge, { repo, stepup: on, stepUp: false })).decision, 'allow');
+    // voice stays denied first, grant or no grant
+    grants.add('app:0001');
+    const v = await P.authorize({ ...merge, channel: 'voice' }, { repo, stepup: on });
+    assert.deepStrictEqual([v.decision, v.rule], ['deny', 'voice-never-approves-sensitive']);
+    // an unreadable grant store is a refusal, not a pass
+    const bad = { requiresStepUp: () => true, hasStepUp: async () => { throw new Error('db down'); } };
+    assert.strictEqual((await P.authorize(merge, { repo, stepup: bad })).rule, 'stepup-required');
+  }
+
   console.log('policy: ok');
 })().catch((err) => {
   console.error(err);

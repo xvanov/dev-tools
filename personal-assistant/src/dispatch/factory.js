@@ -963,7 +963,12 @@ async function approve(jobId, { channel = 'cli' } = {}) {
   if (!F.JOB_ID.test(String(jobId || ''))) throw Object.assign(new Error(`not a factory job id: "${jobId}"`), { status: 400 });
   const job = await snapshotJob(jobId);
   // Policy (plan 4.3): audited with the job's delivery, and refused for a channel the policy bars (voice never approves a merge).
-  await require('../policy').enforce({ tool: 'factory_approve', action: 'approve', channel, subject: jobId, args: { job: jobId, delivery: job?.delivery || undefined, delivery_unknown: !job } });
+  // A passkey step-up (7.1) applies here for a click or the CLI; from the chat the permission prompt
+  // was answered (and step-up checked) by the page, so it is not asked again for the job id.
+  const policy = require('../policy');
+  const preq = { tool: 'factory_approve', action: 'approve', channel, subject: jobId, args: { job: jobId, delivery: job?.delivery || undefined, delivery_unknown: !job } };
+  const verdict = await policy.enforce(preq, { stepUp: channel !== 'chat' });
+  if (channel !== 'chat') await policy.consumeStepUp(preq, verdict);
   const argv = job ? F.approveArgv(job) : null;
   if (!argv) throw Object.assign(new Error(`job ${jobId} is not waiting on an approval the factory named`), { status: 409 });
   const res = await runCommand(machine(), F.factoryArgv(argv, config.factory.uv), { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs });
