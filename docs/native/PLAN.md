@@ -304,7 +304,29 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **2.1** The current Python factory runs as a long-lived JSON-over-HTTP service (no process
   spawn per call).
 - [ ] **2.2** An in-process scheduler with DB leases replaces systemd timers and `fcntl` locks.
-- [ ] **2.3** Runs natively on Windows (no WSL); the work stack's factory moves off WSL.
+  Landed with 2.3 (d44ffe1, 0a245c7): `factory serve` (fresh tick subprocess per app every 300 s,
+  wake within 1 s of job submit/resume via `state/scheduler/wake.d`, in-process research/report
+  dispatch) and portable locks in `factory/oscompat.py` (flock / LockFileEx). Its lease is an OS
+  file lock (`state/locks/serve.lock`, plus `tick-<app>.lock`), not a DB lease; Linux still runs
+  the systemd timers (serve refuses beside them). Left: DB leases, retiring the timers on Linux.
+- [x] **2.3** Runs natively on Windows (no WSL); the work stack's factory moves off WSL.
+  (0a245c7, d44ffe1, ec83f20, 6de69f0, 916de23, cb0b6b0) `docs/WINDOWS.md`. The `factory-serve`
+  logon task runs `factory serve` from the work laptop's dev-tools checkout. claude_session rounds
+  run without bash (`python -I -X utf8 -m factory.claude_session.round`, PowerShell command line
+  in termhub); the PA runs a local factory with `PA_FACTORY_MACHINE=local`. Smoke 2026-11-08, all
+  native: a claude_session research job went submit to started in ~1.7 s and wrote its report in
+  a Windows termhub session; a dev-tools code job (draft_pr) was triaged within a tick, opened a
+  live onboarder session and draft PR #7 as xvanov, which was closed and its branch deleted.
+  Windows suite (`uv run pytest -n auto`): 4255 tests, 265 skipped, 5 load-sensitive failures
+  that pass alone (solo watchdog wall-clock bounds, oracle child start-up under load; handed to
+  T3). Skipped on Windows as inherently POSIX (`tests/conftest.py`, WINDOWS_POSIX_ONLY): the
+  stalled-stories detector tests (Linux /proc); the bash self-deploy tests; four deploy-runner,
+  two gate and one solo static-gate test whose commands are POSIX sh; oracle H41b (directory mode
+  bits), H5c and H5d (attacker polls /tmp), B2k and one diff-capture test (symlinks); one
+  out-of-process oracle test (`sh` boot, process groups); 16 SWE-bench harness tests and
+  `test_swebench_bare_openhands_arms.py` (Linux-only harness: docker, bwrap, getuid, signals).
+  Open: the work PA's `.env` switch (PA_FACTORY_MACHINE/PATH, and PA_FACTORY_UV, which names a
+  path that does not exist on Windows); retiring the WSL factory and its termhub with 3.6.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
 
 ## Phase 3: storage to SQLite (D2)
