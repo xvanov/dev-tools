@@ -127,6 +127,9 @@ test('plan: the card is found anywhere in /api/state and its chain checked', () 
   const wrongJob = C.checkPlanBoard({ commitments: [{ id: 77, chain: [{ ...CHAIN[0], job: 'dev-tools:0001' }] }] }, IDS);
   assert.ok(wrongJob.some((c) => !c.ok && c.check === 'run → job'));
   assert.ok(!C.checkPlanBoard({ commitments: [] }, IDS)[0].ok);
+  // Delivered: the card closed and left the board; it is in `closed`.
+  const closed = C.checkPlanBoard({ commitments: [], closed: [{ id: '77', status: 'done' }] }, IDS);
+  assert.ok(closed.length === 1 && closed[0].ok && /closed as done/.test(closed[0].detail));
   allOk(C.checkCardDetail({ id: 77, chain: CHAIN }, IDS));
   assert.ok(!C.checkCardDetail({ error: 'no commitment #77' }, IDS)[0].ok);
 });

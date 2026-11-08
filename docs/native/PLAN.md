@@ -84,6 +84,21 @@ request); voice never approves high-risk actions alone; work and personal stacks
 | Deploy | restart: dashboard and sessions drop | zero downtime: no dropped request, socket, or terminal |
 | WSL memory | ~0.8 GB in use, 4.8 GB VM | 0 (WSL off) |
 
+Golden path (E4/E5, claude_session, draft_pr), 2026-11-08 at e013834:
+
+| Hop | Work (run 5) | Personal (E6 run 1) |
+|---|---|---|
+| card created | 0.2 s | 0.1 s |
+| card → job started (factory_start + first poll) | 19.7 s | 14.2 s |
+| submit → job started | ≈ 3.4 s, polled at 2 s (77–341 s in runs 1–4) | within the 5 s poll |
+| job started → first session output | same poll | same poll |
+| job started → PR opened | 1026.8 s | 304.5 s |
+| PR opened → CI done (passing) | 151.0 s | 156.5 s |
+| card → CI done | 1197.5 s (≈ 20 min) | 475.2 s (≈ 8 min) |
+
+factory_start on the work stack is about 16 s: ≈ 11 s card context, 3.3 s compose (azure/pa), ≈ 1.3 s
+submit through serve.
+
 ---
 
 ## Track T: fast tests and builds (cross-cutting, starts in phase 0)
@@ -239,7 +254,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   (1f1ee4f) `pa e2e [--dry-run|--sweep|--keep|--resume|--branch b|--runtime api --model m|--on machine]`.
   The dry-run was green on the work stack 2026-11-08 at ca701ce, with config, build, plan, run, mcp and
   github all passing.
-- [ ] **E5 Baseline now.** Run E4 on today's system before phase 1 starts; record the timings
+- [x] **E5 Baseline now.** Run E4 on today's system before phase 1 starts; record the timings
   and every broken hop here as new items. Fix what is broken in phase 0.
   Run 1 (work stack, claude_session, draft_pr, 2026-11-08 03:19Z; card #6758, job dev-tools:004):
   card 0.2 s → job started +108.5 s (factory_start itself took 37 s) → first session output
@@ -247,18 +262,18 @@ run mid-step; a job continued on an existing branch (`--branch`).
   - [x] **E5.1 Plan's /api/state is down.** It returned 500 `repo.sources.calendarToday is not a function` at
     3b37fe1; during the run it and /api/commitments/:id exceeded 30 s. Fixed in 94c4de3: 3b37fe1 was an
     in-between main where a caller landed before its repo method.
-  - [ ] **E5.2 Planning steps are not watchable (E2).** The job's first step (`sm`, runtime api, state ok)
+  - [x] **E5.2 Planning steps are not watchable (E2).** The job's first step (`sm`, runtime api, state ok)
     had `session: null` even though the job runtime is claude_session, so its planning work never
     shows in Run.
     Fixed in code (717699c, 15cbc74), live after the next deploy: every model step of a job opens
     E2's stream and termhub session, text steps included (PM triage, SM, reviewer: `text_run`), with
     E1 links on a runs row opened at the step's start; PM triage now carries the job's app/direction.
-  - [ ] **E5.3 Dev step starts late.** After 10 min the dev step (the first session) had not started:
+  - [x] **E5.3 Dev step starts late.** After 10 min the dev step (the first session) had not started:
     the factory moves a story one step per 300 s tick. Card to job started took 109 s against a < 1 s target.
   Run 2 (same variant, first_output timeout 1800 s, 04:19Z; card #6759, job dev-tools:005): card 0.3 s,
   then job started NOT REACHED. factory_start took 3 min 19 s, and the job then stayed `queued` until the
   300 s job_started limit (341 s). Cleanup ran (job cancelled, card dropped, no PR).
-  - [ ] **E5.4 Job start is slow and can stall in queued.** factory_start (compose + submit) took 37 s in
+  - [x] **E5.4 Job start is slow and can stall in queued.** factory_start (compose + submit) took 37 s in
     run 1 and 199 s in run 2, and run 2's job never left `queued` in 5 min. Before 2.2 a queued job waited
     for the next 300 s tick.
     Run 3 on native `factory serve` (2.1/2.2, 9be2b0a, 07:54Z; card #6760, job dev-tools:007): card 0.2 s,
@@ -276,19 +291,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
     was still dev_in_progress after 50 min, with no job update since 09:20, so I cancelled it at 10:10Z.
     Hops: card 0.2 s → job started +76.9 s → first session output +76.9 s (same poll) → PR not reached.
     Cleanup killed the pm, sm and dev sessions and dropped the card. Defects:
-  - [ ] **E5.6 A headless dev step waits on a notification that never comes.** The `claude -p` dev session
+  - [x] **E5.6 A headless dev step waits on a notification that never comes.** The `claude -p` dev session
     started the gate suite with run_in_background, said "waiting for completion notification" and ended
     its turn (result success, twice). In -p mode a background task's notification never reaches the
     session, so the step sits in dev_in_progress. Headless runs need foreground gate commands (or a
     setting that forbids background tasks).
-  - [ ] **E5.7 The dev-tools app's gate is the whole software-factory pytest suite.** For a
+  - [x] **E5.7 The dev-tools app's gate is the whole software-factory pytest suite.** For a
     personal-assistant change, the dev session ran in `<worktree>/software-factory`, installed its dev
     extra and ran the full suite, which took over 10 min and hung at 98%. A monorepo app needs a gate
     per changed tool (personal-assistant: `npm test`).
   - [ ] **E5.8 Step sessions carry no E1 links in termhub.** GET :7000/api/sessions shows `links` empty
     on every factory step session (pm, sm, dev of dev-tools:009), so Run cannot lead back to the job
     or step.
-  - [ ] **E5.5 factory serve returns empty stdout for some CLI commands** (`app list --json`, the submit
+  - [x] **E5.5 factory serve returns empty stdout for some CLI commands** (`app list --json`, the submit
     path), so nothing can be dispatched through serve (sent to factory-native).
     factory-native: yes, serialized. One tick per app at a time, and a tick runs agent steps
     synchronously: 006's tick (with its onboarder inside) held dev-tools for 339 s, so 007's triage
@@ -298,8 +313,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
     new job's triage should not queue behind another job's long step on the same app (a separate
     intake lane in serve); (b) the PA's factory_start (compose + submit) took 2-3 min in runs 2-3:
     needs PA-side timing to split compose from submit (submit through serve is ~1-2 s).
+  Run 5 (work, e013834, 10:27Z; card #6764, job dev-tools:011, PR #25): every hop was reached. Timings
+  are in the Targets section. The view checks pass except Run's session links (E5.8: the old sessiond,
+  restart pending) and the Plan board check. That one was a checker bug, fixed here: a delivered card
+  closes (dispatched → done) and leaves the open board, so it is now found in `closed`. Cleanup closed
+  PR #25 with its branch, killed the sessions and dropped the card. E5.5, E5.6 and E5.7 are fixed
+  (6e96a0d, 0df2bb1); factory_start (a) and (b) above are resolved by the warm triage lane (e013834)
+  and the 16 s measured start.
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
+  First gate run, 2026-11-08, claude_session variant only: personal stack green (`pa e2e --on <personal
+  machine>`, card #1, job dev-tools:001, PR #28, CI passing, every link resolved, cleanup ran). Work
+  stack: every hop reached; links green except E5.8. Still to run on both: the api, --resume and
+  --branch variants.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.

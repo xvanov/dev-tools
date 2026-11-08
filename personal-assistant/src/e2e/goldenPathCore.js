@@ -305,11 +305,18 @@ function checkChain(view, chain, ids) {
   return out;
 }
 
-/** Pure. Plan: GET /api/state — the card on the board carries the whole chain. */
+/**
+ * Pure. Plan: GET /api/state — the card on the board carries the whole chain.
+ * A delivered job closes its card (dispatched → done), and the board shows
+ * open cards only: a closed card is found in `closed` instead, and its chain
+ * is left to the card detail check.
+ */
 function checkPlanBoard(state, ids) {
   const card = findCard(state, ids.card);
-  if (!card) return [result('plan', 'card on the board', false, `card ${ids.card} not in /api/state (or has no chain)`)];
-  return [result('plan', 'card on the board', true), ...checkChain('plan', card.chain, ids)];
+  if (card) return [result('plan', 'card on the board', true), ...checkChain('plan', card.chain, ids)];
+  const closed = (Array.isArray(state?.closed) ? state.closed : []).find((c) => String(c.id) === ids.card);
+  if (closed) return [result('plan', 'card on the board', true, `closed as ${closed.status || 'done'} (delivered); chain checked on the card detail`)];
+  return [result('plan', 'card on the board', false, `card ${ids.card} not in /api/state (or has no chain)`)];
 }
 
 /** Pure. Plan: GET /api/commitments/:id — the card's own detail. */
