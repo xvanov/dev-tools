@@ -326,6 +326,65 @@ def test_choose_apps_is_opt_in(tmp_path: Path) -> None:
     assert serve.choose_apps(tmp_path, None, "idle, ticked") == ["idle", "ticked"]  # then FACTORY_SERVE_APPS
 
 
+def _join_triage(h: Harness) -> None:
+    for t in h.sched.triaging.values():
+        t.join(5)
+
+
+def test_submit_wake_triages_without_starting_a_tick(tmp_path: Path) -> None:
+    """A submit used to start a maintenance tick beside triage. That tick held
+    the app, so the next step waited for it to exit (8.4.15)."""
+    seen: list[str] = []
+    h = Harness(tmp_path, ["a", "b"])
+    h.sched.triage = lambda app: seen.append(app)
+    h.sched.step()
+    for _, p, _ in h.spawned:
+        p.rc = 0
+    h.now = 10
+    h.sched.step()
+    n = len(h.spawned)
+    d0 = h.dispatches
+    h.sched.step({"a": "submit job-1"})
+    _join_triage(h)
+    assert len(h.spawned) == n
+    assert h.dispatches == d0 + 1
+    assert seen == ["a"]
+    h.sched.step({"a": "triaged"})
+    assert h.apps_started()[-1] == "a"
+    assert h.spawned[-1][2][serve.TICK_REASON_ENV] == "wake"
+
+
+def test_interval_tick_does_not_carry_the_wake_reason(tmp_path: Path) -> None:
+    h = Harness(tmp_path, ["a"])
+    h.sched.step()
+    assert serve.TICK_REASON_ENV not in h.spawned[0][2]
+
+
+def test_a_progress_wake_beside_a_submit_still_ticks(tmp_path: Path) -> None:
+    h = Harness(tmp_path, ["a"])
+    h.sched.triage = lambda app: None
+    h.sched.step()
+    h.spawned[-1][1].rc = 0
+    h.now = 10
+    h.sched.step()
+    serve.request_wake(tmp_path, "a", reason="submit job")
+    serve.request_wake(tmp_path, "a", reason="progress")
+    h.sched.step(serve.consume_wake_details(tmp_path))
+    _join_triage(h)
+    assert h.apps_started()[-1] == "a"
+    assert h.spawned[-1][2][serve.TICK_REASON_ENV] == "wake"
+
+
+def test_submit_without_a_triage_lane_still_ticks(tmp_path: Path) -> None:
+    h = Harness(tmp_path, ["a"])
+    h.sched.step()
+    h.spawned[-1][1].rc = 0
+    h.now = 10
+    h.sched.step()
+    h.sched.step({"a": "submit job"})
+    assert h.apps_started()[-1] == "a"
+
+
 def test_tick_argv_runs_the_factory_module() -> None:
     assert serve.tick_argv("x")[1:] == ["-m", "factory", "tick", "--app", "x"]
 

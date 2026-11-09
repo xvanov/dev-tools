@@ -14,10 +14,15 @@ What it does, every ``poll_s`` (1 s):
   is due every ``interval_s`` (default 300 s) after its last tick STARTED.
 * **Wake.** ``factory job submit`` / ``resume`` drop a file in
   ``state/scheduler/wake.d/`` (:func:`request_wake`). Serve sees it within one
-  poll, starts queued research/report jobs at once (``dispatch_tasks``, no LLM,
-  milliseconds), and ticks the named app (or every app) without waiting for the
-  interval. A wake for an app that is mid-tick re-ticks it as soon as that tick
-  ends, so the submission is never missed.
+  poll and starts queued research/report jobs at once (``dispatch_tasks``, no
+  LLM, milliseconds). A **submit** starts PM triage in this process and does
+  not also start a tick: that tick used to run the maintenance passes while
+  triage held the first step, then hold the app so the next step waited for it
+  to exit (8.4.15). Triage wakes again when it finishes, and that wake starts
+  the tick. A resume, a finished step (``progress``) or that follow-up starts
+  a tick at once; the tick is told ``FACTORY_TICK_REASON=wake`` so it dispatches
+  before the GitHub maintenance the interval tick still does. A wake for an app
+  that is mid-tick re-ticks it as soon as that tick ends.
 * **Dispatch.** ``dispatch_tasks`` also runs every interval in-process, so
   research/report jobs start and dead workers are reaped even when a tick cannot
   run (a machine with no LLM provider key: ``factory tick`` exits 2 before its
@@ -45,7 +50,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +77,8 @@ TICK_LOCK_ENV = "FACTORY_TICK_LOCK"
 #: Env var the orchestrator reads as its tick budget; serve sets it to its own
 #: tick timeout so the two can never disagree.
 TICK_BUDGET_ENV = "FACTORY_TICK_BUDGET_S"
+#: Set on a wake-started tick so it dispatches before the interval's maintenance.
+TICK_REASON_ENV = "FACTORY_TICK_REASON"
 ALL_APPS = "*"
 
 
@@ -125,25 +132,52 @@ def request_wake(root: Path, app: str | None = None, *, reason: str = "") -> Non
         pass
 
 
-def consume_wakes(root: Path) -> set[str]:
-    """Read and delete pending wake files; return the app names (``*`` = all)."""
+def _prefer_wake_reason(old: str | None, new: str) -> str:
+    """A submit must not hide a wake that has to start a tick (resume, progress)."""
+    if old and not old.startswith("submit"):
+        return old
+    if not new.startswith("submit"):
+        return new
+    return old or new
+
+
+def consume_wake_details(root: Path) -> dict[str, str]:
+    """Read and delete pending wake files. ``{app: reason}``; ``*`` = all apps.
+
+    Several files for one app collapse to one reason. A non-submit reason wins,
+    so a progress wake dropped while a submit's file is still there still ticks.
+    """
     d = wake_dir(root)
-    apps: set[str] = set()
+    reasons: dict[str, str] = {}
     try:
         entries = sorted(d.glob("*.wake"))
     except OSError:
-        return apps
+        return reasons
     for p in entries:
         try:
             data = json.loads(p.read_text(encoding="utf-8") or "{}")
-            apps.add(str(data.get("app") or ALL_APPS))
+            app = str(data.get("app") or ALL_APPS)
+            reason = str(data.get("reason") or "wake")
         except (OSError, ValueError):
-            apps.add(ALL_APPS)
+            app, reason = ALL_APPS, "wake"
+        reasons[app] = _prefer_wake_reason(reasons.get(app), reason)
         try:
             p.unlink()
         except OSError:
             pass
-    return apps
+    return reasons
+
+
+def consume_wakes(root: Path) -> set[str]:
+    """Read and delete pending wake files; return the app names (``*`` = all)."""
+    return set(consume_wake_details(root))
+
+
+def _wake_reasons(wakes: Iterable[str] | Mapping[str, str]) -> dict[str, str]:
+    """App names become reason ``wake`` (a tick). A mapping keeps its reasons."""
+    if isinstance(wakes, Mapping):
+        return {str(k): str(v or "wake") for k, v in wakes.items()}
+    return {str(a): "wake" for a in wakes}
 
 
 # --------------------------------------------------------------------------- #
@@ -460,6 +494,12 @@ class Scheduler:
         env[TICK_LOCK_ENV] = "1"
         env[TICK_BUDGET_ENV] = str(int(self.cfg.tick_timeout_s))
         env.setdefault("PYTHONUNBUFFERED", "1")
+        # Interval ticks keep the maintenance passes. A wake tick dispatches
+        # first (8.4.15); drop a leaked value so an interval tick stays one.
+        if reason != "interval":
+            env[TICK_REASON_ENV] = "wake"
+        else:
+            env.pop(TICK_REASON_ENV, None)
         try:
             proc = self.spawn(tick_argv(app), Path(self.cfg.root), log, env)
         except OSError as exc:
@@ -515,17 +555,34 @@ class Scheduler:
                 f"dispatch ({why}): started={res.get('started')} reaped={res.get('reaped')}"
             )
 
-    def step(self, wakes: Iterable[str] = ()) -> None:
-        """One poll: reap, apply wakes, dispatch if due, start due ticks."""
+    def step(self, wakes: Iterable[str] | Mapping[str, str] = ()) -> None:
+        """One poll: reap, apply wakes, dispatch if due, start due ticks.
+
+        ``wakes`` is app names (reason ``wake``, which starts a tick) or
+        ``{app: reason}`` from :func:`consume_wake_details`. A ``submit …``
+        reason starts triage and the research dispatch but not a tick.
+        """
         self._reap()
         now = self.clock()
-        woken = set(wakes)
-        if woken:
+        reasons = _wake_reasons(wakes)
+        if reasons:
             self._dispatch("wake")
             self.next_dispatch = now + self.cfg.interval_s
-            targets = self.cfg.apps if ALL_APPS in woken else [a for a in woken if a in self.cfg.apps]
+            targets = (
+                self.cfg.apps
+                if ALL_APPS in reasons
+                else [a for a in reasons if a in self.cfg.apps]
+            )
+            star = reasons.get(ALL_APPS, "")
             for app in targets:
+                reason = reasons.get(app) or star or "wake"
                 self._start_triage(app)
+                # A submit's first step is the in-process triage lane. A tick
+                # started here races that lane for the pm lock, then holds the
+                # app through the GitHub maintenance, so the next step waits
+                # for the tick to exit (8.4.15). Triage wakes again when done.
+                if reason.startswith("submit") and self.triage is not None:
+                    continue
                 if self.burst.get(app, 0) >= self.cfg.max_wake_burst:
                     continue  # runaway re-waking: the interval tick takes over
                 self.pending[app] = "wake"
@@ -670,7 +727,7 @@ def serve_forever(
     why: str | None = None
     try:
         while not stop():
-            sched.step(consume_wakes(root))
+            sched.step(consume_wake_details(root))
             now = sched.clock()
             if now - last_status >= status_every_s:
                 _write_status(root, sched.snapshot())

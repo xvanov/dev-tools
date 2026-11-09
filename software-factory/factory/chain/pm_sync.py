@@ -785,6 +785,36 @@ def _pm_runs_last_hour(db_path: Path) -> int:
         return 0
 
 
+class _LazyGitHubClient:
+    """Build the GitHub client on the first attribute use.
+
+    pm-sync's happy path records ``started_at`` and calls the model before it
+    updates the tracker. Constructing ``gh`` (an auth-token round trip) before
+    that is the pause in front of the pm step (8.4.15).
+    """
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+        self._client: Any = None
+
+    @property
+    def built(self) -> Any:
+        """The client, if something already forced it. Does not build."""
+        return self._client
+
+    def _ensure(self) -> Any:
+        if self._client is None:
+            self._client = self._factory() if self._factory else None
+        if self._client is None:
+            raise RuntimeError(
+                "github_client is required for real pm-sync; pass --dry-run for offline use"
+            )
+        return self._client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ensure(), name)
+
+
 def maybe_auto_pm_sync(
     app: str,
     software_factory_root: Path,
@@ -816,16 +846,14 @@ def maybe_auto_pm_sync(
     comment per 5-minute tick). They are re-checked by an operator-invoked
     ``factory pm-sync`` after the missing artifacts are added.
 
-    The stale-scheduled-direction GC pass (``factory.directions.gc``) is the
-    one exception: it runs on every tick regardless of whether a ``created``
-    direction is pending, BEFORE the ``created``-gate below. GC is pure
-    filesystem work (plus an optional best-effort GitHub issue-close) — no
-    LLM call — so it doesn't need to wait behind the same gate that protects
-    the expensive pm-sync pipeline. Previously GC only rode along inside
-    ``pm_sync()``, which this function only reached when a ``created``
-    direction existed; a backlog of stale ``needs-direction`` directions
-    with nothing fresh alongside meant GC never fired on the automated tick
-    (audit 2026-07-18).
+    The stale-scheduled-direction GC pass (``factory.directions.gc``) still
+    runs when nothing is waiting to be triaged, so a backlog of stale
+    ``needs-direction`` directions is collected on an idle tick (audit
+    2026-07-18: GC used to ride inside ``pm_sync()`` and never fired without a
+    fresh direction). When a ``created`` direction IS waiting, PM runs first
+    and GC follows. Building the GitHub client and walking GC before the
+    model call is what sat in front of the pm runs row (8.4.15). GC is
+    filesystem work plus an optional issue-close — no LLM call.
 
     Machine-filed directions (``scheduled-<persona>`` and friends) are NOT
     auto-triaged: they wait for ``factory approve-direction``. See
@@ -884,23 +912,21 @@ def _maybe_auto_pm_sync_locked(
         return None, "disabled"
 
     pending = pending_directions(app, root, db_path)
-
-    # GC pass — independent of the ``created``-gate, see docstring above.
-    # Only bothers loading the app config / GitHub client when at least one
-    # direction actually crosses the GC threshold, so a tick with nothing
-    # pending (or nothing GC-eligible) still never touches GitHub — hosts
-    # without credentials must not fail on an idle queue.
     now = datetime.now(UTC)
-    github_client: Any = None
-    if any(is_gc_eligible(d, now=now) for d in pending):
+    auto_statuses = frozenset({"created"})
+    fresh = [d for d in pending if d.status in auto_statuses]
+
+    def _run_gc(github_client: Any) -> None:
+        # Only load the app config when something actually crosses the GC
+        # threshold, so an idle queue never touches GitHub.
+        if not any(is_gc_eligible(d, now=now) for d in pending):
+            return
         gc_app_config = None
         if not dry_run:
             try:
                 gc_app_config = load_app_config(app, root)
             except FileNotFoundError:
                 gc_app_config = None
-            if github_client_factory is not None:
-                github_client = github_client_factory()
         try:
             gc_stale_scheduled_directions(
                 app,
@@ -913,9 +939,15 @@ def _maybe_auto_pm_sync_locked(
         except Exception:  # noqa: BLE001 - GC is a side pass, never fatal
             pass
 
-    auto_statuses = frozenset({"created"})
-    fresh = [d for d in pending if d.status in auto_statuses]
+    def _gc_client() -> Any:
+        if dry_run or github_client_factory is None:
+            return None
+        if not any(is_gc_eligible(d, now=now) for d in pending):
+            return None
+        return github_client_factory()
+
     if not fresh:
+        _run_gc(_gc_client())
         return None, "no_pending"
 
     # Operator-approval gate. ``pm_sync`` re-applies this (it is the
@@ -925,13 +957,19 @@ def _maybe_auto_pm_sync_locked(
     # ``awaiting_approval`` reason instead of a silent ``synced`` with zero
     # processed, so the park is visible in the tick output.
     if not any(is_auto_buildable(d) for d in fresh):
+        _run_gc(_gc_client())
         return None, "awaiting_approval"
 
     if _pm_runs_last_hour(db_path) >= settings.rate_limits.pm_invocations_per_hour:
+        _run_gc(_gc_client())
         return None, "rate_limited"
 
-    if github_client is None and not dry_run and github_client_factory is not None:
-        github_client = github_client_factory()
+    # The happy path opens the runs row and calls the model before it touches
+    # the tracker. A proxy keeps ``pm_sync``'s "client required" check happy
+    # and builds ``gh`` on the first attribute use, after started_at.
+    github_client: Any = None
+    if not dry_run and github_client_factory is not None:
+        github_client = _LazyGitHubClient(github_client_factory)
 
     summary = pm_sync(
         app=app,
@@ -942,4 +980,6 @@ def _maybe_auto_pm_sync_locked(
         pending_statuses=auto_statuses,
         run_gc=False,
     )
+    built = github_client.built if isinstance(github_client, _LazyGitHubClient) else None
+    _run_gc(built if built is not None else _gc_client())
     return summary, "synced"

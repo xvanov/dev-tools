@@ -117,7 +117,11 @@ process. Use `factory.oscompat.pid_alive`.
   enables the old `factory-tick@` timers).
 - Wakes within a second when `factory job submit` or `factory job resume` drops a
   file in `state\scheduler\wake.d\`: it dispatches queued research/report jobs at
-  once (no LLM) and ticks the job's app.
+  once (no LLM). A submit runs PM triage in the serve process and does not also
+  start a tick; triage wakes again when it finishes, and that wake starts the
+  tick. A resume, or a step that finished, starts a tick at once. A wake tick
+  (`FACTORY_TICK_REASON=wake`) dispatches the next step before the GitHub
+  maintenance the interval tick still runs.
 - Runs the research/report dispatch itself every interval too, so those jobs run
   on a machine with no LLM provider key (`factory tick` exits 2 without one,
   before its own dispatch).

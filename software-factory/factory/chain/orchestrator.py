@@ -2702,8 +2702,13 @@ def tick(
     dry_run: bool = False,
     max_advances_per_story: int = 10,
     db_path: Path | None = None,
+    maintenance: bool = True,
 ) -> TickSummary:
     """Advance every in-flight story for ``app`` toward PR_OPEN.
+
+    ``maintenance=False`` is a wake tick: skip the GitHub passes (reconcile,
+    freshen, auto-merge, CI health, issue hygiene) so the next step starts
+    before them. The interval tick keeps those passes (8.4.15).
 
     Each story is driven through as many handlers as possible (up to
     ``max_advances_per_story``) so the dry-run dogfood completes in a single
@@ -2855,7 +2860,7 @@ def tick(
         # a prior config-change regime (e.g. retry-cap lowered while a row was
         # mid-attempt). Pure DB rewrite — no LLM / git work. See the function
         # docstring for the recovery mapping.
-        if not dry_run:
+        if not dry_run and maintenance:
             # Reconcile-from-authoritative FIRST: local factory.db state is a
             # PROJECTION; GitHub is the system of record for PR merge/close truth.
             # Pull authoritative PR state into the DB BEFORE any recovery or
@@ -2934,6 +2939,7 @@ def tick(
                 except Exception as exc:
                     summary.errors.append((app, f"branch-freshening failed (non-fatal): {exc!r}"))
 
+        if not dry_run:
             # A tick killed mid-step left its provisional runs row "running".
             from factory.runner import close_orphaned_provisional_runs
 
@@ -3107,7 +3113,7 @@ def tick(
         except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
             _pre_mode = "paused"
             summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
-        if _pre_mode not in {"paused", "drain-reviews"}:
+        if maintenance and _pre_mode not in {"paused", "drain-reviews"}:
             try:
                 summary.merges = auto_merge_tick(
                     root,
@@ -3225,6 +3231,14 @@ def tick(
                     if _budget_defer is not None:
                         summary.deferred.append((story.slug, _budget_defer))
                         _record_budget_deferral(story, _budget_defer, db=db, root=root)
+                        # The next tick has a fresh budget. Ask for it now so
+                        # the step does not wait out the interval (8.4.15).
+                        try:
+                            from factory.scheduler.serve import request_wake
+
+                            request_wake(root, app, reason="progress")
+                        except Exception:  # noqa: BLE001 - a wake is an optimisation
+                            pass
                         break
 
                 # SOLO spend precondition: a solo conversation is capped at the
@@ -3680,7 +3694,7 @@ def tick(
             # reviewer-flagged hazard shared by every hook below — fixed
             # in all of them together, 019 safety-mechanism rewire).
             current_mode = get_mode(root, db_path=db)
-            if current_mode not in {"paused", "drain-reviews"}:
+            if maintenance and current_mode not in {"paused", "drain-reviews"}:
                 merge_actions = auto_merge_tick(
                     root,
                     app,
@@ -3715,7 +3729,7 @@ def tick(
         # same way as auto-merge: an explicit settings flag, and suppressed
         # in modes where forward motion (here: filing a new direction) is
         # deliberately paused.
-        if settings.ci_health.enabled:
+        if maintenance and settings.ci_health.enabled:
             try:
                 # get_mode INSIDE the try — see the auto-merge hook above for
                 # why (a locked-DB read must never kill the tick).
@@ -3785,7 +3799,7 @@ def tick(
         # paused/drain modes, and FULLY FAIL-SAFE: reconcile never raises and a
         # hygiene hiccup must never fail the tick, so it is NOT recorded in
         # ``summary.errors`` — only surfaced (counts) in ``summary.issue_hygiene``.
-        if not dry_run and _should_run_issue_hygiene(root, app):
+        if maintenance and not dry_run and _should_run_issue_hygiene(root, app):
             try:
                 # get_mode INSIDE the try — see the auto-merge hook above.
                 _hyg_mode = get_mode(root, db_path=db)

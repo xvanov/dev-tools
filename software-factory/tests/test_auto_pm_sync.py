@@ -202,6 +202,42 @@ def test_gc_runs_on_tick_with_only_stale_needs_direction_pending(tmp_path: Path)
     assert final_state["audit"][-1]["by"] == GC_BY
 
 
+def test_created_direction_builds_github_after_pm_starts(tmp_path: Path, monkeypatch) -> None:
+    """The GitHub client used to be built before pm-sync, in front of the
+    runs row. The first step must be able to start before ``gh`` is constructed."""
+    from factory.chain.pm_sync import PMSyncSummary
+
+    db = _seed_app(tmp_path)
+    _seed_pending_direction(tmp_path)
+    _write_settings(tmp_path, enabled=True)
+    built: list[int] = []
+
+    def factory() -> object:
+        built.append(1)
+
+        class _Client:
+            repo = "x"
+
+        return _Client()
+
+    def fake_pm_sync(**kwargs: object) -> PMSyncSummary:
+        assert built == []
+        client = kwargs["github_client"]
+        assert client is not None
+        assert client.repo == "x"  # type: ignore[attr-defined]
+        assert built == [1]
+        return PMSyncSummary(processed=1)
+
+    monkeypatch.setattr("factory.chain.pm_sync.pm_sync", fake_pm_sync)
+    summary, reason = maybe_auto_pm_sync(
+        "sacrifice", tmp_path, dry_run=False,
+        github_client_factory=factory, state_db_path=db,
+    )
+    assert reason == "synced"
+    assert summary is not None and summary.processed == 1
+    assert built == [1]
+
+
 def test_github_client_factory_not_called_when_nothing_pending(tmp_path: Path) -> None:
     """Ticks on hosts without GitHub creds must not fail on an idle queue."""
     db = _seed_app(tmp_path)

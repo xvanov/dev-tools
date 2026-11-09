@@ -1116,7 +1116,7 @@ not in the Map is not done, and a new one gets added there first.
     deepseek-pr re-review (`dev-tools:020`, 5d98440): 3945 ms, the 7475 ms round trip less
     compose's 3530 ms. Laps: route 37, prepare 7, gather 2097, submit 1345, follow 361 ms. Still
     open; the gather and the submit are most of it.
-  - [ ] **8.4.15 deepseek-pr: approval to "started" is ≈2.9 s (target 1 s); the e2e read 11.1 s.**
+  - [x] **8.4.15 deepseek-pr: approval to "started" is ≈2.9 s (target 1 s); the e2e read 11.1 s.**
     factory_start returned ≈19:56:45.7, and the job sat `queued` ("waiting for pm-sync on the next
     factory tick") until the pm step started at 19:56:48.59. Same root as 8.4.9: a submit should
     wake the tick. The steps also waited 20 s (pm to sm) and 35 s (sm to dev) between ticks.
@@ -1124,6 +1124,15 @@ not in the Map is not done, and a new one gets added there first.
     within about 1 s (returned 23:57:11.3, `tick dev-tools started (wake)` 23:57:12), but the
     tick took ≈6.7 s to start the pm step (`started_at` 23:57:18.666). pm to sm waited 26 s for
     the next wake tick; sm to dev ran in the same tick.
+    Done (pending-8415): a submit wakes triage and the research dispatch, not a tick. The tick
+    that used to start with it ran the GitHub maintenance while holding the app, so the next
+    step waited for that process to exit. Triage wakes `triaged` when stories exist (and `tick`
+    if it was busy or threw). That tick is `FACTORY_TICK_REASON=wake`: it skips scheduled
+    personas, intake, job dispatch, acceptance reauthor and the deploy drain, and
+    `tick(maintenance=False)` skips reconcile/freshen/auto-merge/CI-health/issue hygiene.
+    PM builds the GitHub client on first use and runs GC after the step, so that work no
+    longer sits in front of the runs row. A budget defer requests a progress wake (a finished
+    step already did). The sm step still pays a cold `python -m factory tick` start.
   - [ ] **8.4.16 deepseek-pr: the worker hop is not measured.** One sample: PR #63 closed at
     20:24:37Z, the PA `run` row reached the live feed at 20:25:01 (24 s) and `factory_board` at
     20:25:08 (31 s). The factory's `updated_at` moved only at 20:28:52, so it can't time the change.

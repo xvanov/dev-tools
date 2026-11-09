@@ -1174,6 +1174,13 @@ def tick_cmd(
             file=_sys.stderr,
         )
 
+    # A wake tick (serve sets FACTORY_TICK_REASON) exists to dispatch the next
+    # step. The interval tick still runs scheduled personas, intake, job
+    # dispatch and acceptance reauthor; a wake tick skips them so the step
+    # starts before that preamble (8.4.15). PM-sync stays: it is the backup
+    # when the in-process triage lane lost the lock.
+    _wake_tick = os.environ.get("FACTORY_TICK_REASON") == "wake"
+
     # Phase 6: drive the scheduler BEFORE the story chain so findings
     # filed by Ralph/etc become directions that this same tick can pick
     # up (PM-sync runs separately, but the next tick will spawn stories
@@ -1183,7 +1190,7 @@ def tick_cmd(
 
     scheduled_results = []
 
-    for due in due_schedules(_FACTORY_ROOT, audit_app=app_name):
+    for due in due_schedules(_FACTORY_ROOT, audit_app=app_name) if not _wake_tick else []:
         if due.rate_limit_hit:
             scheduled_results.append((due.schedule.name, "rate_limited", 0, 0))
             continue
@@ -1217,7 +1224,7 @@ def tick_cmd(
     # into directions, so a user reporting a bug/feature flows all the way to a
     # PR with no operator step. Runs BEFORE auto_pm_sync so a freshly-ingested
     # direction is triaged into stories on this very tick.
-    if not dry_run:
+    if not dry_run and not _wake_tick:
         from factory.chain.issue_intake import maybe_auto_intake
 
         try:
@@ -1287,23 +1294,26 @@ def tick_cmd(
     # detached workers, and reap dead ones. Never blocks on the agent run and
     # never fails the tick. Every app's tick does this; the dispatch is
     # serialised by its own lock and capped by FACTORY_TASK_MAX_WORKERS.
-    try:
-        from factory.jobs.tasks import dispatch_tasks
+    # A wake tick skips it: serve already dispatched on the wake, and this
+    # pass opens factory.db (up to its lock timeout) before the step starts.
+    if not _wake_tick:
+        try:
+            from factory.jobs.tasks import dispatch_tasks
 
-        task_dispatch = dispatch_tasks(_FACTORY_ROOT, dry_run=dry_run)
-        if task_dispatch["started"] or task_dispatch["reaped"]:
-            scheduled_results.append(
-                (
-                    "task_jobs",
-                    ("started " + ",".join(task_dispatch["started"]))[:60]
-                    if task_dispatch["started"]
-                    else "reaped",
-                    len(task_dispatch["started"]),
-                    len(task_dispatch["reaped"]),
+            task_dispatch = dispatch_tasks(_FACTORY_ROOT, dry_run=dry_run)
+            if task_dispatch["started"] or task_dispatch["reaped"]:
+                scheduled_results.append(
+                    (
+                        "task_jobs",
+                        ("started " + ",".join(task_dispatch["started"]))[:60]
+                        if task_dispatch["started"]
+                        else "reaped",
+                        len(task_dispatch["started"]),
+                        len(task_dispatch["reaped"]),
+                    )
                 )
-            )
-    except Exception as exc:  # noqa: BLE001 - never fail the tick on task dispatch
-        scheduled_results.append(("task_jobs", f"errored:{exc!r}"[:60], 0, 0))
+        except Exception as exc:  # noqa: BLE001 - never fail the tick on task dispatch
+            scheduled_results.append(("task_jobs", f"errored:{exc!r}"[:60], 0, 0))
 
     # WS1.2 acceptance-oracle self-heal. A story that is EXPECTED to have an
     # independent acceptance oracle but whose authoring flaked (transient LLM
@@ -1311,7 +1321,7 @@ def tick_cmd(
     # stories from the SPEC (still dev-blind) here, BEFORE the chain advances and
     # before merge evaluation, so the block is temporary — never a permanent
     # dead-end and never a silent pass. Never fails the tick.
-    if not dry_run:
+    if not dry_run and not _wake_tick:
         try:
             from factory.chain.acceptance import reauthor_missing_oracles
 
@@ -1331,7 +1341,9 @@ def tick_cmd(
             sched_table.add_row(name, status, str(fcount), str(dcount))
         console.print(sched_table)
 
-    summary = tick(_FACTORY_ROOT, app_name, dry_run=dry_run)
+    summary = tick(
+        _FACTORY_ROOT, app_name, dry_run=dry_run, maintenance=not _wake_tick
+    )
 
     # Plan 2.2: a tick that moved a story asks `factory serve` to tick this app
     # again as soon as it exits, so a chain walks step to step without waiting
@@ -1345,14 +1357,18 @@ def tick_cmd(
 
     # After the story chain advances, drain any pending deploy queue
     # entries for this app. The deploy worker honors deploy-frozen mode
-    # via the settings enforcer.
-    from factory.deploy.orchestrator import drain_deploy_queue
+    # via the settings enforcer. A wake tick skips it: the drain holds the
+    # tick slot after the step, so the next step waits for it to finish.
+    if _wake_tick:
+        deploy_actions = []
+    else:
+        from factory.deploy.orchestrator import drain_deploy_queue
 
-    deploy_actions = drain_deploy_queue(
-        app=app_name,
-        software_factory_root=_FACTORY_ROOT,
-        dry_run=dry_run,
-    )
+        deploy_actions = drain_deploy_queue(
+            app=app_name,
+            software_factory_root=_FACTORY_ROOT,
+            dry_run=dry_run,
+        )
     if deploy_actions:
         dep_table = Table(title="deploy queue drained")
         dep_table.add_column("sha")
@@ -1664,10 +1680,22 @@ def serve_cmd(
 
         if is_halted(root=_FACTORY_ROOT) or not _has_any_llm_provider_key()[0]:
             return
-        summary, reason = maybe_auto_pm_sync(
-            app_name, _FACTORY_ROOT,
-            github_client_factory=lambda: _ensure_github_client(_app_repo(app_name)),
-        )
+        try:
+            summary, reason = maybe_auto_pm_sync(
+                app_name, _FACTORY_ROOT,
+                github_client_factory=lambda: _ensure_github_client(_app_repo(app_name)),
+            )
+        except Exception:
+            # The submit wake did not start a tick. A failed triage must still
+            # hand the app to one, or the job waits for the interval.
+            request_wake(_FACTORY_ROOT, app_name, reason="tick")
+            raise
+        if reason == "busy":
+            # The other holder (a tick's pm-sync) may have scanned before this
+            # direction existed. Ask for a tick; that wake is not a submit, so
+            # it does not loop back into a triage-only step.
+            request_wake(_FACTORY_ROOT, app_name, reason="tick")
+            return
         if summary is not None and (summary.processed or summary.validated):
             sched.log(f"triage {app_name}: {reason} processed={summary.processed} validated={summary.validated}")
             # Stories exist now: let the app's tick take the next step at once.
