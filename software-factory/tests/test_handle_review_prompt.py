@@ -507,3 +507,176 @@ def test_handle_review_truncates_large_story_file_at_32kb(
         f"story section length {len(story_section.rstrip())} exceeds "
         f"expected cap {max_expected}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Solo review sees the ask and the files, not only the diff (PLAN 8.4.49)
+# --------------------------------------------------------------------------- #
+
+
+class _Direction:
+    def __init__(self, path: Path, body: str) -> None:
+        self.dir_path = path
+        self.raw_body = body
+        self.title = "version"
+
+
+def _seed_review_files(temp_root: Path) -> Path:
+    """A worktree with a changed file, a precedent the ask cites, and one the
+    context cites. Returns the direction directory."""
+    repo = temp_root / "sacrifice"
+    (repo / "src" / "cli").mkdir(parents=True, exist_ok=True)
+    (repo / "src" / "server.ts").write_text(
+        "export const dashboard = { cwd: __dirname }\nMAGIC-PRECEDENT-SERVER\n",
+        encoding="utf-8",
+    )
+    (repo / "src" / "dashboard.ts").write_text(
+        "listen({ cwd: __dirname })\nMAGIC-CONTEXT-DASH\n",
+        encoding="utf-8",
+    )
+    (repo / "src" / "cli" / "version.ts").write_text(
+        'export function version() {\n  return exec("git rev-parse --short HEAD")\n}\n'
+        "MAGIC-FULL-FILE-8821\n",
+        encoding="utf-8",
+    )
+    direction = temp_root / "apps" / "sacrifice" / "directions" / "002-version"
+    (direction / "artifacts").mkdir(parents=True, exist_ok=True)
+    (direction / "artifacts" / "ask.md").write_text(
+        "Add a pa version verb that prints the git commit.\n"
+        "The dashboard already passes cwd: see src/server.ts:618.\n"
+        "MAGIC-ASK-271828\n",
+        encoding="utf-8",
+    )
+    return direction
+
+
+_SOLO_DIFF = (
+    "diff --git a/src/cli/version.ts b/src/cli/version.ts\n"
+    "@@ -0,0 +1,3 @@\n"
+    "+export function version() {\n"
+    '+  return exec("git rev-parse --short HEAD")\n'
+    "+}\n"
+)
+
+
+def test_solo_review_prompt_includes_the_ask_and_precedent_files(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The API solo reviewer is one call and cannot open a file. The prompt
+    carries the card's ask verbatim, the full changed file, and the precedent
+    files the ask and the context name."""
+    _patch_helpers_to_be_inert(monkeypatch)
+    cap = _patch_text_run(monkeypatch)
+    import factory.chain.handlers as handlers_mod
+    import factory.context.loader as loader_mod
+
+    direction = _seed_review_files(temp_root)
+    monkeypatch.setattr(
+        handlers_mod,
+        "_fetch_pr_diff_for_review",
+        lambda *_a, **_k: _SOLO_DIFF,
+    )
+    monkeypatch.setattr(
+        handlers_mod, "_writing_worktree", lambda *_a, **_k: temp_root / "sacrifice"
+    )
+    monkeypatch.setattr(
+        handlers_mod,
+        "find_direction_for_story",
+        lambda *_a, **_k: _Direction(direction, "RAW-BODY-SHOULD-NOT-WIN"),
+    )
+    monkeypatch.setattr(
+        loader_mod,
+        "compose_context_prelude",
+        lambda **_kw: "The cwd precedent for this app is src/dashboard.ts.\n",
+    )
+
+    def _route(persona: str, difficulty: str = "standard") -> str:
+        if persona == "reviewer":
+            return "stub/reviewer"
+        return f"stub/dev-{difficulty}"
+
+    monkeypatch.setattr(handlers_mod, "route", _route)
+
+    s = _story(temp_root)
+    s.pipeline = "solo"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+    handle_review(s, app_config, temp_root, db_path=db)
+
+    prompt = cap.last_prompt
+    assert "## The job's ask (verbatim)" in prompt
+    assert "MAGIC-ASK-271828" in prompt
+    assert "RAW-BODY-SHOULD-NOT-WIN" not in prompt
+    # The changed file's body, not only the hunk (the marker is not in the diff).
+    assert "MAGIC-FULL-FILE-8821" in prompt
+    assert "### src/cli/version.ts (changed in the diff)" in prompt
+    # Precedent the ask names, which the diff does not touch.
+    assert "MAGIC-PRECEDENT-SERVER" in prompt
+    assert "src/server.ts" in prompt
+    # Precedent the context names.
+    assert "MAGIC-CONTEXT-DASH" in prompt
+    assert "src/dashboard.ts" in prompt
+
+
+def test_chain_review_prompt_does_not_inline_the_solo_packet(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The packet is for the one-shot solo reviewer. A chain review is unchanged."""
+    _patch_helpers_to_be_inert(monkeypatch)
+    cap = _patch_text_run(monkeypatch)
+    import factory.chain.handlers as handlers_mod
+
+    _seed_review_files(temp_root)
+    monkeypatch.setattr(
+        handlers_mod, "_fetch_pr_diff_for_review", lambda *_a, **_k: _SOLO_DIFF
+    )
+    monkeypatch.setattr(
+        handlers_mod, "_writing_worktree", lambda *_a, **_k: temp_root / "sacrifice"
+    )
+
+    s = _story(temp_root)
+    db = temp_root / "state" / "factory.db"
+    handle_review(s, app_config, temp_root, db_path=db)
+    prompt = cap.last_prompt
+    assert "## The job's ask (verbatim)" not in prompt
+    assert "MAGIC-ASK-271828" not in prompt
+    assert "MAGIC-FULL-FILE-8821" not in prompt
+    assert "MAGIC-PRECEDENT-SERVER" not in prompt
+
+
+def test_review_packet_resolves_a_bare_citation_and_stays_inside_the_tree(
+    tmp_path: Path,
+) -> None:
+    from factory.chain.solo import review_packet
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "server.ts").write_text("cwd: __dirname\nMAGIC-BARE\n", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("MAGIC-SECRET\n", encoding="utf-8")
+    packet = review_packet(
+        worktree=repo,
+        diff="",
+        ask="Follow server.ts:618 and also ../secret.txt:1.\n",
+        cited="",
+    )
+    assert "MAGIC-BARE" in packet
+    assert "src/server.ts" in packet
+    assert "MAGIC-SECRET" not in packet
+
+
+def test_review_packet_caps_a_large_file(tmp_path: Path) -> None:
+    from factory.chain.solo import review_packet
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "big.ts").write_text(
+        "HEAD-MARKER\n" + ("x" * 20_000) + "\nTAIL-MARKER\n", encoding="utf-8"
+    )
+    packet = review_packet(
+        worktree=tmp_path,
+        diff="diff --git a/src/big.ts b/src/big.ts\n",
+        ask="touch the big file\n",
+        cited="",
+    )
+    assert "HEAD-MARKER" in packet
+    assert "TAIL-MARKER" not in packet
+    assert "...[truncated]" in packet

@@ -4713,6 +4713,31 @@ def handle_review(
                 "(`low`), never `medium`/`high`.\n\n"
             )
             history_section = _render_reviewer_history_section(story)
+            from factory.chain.solo import (
+                is_solo as _is_solo_review,
+            )
+            from factory.chain.solo import (
+                job_ask_text,
+                review_packet,
+                solo_reviews,
+            )
+
+            packet = ""
+            if solo_reviews(story):
+                # One call, no tool turns. The ask and the files it names have
+                # to be in the prompt or the reviewer judges hunks only.
+                try:
+                    review_tree = _writing_worktree(app_config, software_factory_root, story)
+                except Exception:  # noqa: BLE001 - the ask still reaches the reviewer
+                    review_tree = None
+                packet = review_packet(
+                    worktree=review_tree,
+                    diff=pr_diff,
+                    ask=job_ask_text(direction),
+                    cited=f"{prelude}\n{story_content}\n{dev_self_summary}",
+                )
+                if packet:
+                    packet = packet.rstrip() + "\n\n"
             full_prompt = (
                 f"{persona_prompt.rstrip()}\n\n"
                 "---\n\n"
@@ -4727,14 +4752,13 @@ def handle_review(
                 "## DEV SELF-SUMMARY (dev's own unverified claims, including "
                 "which precedent it followed)\n\n"
                 f"{dev_self_summary}\n\n"
+                f"{packet}"
                 "## PR diff\n\n"
                 f"{pr_diff}\n\n"
                 "Return the JSON object for the review. No prose outside the JSON."
             )
             _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
             model_id = _route_for(story, persona)
-            from factory.chain.solo import is_solo as _is_solo_review
-
             collision = _review_model_collision(story, model_id) if _is_solo_review(story) else None
             if collision is not None:
                 return _block_on_review_collision(

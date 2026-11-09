@@ -202,6 +202,15 @@ full tree context for X; a story whose remaining delta is small produces a
 small diff, and that is correct (story 64, 2026-06-12: four of five blocking
 findings demanded code that was already merged and tested on main).
 
+## The ask and the files (when the prompt includes them)
+
+A solo review is one call and has no tool turns. When the prompt has "The
+job's ask (verbatim)" and "Files to judge", those are the behaviour, not the
+hunks. Judge the change against the ask. Read each inlined file in full: a
+precedent the ask or the diff cites (a `cwd` a sibling command already passes,
+a helper the new code bypasses) is in that section even when the diff never
+touches it. A defect the hunks do not show is still a finding.
+
 ## Scope & capability fence (do NOT block on these)
 
 * Findings must map to THIS story's acceptance criteria. Work owned by a

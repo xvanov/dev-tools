@@ -34,7 +34,11 @@ once before delivery (``solo_reviews``) — on routes.yaml's reviewer model, whi
 must differ from every dev tier — with at most ``SOLO_MAX_REVIEW_CYCLES``
 cycles: a blocking finding gets ONE fix round in a fresh dev conversation, and
 a blocker that survives it parks the story in ``blocked_review_nonconvergent``
-for a human instead of shipping. A ``claude_session`` solo story keeps no
+for a human instead of shipping. That review is one text call and zero tool
+turns, so the prompt carries the job's ask verbatim and the bounded content of
+the files the diff touches plus the files the ask or the context names
+(``review_packet``): a hunk cannot show that a new command runs ``git`` with no
+``cwd`` when the precedent file does. A ``claude_session`` solo story keeps no
 reviewer: its dev is Claude Code in a session the operator can watch and steer.
 
 **Independence.** Beyond that review, the checks the dev cannot influence are the
@@ -49,6 +53,7 @@ checks gate a given story is logged on its event stream as ``solo_checks``.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -282,6 +287,244 @@ def build_solo_brief(
             body,
         ]
     return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# What the one-shot reviewer can see
+# --------------------------------------------------------------------------- #
+
+#: One inlined file, and the whole file section. The reviewer is one call;
+#: unbounded file bodies would crowd out the diff.
+REVIEW_FILE_CAP = 8_000
+REVIEW_PACKET_CAP = 48_000
+REVIEW_MAX_FILES = 12
+
+_CITED_PATH_RE = re.compile(
+    r"(?<![\w./-])"
+    r"((?:[\w.@+-]+/)+[\w.@+-]+\."
+    r"(?:ts|tsx|js|jsx|mjs|cjs|py|md|json|ya?ml|rs|go|toml|css|html))"
+    r"(?::\d+)?"
+)
+_BARE_CITATION_RE = re.compile(
+    r"(?<![\w./-])([\w.@+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|md))(?::\d+)"
+)
+_DIFF_GIT_RE = re.compile(r'^diff --git (?:"a/|a/)(.+?) (?:"b/|b/)(.+?)"?\s*$', re.M)
+_DIFF_PLUS_RE = re.compile(r"^\+\+\+ (?:b/|/)(.+)$", re.M)
+_WALK_SKIP = {".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"}
+
+
+def job_ask_text(direction: Any | None) -> str:
+    """The job's ask, verbatim.
+
+    ``artifacts/ask.md`` is the card text as submitted (the direction body
+    demotes its headings so they cannot break the parser). The direction body
+    is the fallback when a job has no ask file.
+    """
+    if direction is None:
+        return ""
+    root = getattr(direction, "dir_path", None)
+    if root:
+        ask_path = Path(root) / "artifacts" / "ask.md"
+        try:
+            text = ask_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        if text.strip():
+            return text
+    return (getattr(direction, "raw_body", "") or "").strip()
+
+
+def _unquote_diff_path(raw: str) -> str:
+    text = raw.strip().strip('"')
+    if text == "/dev/null":
+        return ""
+    return text.replace("\\", "/")
+
+
+def _diff_paths(diff: str) -> list[str]:
+    """Repo-relative paths a unified diff changes, in order, de-duplicated."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        rel = _unquote_diff_path(raw)
+        if rel and rel not in seen:
+            seen.add(rel)
+            found.append(rel)
+
+    for match in _DIFF_GIT_RE.finditer(diff or ""):
+        new, old = match.group(2), match.group(1)
+        _add(new or old)
+    if not found:
+        for match in _DIFF_PLUS_RE.finditer(diff or ""):
+            _add(match.group(1))
+    return found
+
+
+def _cited_paths(text: str) -> list[str]:
+    """Paths named in ``text`` (``src/server.ts`` or ``src/server.ts:618``)."""
+    found: list[str] = []
+    seen: set[str] = set()
+    blob = text or ""
+    for match in _CITED_PATH_RE.finditer(blob):
+        start = match.start(1)
+        if "://" in blob[max(0, start - 8) : start + 3]:
+            continue
+        rel = match.group(1).replace("\\", "/")
+        if rel not in seen:
+            seen.add(rel)
+            found.append(rel)
+    return found
+
+
+def _bare_citations(text: str) -> list[str]:
+    """``server.ts:618`` with no directory. Only a ``:line`` cite counts."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _BARE_CITATION_RE.finditer(text or ""):
+        name = match.group(1)
+        if "/" in name or name in seen:
+            continue
+        seen.add(name)
+        found.append(name)
+    return found
+
+
+def _resolve_in_repo(worktree: Path, rel: str) -> Path | None:
+    """The file ``rel`` names inside ``worktree``, or None.
+
+    Rejects absolute paths and ``..``. ``resolve`` plus ``relative_to`` also
+    rejects a symlink that leaves the worktree.
+    """
+    rel = rel.replace("\\", "/").strip().lstrip("./")
+    if not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
+        return None
+    if any(part == ".." for part in Path(rel).parts):
+        return None
+    root = worktree.resolve()
+    try:
+        target = (root / rel).resolve()
+        target.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not target.is_file():
+        return None
+    return target
+
+
+def _unique_bare_file(worktree: Path, name: str) -> str | None:
+    """The one repo-relative path named ``name``, or None when it is not unique."""
+    matches: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(worktree):
+        dirnames[:] = [d for d in dirnames if d not in _WALK_SKIP and not d.startswith(".")]
+        if name in filenames:
+            matches.append(Path(dirpath) / name)
+            if len(matches) > 1:
+                return None
+    if len(matches) != 1:
+        return None
+    try:
+        return matches[0].resolve().relative_to(worktree.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _read_capped(path: Path) -> str | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data[:1024]:
+        return None
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > REVIEW_FILE_CAP:
+        text = text[:REVIEW_FILE_CAP] + "\n...[truncated]\n"
+    return text
+
+
+def review_packet(*, worktree: Path | None, diff: str, ask: str, cited: str) -> str:
+    """The ask, verbatim, plus the file bodies a one-shot reviewer cannot open.
+
+    The solo reviewer has no tool turns. The diff is a delta, so a wrong
+    ``cwd`` (or any other behaviour the hunks do not show) is invisible unless
+    the prompt also carries the job's ask and the files that ask, the story
+    or the context names, along with the full content of every file the diff
+    touches.     Each file and the whole section are capped.
+    """
+    body = (ask or "").strip()
+    if len(body) > _JOB_TEXT_CAP:
+        body = body[:_JOB_TEXT_CAP] + "\n\n[... job text truncated ...]"
+    if not body:
+        body = "(no verbatim ask on record)"
+    lines = [
+        "## The job's ask (verbatim)",
+        "",
+        "Judge the change against this text. It is the card's ask, not a summary.",
+        "",
+        body,
+        "",
+        "## Files to judge (full content, bounded)",
+        "",
+        "These are the files the diff touches and the files the ask, the story or "
+        "the context names. Read them: the diff's hunks are not the behaviour.",
+        "",
+    ]
+    if worktree is None or not Path(worktree).is_dir():
+        lines.append("_(file contents unavailable: the story worktree could not be read)_")
+        return "\n".join(lines).rstrip() + "\n"
+
+    root = Path(worktree)
+    ordered: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def _take(rel: str, why: str) -> None:
+        rel = rel.replace("\\", "/")
+        if not rel or rel in seen or len(ordered) >= REVIEW_MAX_FILES:
+            return
+        if _resolve_in_repo(root, rel) is None:
+            return
+        seen.add(rel)
+        ordered.append((rel, why))
+
+    for rel in _diff_paths(diff):
+        _take(rel, "changed in the diff")
+    scan = f"{ask}\n{cited}\n{diff}"
+    for rel in _cited_paths(scan):
+        _take(rel, "named by the ask or context")
+    for name in _bare_citations(scan):
+        if any(path.endswith("/" + name) or path == name for path in seen):
+            continue
+        found = _unique_bare_file(root, name)
+        if found:
+            _take(found, "named by the ask or context")
+
+    if not ordered:
+        lines.append("_(no cited or changed file was readable in the worktree)_")
+        return "\n".join(lines).rstrip() + "\n"
+
+    used = 0
+    shown = 0
+    for rel, why in ordered:
+        target = _resolve_in_repo(root, rel)
+        if target is None:
+            continue
+        content = _read_capped(target)
+        if content is None:
+            continue
+        block = f"### {rel} ({why})\n\n{content.rstrip()}\n"
+        if used and used + len(block) > REVIEW_PACKET_CAP:
+            lines.append("\n...[further files omitted]\n")
+            break
+        if used + len(block) > REVIEW_PACKET_CAP:
+            room = max(0, REVIEW_PACKET_CAP - used - 80)
+            content = content[:room] + "\n...[truncated]\n"
+            block = f"### {rel} ({why})\n\n{content.rstrip()}\n"
+        lines.append(block)
+        used += len(block)
+        shown += 1
+    if shown == 0:
+        lines.append("_(no cited or changed file was readable in the worktree)_")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -717,6 +960,8 @@ __all__ = [
     "SOLO_MAX_REVIEW_CYCLES",
     "SOLO_NO_PROGRESS_ABORT_S",
     "build_solo_brief",
+    "job_ask_text",
+    "review_packet",
     "checks_plan",
     "finding_paths",
     "static_gate_baseline",

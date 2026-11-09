@@ -1591,6 +1591,10 @@ not in the Map is not done, and a new one gets added there first.
     turns, ~10 k tokens) that never sees how `pa` runs from anywhere. Give the reviewer the card's
     ask verbatim and the precedent files, or let it read the repo
     ([acceptance/deepseek-pr.md](acceptance/deepseek-pr.md), re-review).
+    Done, not re-run live: the API solo reviewer (one call, no tool turns) now gets
+    the job's ask verbatim (`artifacts/ask.md`) and the bounded full content of files
+    the diff touches plus files the ask, the story or the context names, so it can
+    judge behaviour.
   - [ ] **8.4.50 deepseek-pr: a review with no blocker costs a fix round.** Cycle 1 returned
     `request_changes` on one medium and four lows. The medium was a false alarm: `/api/version`
     "has no cited precedent", but `server.ts:290` serves it. The fix round and the second review
