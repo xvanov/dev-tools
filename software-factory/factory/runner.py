@@ -2471,6 +2471,8 @@ async def _sandbox_run_impl(
             prelude_signals.append("navigation.md included")
         if "NO CONTEXT AVAILABLE" in context_prelude:
             prelude_signals.append("NO_CONTEXT_AVAILABLE notice issued")
+        elif "Continue from the code and the task." in context_prelude:
+            prelude_signals.append("context files missing")
 
         _record(
             persona=persona,

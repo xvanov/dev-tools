@@ -1173,19 +1173,21 @@ not in the Map is not done, and a new one gets added there first.
     $0.0472) and one fix round ($0.4027) came before the PR, and the scope and the hardcoded port
     are fixed. PR #72 still ships the `cwd`-less git fallback, which neither cycle flagged
     (8.4.49), and the fix round came from a review with no blocker (8.4.50).
-  - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
+  - [x] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
     Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
     turns exploring. Generate the context on the work factory (local, untracked), and keep the
     Onboarder text out of other personas' prompts.
     2026-11-08: the work factory generated it as docs job dev-tools:019, delivered as PR #69
     (tracked, per 2.5b; review fixes in 5c5514f; the job's fixes are 0df69a3 and cba272a).
-    Once #69 merges and the work checkout pulls, dev steps get the set. The Onboarder text in
-    other personas' prompts is still open.
+    Once #69 merges and the work checkout pulls, dev steps get the set.
     deepseek-pr re-review (`dev-tools:020`, bec30c1 served): the context set is verified live.
     Both dev prompts open with "# Context for persona: dev" and `context/project.md`. Neither
     "NO CONTEXT AVAILABLE" nor the Onboarder text is in the 600 characters the stream keeps. The
     first dev conversation took 48 turns (76 before). Other personas' prompts were not checked.
+    Done: when project.md or navigation.md is missing, only the onboarder persona gets
+    "NO CONTEXT AVAILABLE … You are likely the Onboarder persona". Every other persona
+    gets a one-line note to continue from the code and the task.
   - [x] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
     delivers a ready PR, and the factory forbids the agent from opening one.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
@@ -1622,7 +1624,7 @@ not in the Map is not done, and a new one gets added there first.
     Done: the write landed in the story worktree after the dev commit, so the PR
     was cut without it. The update is now committed on the story branch before
     tech_writer advances (and so before the PR is opened). A failed commit bounces
-    the story instead of advancing with the file uncommitted.
+    the story instead of advancing with the file uncommitted. (2aadaf7)
   - [x] **8.4.53 PA: an e2e dummy card leaks into a real card's blocker verdict.** On the Plan
     board, an unrelated work card shows "You need: Needs the ArgoCD sync to deploy the target
     service before adding the pa version verb." It is a stored block row (`verdict: blocks`,

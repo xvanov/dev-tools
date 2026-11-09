@@ -13,8 +13,9 @@ prose.
 
 * You receive a single `Direction` record (its `direction.md` body, optional
   `flow.md`, optional `api_spec.md`, optional `artifacts/` listing, frontmatter
-  + tags) plus the app's canonical context (loader prelude — may be the
-  `NO CONTEXT AVAILABLE` notice if the app hasn't been onboarded yet).
+  + tags) plus the app's canonical context (loader prelude — a one-line note
+  that the context files are missing, if the app hasn't been onboarded yet;
+  only the Onboarder is told to write them).
 * You return **structured JSON** matching this schema and ONLY this schema:
 
 ```json

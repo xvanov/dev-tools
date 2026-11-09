@@ -10,9 +10,10 @@ Phase-0 contract:
   * If ``task_scope`` is provided, match it (case-insensitive substring) against
     the scope_labels parsed out of navigation.md; concatenate every referenced
     file found on disk.
-  * If project.md or navigation.md is missing (e.g. Onboarder runs before
-    context exists), return a single ``NO CONTEXT AVAILABLE`` notice — the
-    caller's persona prompt should already know what to do in that mode.
+  * If project.md or navigation.md is missing, the onboarder gets the
+    ``NO CONTEXT AVAILABLE`` notice (it is the persona that writes the set).
+    Every other persona gets a one-line note that the files are absent and
+    to continue from the code and the task — never the Onboarder instructions.
   * If ``direction_chain`` is provided, append each ancestor direction's
     ``direction.md`` body and merged story file (oldest first).
   * If ``db_path`` is provided and an ancestor direction has deployed stories,
@@ -30,19 +31,28 @@ from factory.context.navigator import parse_navigation
 from factory.directions.parser import Direction, MissingDirection
 
 
-def _no_context_notice(context_dir: str | None) -> str:
+def _no_context_notice(context_dir: str | None, persona: str) -> str:
     project = context_path(context_dir, "project.md")
     navigation = context_path(context_dir, "navigation.md")
+    # Only the onboarder writes the context set. Other personas that saw this
+    # text spent their first turns exploring and drafting project.md (PLAN 8.4.20).
+    if persona.strip().lower() == "onboarder":
+        return (
+            "# Context\n"
+            "\n"
+            "**NO CONTEXT AVAILABLE.**\n"
+            "\n"
+            f"This app repo has no `{project}` and/or no `{navigation}` "
+            "yet. You are likely the Onboarder persona running on a fresh codebase. "
+            f"Build context from the code itself; populate `{project}`, "
+            f"`{navigation}`, and the rest of the canonical context set on this "
+            "run. Subsequent personas will rely on what you write here.\n"
+        )
     return (
         "# Context\n"
         "\n"
-        "**NO CONTEXT AVAILABLE.**\n"
-        "\n"
-        f"This app repo has no `{project}` and/or no `{navigation}` "
-        "yet. You are likely the Onboarder persona running on a fresh codebase. "
-        f"Build context from the code itself; populate `{project}`, "
-        f"`{navigation}`, and the rest of the canonical context set on this "
-        "run. Subsequent personas will rely on what you write here.\n"
+        f"No `{project}` or `{navigation}` in this repo yet. "
+        "Continue from the code and the task.\n"
     )
 
 
@@ -133,7 +143,7 @@ def compose_context_prelude(
     navigation_md = _read_text(repo / navigation_rel)
 
     if project_md is None or navigation_md is None:
-        return _no_context_notice(context_dir)
+        return _no_context_notice(context_dir, persona)
 
     parts: list[str] = []
     parts.append(f"# Context for persona: {persona}\n")

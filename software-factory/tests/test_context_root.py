@@ -102,7 +102,8 @@ def test_loader_reads_configured_root(tmp_path: Path) -> None:
     assert f"## {DEVTOOLS_ROOT}/navigation.md" in out
     # default root finds nothing here and names the default in the notice
     missing = compose_context_prelude(persona="dev", app_repo_path=tmp_path)
-    assert "NO CONTEXT AVAILABLE" in missing and "`context/project.md`" in missing
+    assert "NO CONTEXT AVAILABLE" not in missing and "Onboarder" not in missing
+    assert "`context/project.md`" in missing and "Continue from the code and the task." in missing
     other = compose_context_prelude(
         persona="dev", app_repo_path=tmp_path / "nope", context_dir="docs/ctx"
     )

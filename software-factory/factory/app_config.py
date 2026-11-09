@@ -380,8 +380,8 @@ def resolve_app_repo_path(cfg: AppConfig, software_factory_root: Path) -> Path:
 
     Absolute paths are returned unchanged; relative paths are anchored at
     ``software_factory_root``. The result is NOT required to exist —
-    callers handle the "no app tree yet" case (e.g. context loader emits
-    the NO CONTEXT AVAILABLE notice).
+    callers handle the "no app tree yet" case (e.g. the context loader's
+    missing-context note).
     """
     raw = (cfg.app_repo_path or "").strip()
     if not raw:

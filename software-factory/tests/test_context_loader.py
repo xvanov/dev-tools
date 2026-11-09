@@ -54,6 +54,17 @@ def test_no_task_scope_skips_module_pull(tmp_path: Path) -> None:
 def test_missing_files_returns_no_context_notice(tmp_path: Path) -> None:
     out = compose_context_prelude(persona="onboarder", app_repo_path=tmp_path)
     assert "NO CONTEXT AVAILABLE" in out
+    assert "You are likely the Onboarder persona" in out
+
+
+def test_missing_context_onboarder_text_stays_off_other_personas(tmp_path: Path) -> None:
+    """PLAN 8.4.20: a dev with no context must not be told it is the Onboarder."""
+    for persona in ("dev", "reviewer", "tech_writer", "pm", "sm"):
+        out = compose_context_prelude(persona=persona, app_repo_path=tmp_path)
+        assert "NO CONTEXT AVAILABLE" not in out, persona
+        assert "Onboarder" not in out, persona
+        assert "Continue from the code and the task." in out, persona
+        assert "`context/project.md`" in out, persona
 
 
 def test_task_scope_no_match_falls_through(tmp_path: Path) -> None:
