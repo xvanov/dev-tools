@@ -1912,7 +1912,7 @@ not in the Map is not done, and a new one gets added there first.
     adopts an existing Claude session id, or reading the resumed session's usage from its
     transcript (`~/.claude/projects/**.jsonl`) when it ends.
 - [ ] **8.7 Runtime parity: review, job caps and provider limits on both runtimes (JOBS-API v1.9).**
-  - [ ] **8.7.1 The factory side**: `review: off|on|auto` (default `auto` = review only at
+  - [x] **8.7.1 The factory side** (8f2a837): `review: off|on|auto` (default `auto` = review only at
     `auto_merge`/`push_to_main`; app `review.auto_min_diff_lines`), the solo review step on
     `claude_session` (a separate `--permission-mode plan` run of the same reviewer prompt; the fix
     round resumes the dev's own Claude session); job caps $30 / 4 h / 20 rounds counting
@@ -1921,7 +1921,7 @@ not in the Map is not done, and a new one gets added there first.
     5-hour/weekly message, 429 + headers) pause the job, trip a per-runtime breaker until the reset
     and resume by themselves; failover opt-in (`FACTORY_RUNTIME_FAILOVER`, `--failover`) past a
     30 min wait. Status `paused`, `failover`, `policy`.
-  - [ ] **8.7.2 The PA side**: review and caps in a card's dispatch settings (☰ menu) and in
+  - [x] **8.7.2 The PA side** (9c1485c): review and caps in a card's dispatch settings (☰ menu) and in
     Build's Repos editor; `PA_CLAUDE_POOL_FALLBACK_API` folded into one failover policy
     (`src/dispatch/failover.ts`, `PA_RUNTIME_FAILOVER`, threshold, always notified); a factory
     failover raises a notice.
