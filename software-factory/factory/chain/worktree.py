@@ -139,6 +139,64 @@ def _sweep_acceptance_oracles(worktree: Path, *, story_id: int | None) -> None:
         )
 
 
+def _worktree_slots(wt: Path) -> list[Path]:
+    """The canonical path, then any ``<name>-alt-N`` siblings, then free names.
+
+    A sibling exists when the canonical directory was held by a process and
+    the checkout was created beside it. The next call must find that checkout
+    instead of making another one.
+    """
+    existing = []
+    if wt.parent.exists():
+        existing = sorted(p for p in wt.parent.glob(wt.name + "-alt-*") if p.is_dir())
+    slots = [wt, *existing]
+    seen = set(slots)
+    for n in range(2, 10):
+        alt = wt.with_name(f"{wt.name}-alt-{n}")
+        if alt not in seen:
+            slots.append(alt)
+    return slots
+
+
+def _reuse_worktree(path: Path, branch: str, *, story_id: int | None) -> Path | None:
+    """Return ``path`` when it is a readable checkout, switched to ``branch``."""
+    if not (path.exists() and (path / ".git").exists()):
+        return None
+    head_proc = _run_git(path, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+    if head_proc.returncode != 0:
+        # A ``.git`` that git cannot read: the worktree's admin entry was
+        # pruned under it. The caller re-creates the checkout.
+        return None
+    _sweep_acceptance_oracles(path, story_id=story_id)
+    if head_proc.stdout.strip() != branch:
+        # ``git worktree repair`` is for path-link mismatches; ``checkout``
+        # handles the branch flip inside the worktree.
+        _run_git(path, "checkout", branch, check=False)
+    return path
+
+
+def _claim_worktree_dir(repo: Path, wt: Path) -> Path:
+    """A directory ``git worktree add`` can create into.
+
+    Tries the canonical path, then siblings. Raises only when every slot is
+    held, which is the old failure (one held path, retried forever).
+    """
+    held: list[str] = []
+    for cand in _worktree_slots(wt):
+        if not cand.exists():
+            return cand
+        try:
+            _clear_worktree_dir(repo, cand)
+        except RuntimeError as exc:
+            held.append(str(exc))
+            _logger.warning("worktree path %s is held; trying a sibling", cand)
+            continue
+        return cand
+    raise RuntimeError(
+        f"every worktree path for {wt.name} is held by a live process: " + "; ".join(held)
+    )
+
+
 def ensure_worktree_for_story(
     source_repo: Path,
     *,
@@ -185,26 +243,19 @@ def ensure_worktree_for_story(
     pickup = branch is not None
     branch = branch or feature_branch_name(story_id, slug)
 
-    # If the worktree already exists with the expected branch, reuse it.
-    if wt.exists() and (wt / ".git").exists():
-        head_proc = _run_git(wt, "rev-parse", "--abbrev-ref", "HEAD", check=False)
-        if head_proc.returncode == 0:
-            _sweep_acceptance_oracles(wt, story_id=story_id)
-            if head_proc.stdout.strip() == branch:
-                return wt
-            # Mismatch: switch the worktree to the right branch. ``git worktree
-            # repair`` is for path-link mismatches; ``checkout`` handles the
-            # branch flip inside the worktree.
-            _run_git(wt, "checkout", branch, check=False)
-            return wt
-        # A ``.git`` that git cannot read: the worktree's admin entry was
-        # pruned under it. Fall through and re-create it.
+    # Reuse a checkout that is already on this branch: the canonical path, or a
+    # sibling made when that path was held (see _claim_worktree_dir).
+    for cand in _worktree_slots(wt):
+        reused = _reuse_worktree(cand, branch, story_id=story_id)
+        if reused is not None:
+            return reused
 
     # Anything else at the path (a killed attempt's half-deleted tree, a manual
     # cleanup's leftovers) must go, or ``git worktree add`` fails with
-    # "already exists" on every tick.
-    if wt.exists():
-        _clear_worktree_dir(repo, wt)
+    # "already exists" on every tick. A directory a live terminal still has as
+    # its working directory cannot be renamed on Windows; claim a sibling
+    # instead of failing the story on every tick.
+    wt = _claim_worktree_dir(repo, wt)
 
     # Ensure the source's tree isn't dirty in a way that blocks
     # ``git worktree add`` — same idea as ``ensure_feature_branch`` does
@@ -394,15 +445,17 @@ def remove_worktree_for_story(
 ) -> bool:
     """Remove the per-story worktree if present. Returns True if removed."""
     wt = worktree_path(software_factory_root, app, story_id, slug)
-    if not wt.exists():
+    slots = [p for p in _worktree_slots(wt) if p.exists()]
+    if not slots:
         return False
     repo = Path(source_repo)
-    if (repo / ".git").exists():
-        _run_git(repo, "worktree", "remove", "--force", str(wt), check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
-    # Some git versions / older Linux filesystems leave the dir behind
-    # after ``worktree remove``; rm what's left so a re-create succeeds.
-    if wt.exists():
-        shutil.rmtree(wt, ignore_errors=True)
+    for slot in slots:
+        if (repo / ".git").exists():
+            _run_git(repo, "worktree", "remove", "--force", str(slot), check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
+        # Some git versions / older Linux filesystems leave the dir behind
+        # after ``worktree remove``; rm what's left so a re-create succeeds.
+        if slot.exists():
+            shutil.rmtree(slot, ignore_errors=True)
     # ``git worktree prune`` cleans the parent's internal worktree registry
     # so future ``add``s don't see the removed entry.
     if (repo / ".git").exists():
