@@ -288,6 +288,22 @@ async function composeModule() {
   assert.deepStrictEqual(hints.conventions, ['CLAUDE.md']);
   assert.strictEqual(compose.localRepo(['/no/such/dir', repo]), repo);
   assert.deepStrictEqual((await compose.codeHints(null, 'x')).reuse, [], 'no local checkout: no hints, no error');
+  const cachedAt = Date.now();
+  const cached = await compose.codeHints(repo, 'Add retries to the nightly export');
+  const cachedMs = Date.now() - cachedAt;
+  assert.ok(cachedMs < 50, `cached per checkout (${cachedMs} ms)`);
+  assert.deepStrictEqual(cached.reuse.map((r) => r.path), paths);
+  // A 1 ms budget kills git. The hard stop is a second after that, so this
+  // stays well under the old 6 s scan.
+  compose._setScanMs(1);
+  compose._clearHintCache();
+  const cutAt = Date.now();
+  const cut = await compose.codeHints(repo, 'Add retries to the nightly export');
+  const cutMs = Date.now() - cutAt;
+  assert.ok(cutMs < 1500, `scan budget held (${cutMs} ms)`);
+  assert.ok(Array.isArray(cut.reuse));
+  compose._setScanMs(300);
+  compose._clearHintCache();
   fs.rmSync(repo, { recursive: true, force: true });
 }
 

@@ -20,7 +20,7 @@ type Json = import('../types.ts').Json;
 type Config = import('../types.ts').Config;
 type ModelCall = (o: { system: string; prompt: string }) => Promise<string> | string;
 type Hint = { path: string; why: string };
-type Hints = { files: string[]; reuse: Hint[]; conventions: string[]; keywords: string[] };
+type Hints = { files: string[]; reuse: Hint[]; conventions: string[]; keywords: string[]; scanMs: number };
 /** composeCore's Composed; its type cannot be named across a CommonJS module yet. */
 type Composed = Json;
 /** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
@@ -31,7 +31,7 @@ type GatherOptions = { target: Target; task?: string | null; done?: string[] | n
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const { config } = require('../config.ts');
@@ -121,9 +121,59 @@ function localRepo(candidates: unknown[]): string | null {
   return null;
 }
 
+// One result per checkout. The key is the repo, HEAD, the index mtime and the
+// keywords, so a second tool call on the same commit does not scan again. A
+// search still in flight is shared: factory start begins it before the run
+// row is inserted, and gather joins that promise.
+const hintCache = new Map<string, Hints>();
+const hintInflight = new Map<string, Promise<Hints>>();
+const HINT_CACHE_MAX = 32;
+
+function repoStamp(repo: string): string {
+  let git = path.join(repo, '.git');
+  try {
+    if (!fs.statSync(git).isDirectory()) {
+      const t = fs.readFileSync(git, 'utf8');
+      const m = /^gitdir:\s*(.*)$/m.exec(t);
+      git = m ? path.resolve(path.dirname(git), m[1].trim()) : git;
+    }
+    let head = fs.readFileSync(path.join(git, 'HEAD'), 'utf8').trim();
+    if (head.startsWith('ref:')) {
+      const ref = head.slice(4).trim();
+      try { head = fs.readFileSync(path.join(git, ref), 'utf8').trim(); } catch { /* keep the ref name */ }
+    }
+    let idx = 0;
+    try { idx = fs.statSync(path.join(git, 'index')).mtimeMs; } catch { /* no index yet */ }
+    return `${head}:${idx}`;
+  } catch {
+    return '';
+  }
+}
+
+function rememberHints(key: string, value: Hints) {
+  if (hintCache.has(key)) hintCache.delete(key);
+  hintCache.set(key, value);
+  while (hintCache.size > HINT_CACHE_MAX) hintCache.delete(hintCache.keys().next().value as string);
+}
+
 async function codeHints(repo: string | null, text: string): Promise<Hints> {
-  if (!repo) return { files: [], reuse: [], conventions: [], keywords: [] };
+  if (!repo) return { files: [], reuse: [], conventions: [], keywords: [], scanMs: 0 };
   const kws: string[] = C.keywords(text);
+  const stamp = repoStamp(repo);
+  const key = stamp ? `${repo}\0${stamp}\0${SCAN_MS}\0${kws.join('\0')}` : '';
+  if (key && hintCache.has(key)) return { ...(hintCache.get(key) as Hints), scanMs: 0 };
+  if (key && hintInflight.has(key)) return hintInflight.get(key) as Promise<Hints>;
+  const started = Date.now();
+  const p = computeHints(repo, kws).then((result) => {
+    const timed = { ...result, scanMs: Date.now() - started };
+    if (key && result.listed) rememberHints(key, timed);
+    return timed;
+  }).finally(() => { if (key) hintInflight.delete(key); });
+  if (key) hintInflight.set(key, p);
+  return p;
+}
+
+async function computeHints(repo: string, kws: string[]): Promise<Hints & { listed: boolean }> {
   // ls-files reads only the index, so it does not slow the grep's tree scan.
   const [listed, hits] = await Promise.all([
     git(repo, ['ls-files']).catch((err: Error) => {
@@ -132,51 +182,107 @@ async function codeHints(repo: string | null, text: string): Promise<Hints> {
     }),
     keywordHits(repo, kws),
   ]);
-  if (listed == null) return { files: [], reuse: [], conventions: [], keywords: kws };
+  if (listed == null) return { files: [], reuse: [], conventions: [], keywords: kws, scanMs: 0, listed: false };
   const files: string[] = listed.split(/\r?\n/).filter(Boolean).slice(0, 50_000);
   const { reuse, conventions } = C.rankHints({ files, hits, keywords: kws });
-  return { files, reuse, conventions, keywords: kws };
+  return { files, reuse, conventions, keywords: kws, scanMs: 0, listed: true };
 }
 
-const SCAN_MS = 6000; // one scan of a big checkout (47k files) takes ~5 s; a slower one is cut short
+// A checkout of tens of thousands of files took ~5 s. The tool call's budget
+// for the scan is 300 ms: git is killed and the names it already printed are
+// kept. Path ranking (ls-files) still runs when the scan is cut short.
+let SCAN_MS = 300;
 const HITS_PER_KEYWORD = 40;
 const MAX_SCANNED_FILES = 4000;
+// Vendored and built trees are never hinted (composeCore's JUNK). Keeping
+// them out of the scan is what makes the budget hold on a fat checkout.
+const GREP_EXCLUDES = [
+  ':(exclude,glob)**/node_modules/**',
+  ':(exclude,glob)**/vendor/**',
+  ':(exclude,glob)**/dist/**',
+  ':(exclude,glob)**/build/**',
+  ':(exclude,glob)**/out/**',
+  ':(exclude,glob)**/coverage/**',
+  ':(exclude,glob)**/.venv/**',
+  ':(exclude,glob)**/__pycache__/**',
+  ':(exclude,glob)**/target/**',
+  ':(exclude,glob)**/package-lock.json',
+  ':(exclude,glob)**/yarn.lock',
+  ':(exclude,glob)**/pnpm-lock.yaml',
+  ':(exclude,glob)**/*.min.js',
+];
 
 /**
  * The files (first HITS_PER_KEYWORD each, in git order) that contain each
- * keyword, case-insensitively, text files only. One `git grep` over all the
- * keywords finds the files that match any of them; which keyword matched
- * where is then read off those few files. (One grep per keyword scanned the
- * whole tree eight times: 60 s on a 47k-file repo, and running them in
- * parallel is slower still, since they fight over the disk.) A scan that
- * overruns SCAN_MS keeps what it found.
+ * keyword, case-insensitively, text files only. One `git grep -l --max-count=1`
+ * over all the keywords, with vendored trees excluded, names the files; which
+ * keyword matched is read off those files until the budget runs out. A scan
+ * that overruns SCAN_MS is killed and keeps the names already printed.
  */
+function limitedGit(repo: string, args: string[], budgetMs: number): Promise<{ out: string; cut: boolean; failed: boolean }> {
+  return new Promise((resolve) => {
+    let out = '';
+    let settled = false;
+    let cut = false;
+    const finish = (failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(hard);
+      resolve({ out, cut, failed });
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn('git', args, {
+        cwd: repo,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+    } catch (err) {
+      log.debug('git grep failed', { message: (err as Error).message });
+      resolve({ out: '', cut: false, failed: true });
+      return;
+    }
+    child.stdout?.on('data', (d: Buffer) => {
+      if (out.length < 4_000_000) out += d.toString('utf8');
+    });
+    const timer = setTimeout(() => {
+      cut = true;
+      child.kill();
+    }, budgetMs);
+    // kill() can fail to reap; don't wait on it past a second.
+    const hard = setTimeout(() => {
+      cut = true;
+      try { child.kill(); } catch { /* already gone */ }
+      finish(false);
+    }, budgetMs + 1000);
+    child.on('error', (err: Error) => {
+      log.debug('git grep failed', { message: err.message });
+      finish(true);
+    });
+    child.on('close', (code: number | null) => {
+      // exit 1 is "no match". Anything else that wasn't a kill is a failure.
+      finish(code != null && code !== 0 && code !== 1 && !cut);
+    });
+  });
+}
+
 async function keywordHits(repo: string, kws: string[]): Promise<Record<string, string[]>> {
   const hits: Record<string, string[]> = Object.fromEntries(kws.map((k) => [k, []]));
   if (!kws.length) return hits;
-  // -F: the keywords are literals, never patterns; -l: names only.
-  const args = ['grep', '-l', '-i', '-I', '-F', ...kws.flatMap((k) => ['-e', k])];
-  let out = '';
-  let cut = false;
-  try {
-    out = await new Promise<string>((resolve, reject) => {
-      execFile('git', args, { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: SCAN_MS, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err: (Error & { killed?: boolean; code?: unknown }) | null, stdout: unknown) => {
-        if (err && err.killed) cut = true;
-        // exit 1 is "no match"; a timeout keeps the partial list.
-        if (err && !err.killed && err.code !== 1) reject(err);
-        else resolve(String(stdout || ''));
-      });
-    });
-  } catch (err) {
-    log.debug('git grep failed', { message: (err as Error).message });
-    return hits;
-  }
+  const deadline = Date.now() + SCAN_MS;
+  // -F: the keywords are literals, never patterns. -l --max-count=1: one name
+  // per file, and git stops reading that file at the first hit.
+  const args = ['grep', '-l', '-i', '-I', '-F', '--max-count=1', ...kws.flatMap((k) => ['-e', k]), '--', '.', ...GREP_EXCLUDES];
+  const { out, cut, failed } = await limitedGit(repo, args, Math.max(1, deadline - Date.now()));
+  if (failed) return hits;
   const lines = out.split(/\r?\n/).filter(Boolean);
   if (cut) lines.pop(); // may be half a path
   const files = lines.slice(0, MAX_SCANNED_FILES);
   const lower = kws.map((k) => k.toLowerCase());
   const full = (): boolean => kws.every((k) => (hits[k] as string[]).length >= HITS_PER_KEYWORD);
-  for (let i = 0; i < files.length && !full(); i += 64) {
+  for (let i = 0; i < files.length && !full() && Date.now() < deadline; i += 64) {
     const batch = files.slice(i, i + 64);
     const texts: Array<string | null> = await Promise.all(batch.map((f) => fs.promises.readFile(path.join(repo, f)).then((b: Buffer) => (b.length > 2_000_000 ? null : b.toString('utf8').toLowerCase())).catch(() => null)));
     batch.forEach((f, j) => {
@@ -198,17 +304,27 @@ async function keywordHits(repo: string, kws: string[]): Promise<Record<string, 
  * and the assistant's memory. Private material is gathered so the model can
  * pick the facts the task needs; composeCore keeps it from leaving wholesale.
  */
+function searchText({ target, task = null, done = [] }: { target: Target; task?: string | null; done?: string[] | null }): string {
+  return [task || null, target?.commitment?.summary, target?.commitment?.detail, ...(done || [])].filter(Boolean).join('\n');
+}
+
+/** Starts the repo search. gather joins it, so a caller can overlap it with the run insert. */
+function warmHints({ target, task = null, done = [], appPath = null }: GatherOptions): void {
+  const repo = localRepo([target?.repoPath, target?.project?.repo_path, appPath]);
+  if (repo) void codeHints(repo, searchText({ target, task, done })).catch(() => {});
+}
+
 async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null, continues = null }: GatherOptions): Promise<Json> {
   const dispatch = require('./index.ts');
   const operatorAsk = task || null;
   const title = task || target.commitment?.summary || '';
   const repo = localRepo([target.repoPath, target.project?.repo_path, appPath]);
-  // Independent of each other, so concurrent: the repo search (seconds on a
-  // big checkout) no longer waits for the memory recall, nor the reverse.
+  // Independent of each other, so concurrent: the repo search no longer waits
+  // for the memory recall, nor the reverse. warmHints may already have the search in flight.
   const [related, memory, hints] = await Promise.all([
     dispatch.relatedContext ? dispatch.relatedContext(target.item).catch(() => []) : [],
     dispatch.memoryContext ? dispatch.memoryContext(target, task).catch(() => ({})) : {},
-    codeHints(repo, [operatorAsk, target.commitment?.summary, target.commitment?.detail, ...(done || [])].filter(Boolean).join('\n')),
+    codeHints(repo, searchText({ target, task, done })),
   ]);
   return {
     title,
@@ -228,6 +344,7 @@ async function gather({ target, task = null, done = [], app = null, slug = null,
     slug,
     repo,
     continues,
+    hintScan: hints.scanMs || 0,
   };
 }
 
@@ -275,7 +392,16 @@ async function compose({
     by,
     continues,
   });
-  return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length, ms: { gather: gathered - started, model: Date.now() - gathered } };
+  return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length, ms: { gather: gathered - started, hints: Number(inputs.hintScan) || 0, model: Date.now() - gathered } };
 }
 
-module.exports = { compose, composeFrom, gather, codeHints, localRepo, pickModel, _setModel };
+function _setScanMs(ms: number) {
+  SCAN_MS = ms;
+}
+
+function _clearHintCache() {
+  hintCache.clear();
+  hintInflight.clear();
+}
+
+module.exports = { compose, composeFrom, gather, codeHints, warmHints, localRepo, pickModel, _setModel, _setScanMs, _clearHintCache };

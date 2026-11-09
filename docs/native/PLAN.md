@@ -1116,6 +1116,16 @@ not in the Map is not done, and a new one gets added there first.
     deepseek-pr re-review (`dev-tools:020`, 5d98440): 3945 ms, the 7475 ms round trip less
     compose's 3530 ms. Laps: route 37, prepare 7, gather 2097, submit 1345, follow 361 ms. Still
     open; the gather and the submit are most of it.
+    Partly (this commit). Gather was the repo search. On this checkout `codeHints` was 0.9-1.9 s
+    (median about 1.1 s; samples 882, 986, 1047, 1110, 1404, 1908). It is now one `git grep -l
+    --max-count=1` with vendored trees excluded, killed at 300 ms, and cached per commit: a warm
+    scan was 318-349 ms and the same commit again was 1 ms. The search starts before the run
+    insert, so it overlaps prepare. Stubbed model and submit, scratch-style store stubs, this
+    checkout: cold-process wall 1041 ms (hints 685, gather 388, prepare 318, compose_model 15,
+    submit 310), warm wall 399 ms (hints 349, gather 251, prepare 110, compose_model 6, submit 28),
+    cached wall 5 ms. Without the model that is 1026 / 393 / 5 ms, but the stub's submit is not
+    the factory CLI (the re-review's submit was 1345 ms). Adding that back leaves the call over
+    1 s. Not ticked.
   - [x] **8.4.15 deepseek-pr: approval to "started" is ≈2.9 s (target 1 s); the e2e read 11.1 s.**
     factory_start returned ≈19:56:45.7, and the job sat `queued` ("waiting for pm-sync on the next
     factory tick") until the pm step started at 19:56:48.59. Same root as 8.4.9: a submit should
@@ -1305,6 +1315,14 @@ not in the Map is not done, and a new one gets added there first.
     with it. (0e6b5a0)
     Re-review (b674e67), on the personal machine: submit 3483 ms (was 7056), and the tool call
     4540 ms without compose's 5604 ms model time. Still open.
+    Partly (this commit). Gather is the same bounded search as 8.4.14 (about 1.1 s median on this
+    checkout, now 318-349 ms warm and 1 ms cached; it overlaps the run insert). The PR read was
+    not moved into the job: submit refuses a missing or closed PR before it creates one, and that
+    read cannot start until the brief exists, so it stays inside `job submit`. With the model and
+    the factory CLI stubbed, the tool call was 399 ms warm and 5 ms cached (1026 ms on a cold
+    process). A real submit still pays the factory process and one GitHub round trip (1133 ms
+    median on the work laptop, 3483 ms on the personal machine), which alone sits at or over the
+    1 s target. Not ticked.
   - [x] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
     reads "Push and open a DRAFT pull request", while the factory's appended section says it
     "updates that PR (it opens no new one)". Its facts say the request "gives no detail about what

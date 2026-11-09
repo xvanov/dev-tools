@@ -459,11 +459,6 @@ async function start({
   const lap = (name: string) => { const now = Date.now(); ms[name] = (ms[name] || 0) + now - mark; mark = now; };
   const kind = F.jobKind(jobKind);
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
-  // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
-  // a claude_session job runs on the api runtime instead. Off by default.
-  const picked = await require('../claudePool.ts').route(F.runtime(runtime || config.factory.runtime));
-  const rt = picked.runtime;
-  if (picked.fellBack) log.warn('dispatching on the api runtime', { reason: picked.reason });
   if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {
     throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude), or make it a research job (--kind research)');
   }
@@ -478,6 +473,19 @@ async function start({
   if (kind !== 'code' && delivery && D.delivery(delivery) !== 'none') {
     throw new Error(`a ${kind} job delivers a report, not ${delivery} — leave the end state at none`);
   }
+  // git grep is the slow part of gather and it does not touch the database, so
+  // it runs while the pool check, the delivery lookup and the run insert do.
+  // gather() joins the same in-flight search (compose.ts). The PR read on a
+  // continuation stays inside job submit: that call refuses a missing or closed
+  // PR before it creates the job, and it cannot start until this brief exists.
+  if (!brief && kind === 'code') {
+    require('./compose.ts').warmHints({ target, task, done: Array.isArray(done) ? done : [] });
+  }
+  // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
+  // a claude_session job runs on the api runtime instead. Off by default.
+  const picked = await require('../claudePool.ts').route(F.runtime(runtime || config.factory.runtime));
+  const rt = picked.runtime;
+  if (picked.fellBack) log.warn('dispatching on the api runtime', { reason: picked.reason });
   const chosen: { delivery: string; source: string; phrase: string | null } = kind !== 'code'
     ? { delivery: 'none', source: 'kind', phrase: null }
     : delivery
@@ -519,7 +527,7 @@ async function start({
       by = c.by;
       criteria = c.done;
       goal = c.goal;
-      if (c.ms) Object.assign(ms, { gather: c.ms.gather, compose_model: c.ms.model });
+      if (c.ms) Object.assign(ms, { gather: c.ms.gather, hints: c.ms.hints, compose_model: c.ms.model });
     } catch (err) {
       log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String((err as Error).message).slice(0, 200) });
       const C = require('./composeCore.ts');
