@@ -159,6 +159,7 @@ def run_claude(
     add_dirs: list[str] | None = None,
     success: Callable[[ConversationResult], bool] | None = None,
     links: dict[str, Any] | None = None,
+    permission_mode: str | None = None,
 ) -> ClaudeRunOutcome:
     from factory.claude_session.cli import claude_binary
 
@@ -252,6 +253,7 @@ def run_claude(
                 cancelled=cancelled or (lambda: False),
                 on_session=_on_session,
                 add_dirs=add_dirs,
+                permission_mode=permission_mode,
                 argv_wrap=argv_wrap,
             )
             tel["stop_reason"] = conv.stop_reason

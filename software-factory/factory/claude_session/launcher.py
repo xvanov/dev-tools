@@ -82,19 +82,28 @@ def build_claude_argv(
     session_uuid: str | None,
     resume: str | None,
     add_dirs: list[str] | None = None,
+    permission_mode: str | None = None,
 ) -> list[str]:
-    """The ``claude`` argv for one round. Pure."""
+    """The ``claude`` argv for one round. Pure.
+
+    ``permission_mode`` (e.g. ``plan`` for a read-only job): the run starts in
+    that Claude Code permission mode INSTEAD of skipping permissions. Headless,
+    nobody answers a prompt, so whatever the mode does not allow is refused.
+    """
     argv = [
         claude_bin,
         "-p",
         "--output-format",
         "stream-json",
         "--verbose",
+    ]
+    if permission_mode:
+        argv += ["--permission-mode", permission_mode]
+    else:
         # Unattended: there is no human at a permission prompt. The run is
         # confined by its working directory (a worktree / scratch dir) and by
         # the factory's own gates, exactly like the OpenHands sandbox dev.
-        "--dangerously-skip-permissions",
-    ]
+        argv.append("--dangerously-skip-permissions")
     if model:
         argv += ["--model", model]
     if resume:

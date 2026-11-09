@@ -95,7 +95,7 @@ class SubmitRequest:
     external_id: str | None = None
     flow_md: str | None = None
     api_spec_md: str | None = None
-    kind: str = "code"  # v1.2: code | research | report
+    kind: str = "code"  # v1.2: code | research | report; v1.8: plan (read-only)
     runtime: str = "api"  # v1.2: api | claude_session
     branch: str | None = None  # v1.3: continue on this existing branch
     pr: int | None = None  # v1.3: continue on this existing PR

@@ -2,7 +2,9 @@
 
 * ``kind`` — what the job delivers. ``code`` is a direction → stories → PRs
   (v1). ``research`` and ``report`` deliver a markdown REPORT the factory keeps
-  (:mod:`factory.jobs.tasks`); no issue, branch or PR.
+  (:mod:`factory.jobs.tasks`); no issue, branch or PR. ``plan`` (v1.8) is the
+  same, READ-ONLY: the agent writes an implementation plan and changes nothing
+  (on ``claude_session`` Claude Code runs in its ``plan`` permission mode).
 * ``runtime`` — who does the agent work. ``api`` is the factory's own model
   routing (LiteLLM keys, ``routes.yaml``). ``claude_session`` is the Claude Code
   CLI on the factory machine, on the operator's subscription
@@ -16,9 +18,16 @@ from __future__ import annotations
 KIND_CODE = "code"
 KIND_RESEARCH = "research"
 KIND_REPORT = "report"
-KINDS: tuple[str, ...] = (KIND_CODE, KIND_RESEARCH, KIND_REPORT)
+KIND_PLAN = "plan"
+KINDS: tuple[str, ...] = (KIND_CODE, KIND_RESEARCH, KIND_REPORT, KIND_PLAN)
 #: Kinds whose deliverable is a report kept by the factory (no PR).
-TASK_KINDS: frozenset[str] = frozenset({KIND_RESEARCH, KIND_REPORT})
+TASK_KINDS: frozenset[str] = frozenset({KIND_RESEARCH, KIND_REPORT, KIND_PLAN})
+#: Kinds whose agent may not change anything: on ``claude_session`` the run
+#: starts in Claude Code's ``plan`` permission mode instead of skipping
+#: permissions, so a write is refused by Claude Code, not by a prompt.
+READ_ONLY_KINDS: frozenset[str] = frozenset({KIND_PLAN})
+#: The Claude Code permission mode a read-only run starts in.
+READ_ONLY_PERMISSION_MODE = "plan"
 
 RUNTIME_API = "api"
 RUNTIME_CLAUDE = "claude_session"
@@ -77,8 +86,11 @@ __all__ = [
     "CLAUDE_MODEL_KEY",
     "KINDS",
     "KIND_CODE",
+    "KIND_PLAN",
     "KIND_REPORT",
     "KIND_RESEARCH",
+    "READ_ONLY_KINDS",
+    "READ_ONLY_PERMISSION_MODE",
     "RUNTIMES",
     "RUNTIME_API",
     "RUNTIME_CLAUDE",

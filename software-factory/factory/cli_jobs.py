@@ -117,7 +117,7 @@ def submit_cmd(
         None, "--api-spec-file", help="Optional api_spec.md content"
     ),
     kind: str = typer.Option(
-        "code", "--kind", help="code | research | report (v1.2; default code)"
+        "code", "--kind", help="code | research | report | plan (v1.2, plan v1.8; default code)"
     ),
     runtime: str = typer.Option(
         "api", "--runtime", help="api | claude_session (v1.2; default api)"

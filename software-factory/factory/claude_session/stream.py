@@ -32,6 +32,9 @@ class ClaudeResult:
     duration_ms: int = 0
     model: str | None = None
     last_assistant_text: str = ""
+    #: The last ``ExitPlanMode`` call's plan (a ``plan`` permission-mode run
+    #: proposes its plan through that tool; headless, nobody approves it).
+    plan_text: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -91,6 +94,11 @@ def parse_stream(text: str) -> ClaudeResult:
             message = ev.get("message") or {}
             for part in message.get("content") or [] if isinstance(message, dict) else []:
                 if isinstance(part, dict) and part.get("type") == "tool_use":
+                    args = part.get("input") or {}
+                    if part.get("name") == "ExitPlanMode" and isinstance(args, dict):
+                        plan = str(args.get("plan") or "").strip()
+                        if plan:
+                            res.plan_text = plan
                     res.tool_calls.append(
                         {
                             "tool": str(part.get("name") or "?"),

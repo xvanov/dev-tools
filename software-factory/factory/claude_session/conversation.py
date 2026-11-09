@@ -81,6 +81,15 @@ class ConversationResult:
         return any(r.found for r in self.rounds)
 
     @property
+    def plan_text(self) -> str:
+        """The plan a read-only (``plan`` permission mode) run proposed: the last
+        ``ExitPlanMode`` plan, else the run's final text."""
+        for r in reversed(self.rounds):
+            if r.plan_text:
+                return r.plan_text
+        return self.last_text
+
+    @property
     def last_text(self) -> str:
         for r in reversed(self.rounds):
             if r.result_text or r.last_assistant_text:
@@ -116,6 +125,7 @@ def run_conversation(
     cancelled: Callable[[], bool] = lambda: False,
     on_session: Callable[[SessionInfo], None] | None = None,
     add_dirs: list[str] | None = None,
+    permission_mode: str | None = None,
     argv_wrap: Callable[[list[str]], list[str]] | None = None,
     poll_s: float = 2.0,
     clock: Callable[[], float] = time.monotonic,
@@ -144,6 +154,7 @@ def run_conversation(
             session_uuid=session_uuid if round_no == 1 else None,
             resume=resume,
             add_dirs=add_dirs,
+            permission_mode=permission_mode,
         )
         if argv_wrap is not None:  # FACTORY_SANDBOX: claude starts inside the run's sandbox
             argv = argv_wrap(argv)

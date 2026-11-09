@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8 2026-11-09, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -733,3 +733,25 @@ read stamps the snapshot. `null` with `--no-github`, on a research/report job, o
 when GitHub could not be asked (no snapshot yet, or `gh` failed and no older
 snapshot is kept). The state machine is unchanged: a delivery only the local view
 claims is still not `done`.
+
+## v1.8 additions (2026-11-09): the read-only `plan` kind
+
+Additive. `--kind plan` is a fourth job kind, a task job like `research`/`report` (same id
+shape `<app>:r<NNNN>`, same lifecycle, states, `report`, `job report`, cancel and resume; no
+branch, no PR, `delivery: "none"`). The ask is "write an implementation plan and a sketch of the
+diff, change nothing". The PA sends every plan-mode run as one (it used to start a raw Claude Code
+session outside the factory, unmetered and invisible on Build).
+
+- `runtime=claude_session`: Claude Code starts with `--permission-mode plan` INSTEAD of
+  `--dangerously-skip-permissions`, so the read-only limit is Claude Code's, not the prompt's.
+  Headless, nothing approves a write, so every write is refused, including the report file. The
+  factory therefore saves the plan itself: the last `ExitPlanMode` plan in the stream, else the
+  run's final message, becomes `report.md`. There is no in-conversation report check (one round).
+  A run that ended in a Claude Code error saves nothing and the job is `failed` with that error.
+  The run is metered like any `claude_session` run (`subscription_equiv_usd`, and its usage goes
+  to the PA's Meter / credit pool).
+- `runtime=api`: as research (the agent writes `FACTORY_REPORT.md`); its workspace is a throwaway
+  clone with pushes blocked, so nothing it changes leaves it. Metered on the API keys.
+
+Refusals are research's: `--branch`/`--pr` → `invalid_argument`; a delivery other than `none` →
+`invalid_delivery`. A factory older than v1.8 refuses `--kind plan` with `invalid_kind`.

@@ -1,6 +1,6 @@
-"""Research and report jobs (JOBS-API v1.2): one agent run → ``report.md``.
+"""Research, report and plan jobs (JOBS-API v1.2, plan v1.8): one agent run → ``report.md``.
 
-A ``kind: research|report`` job is NOT a direction: no PM, no stories, no issue,
+A ``kind: research|report|plan`` job is NOT a direction: no PM, no stories, no issue,
 branch or PR, no backpressure gate. It lives entirely under the factory's state
 dir, so pm-sync and the chain never see it::
 
@@ -35,6 +35,13 @@ Agent per runtime:
 
 Both write ``FACTORY_REPORT.md`` in their working directory; the factory moves
 it to ``report.md``. Wall clock: 5400 s (as solo).
+
+``plan`` (v1.8) is read-only. On ``claude_session`` Claude Code starts in its
+``plan`` permission mode (no ``--dangerously-skip-permissions``), so it cannot
+write even the report: its plan (the last ``ExitPlanMode`` plan, else its final
+message) is written to ``FACTORY_REPORT.md`` by the factory. On ``api`` the
+agent writes the report like research; its workspace is a throwaway clone with
+pushes blocked, so nothing it changes leaves it.
 """
 
 from __future__ import annotations
@@ -56,7 +63,13 @@ from typing import Any
 import yaml
 
 from factory.jobs.common import JobError, format_job_id, parse_job_id
-from factory.jobs.kinds import KIND_REPORT, RUNTIME_CLAUDE
+from factory.jobs.kinds import (
+    KIND_PLAN,
+    KIND_REPORT,
+    READ_ONLY_KINDS,
+    READ_ONLY_PERMISSION_MODE,
+    RUNTIME_CLAUDE,
+)
 from factory.oscompat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -291,11 +304,19 @@ def build_brief(
     ask: str,
     questions: list[str],
     workspace_note: str,
+    final_answer: bool = False,
 ) -> str:
-    """The job text the agent gets (the persona prompt is added by the runtime)."""
-    verb = "Write" if kind == KIND_REPORT else "Research and write up"
+    """The job text the agent gets (the persona prompt is added by the runtime).
+
+    ``final_answer``: the agent cannot write files (a read-only ``plan`` run in
+    Claude Code's plan permission mode), so the deliverable is its final
+    message, which the factory saves as the report.
+    """
+    plan = kind == KIND_PLAN
+    verb = "Write" if kind == KIND_REPORT else "Plan and write up" if plan else "Research and write up"
+    heading = "Report" if kind == KIND_REPORT else "Plan" if plan else "Research"
     lines = [
-        f"# {'Report' if kind == KIND_REPORT else 'Research'} job: {title}",
+        f"# {heading} job: {title}",
         "",
         "## The ask",
         "",
@@ -303,7 +324,7 @@ def build_brief(
         "",
     ]
     if questions:
-        lines += ["## Questions the report MUST answer", ""]
+        lines += [f"## Questions the {'plan' if plan else 'report'} MUST answer", ""]
         lines += [f"{i}. {q.strip()}" for i, q in enumerate(questions, 1) if q.strip()]
         lines += [""]
     lines += [
@@ -311,12 +332,30 @@ def build_brief(
         "",
         workspace_note,
         "",
-        "## Deliverable",
-        "",
-        f"{verb} the answer as ONE markdown document saved as `{REPORT_NAME}` in "
-        "your current working directory. That file is the only thing the factory "
-        "keeps and hands back; anything you only say in chat is lost.",
-        "",
+    ]
+    if plan:
+        lines += [
+            "This is a READ-ONLY planning job: read the code, run read-only commands, and",
+            "write an implementation plan with a sketch of the diff. Change no file.",
+            "",
+        ]
+    lines += ["## Deliverable", ""]
+    if final_answer:
+        lines += [
+            "You are in Claude Code's plan mode: you cannot write files. Your plan IS "
+            "the deliverable: give it as ONE markdown document in your final message "
+            "(or as the plan you propose to exit plan mode with). The factory saves "
+            "it and hands it back; nobody will approve it mid-run, so do not wait.",
+            "",
+        ]
+    else:
+        lines += [
+            f"{verb} the answer as ONE markdown document saved as `{REPORT_NAME}` in "
+            "your current working directory. That file is the only thing the factory "
+            "keeps and hands back; anything you only say in chat is lost.",
+            "",
+        ]
+    lines += [
         "- Start with `# <title>` and a short summary that answers the ask directly.",
         "- Answer every question above under its own heading, in order.",
         "- Cite where each fact came from (file path + line, command output, or URL).",
@@ -328,13 +367,13 @@ def build_brief(
     return "\n".join(lines)
 
 
-def _workspace_note(repo: str | None, sha: str | None) -> str:
+def _workspace_note(repo: str | None, sha: str | None, *, writes_report: bool = True) -> str:
     if repo:
         return (
             f"Your working directory is a fresh, READ-ONLY checkout of `{repo}`"
             + (f" at `{sha[:12]}`" if sha else "")
             + ". Read and run anything you need; do not modify tracked files. "
-            f"The only file you write is `{REPORT_NAME}`."
+            + (f"The only file you write is `{REPORT_NAME}`." if writes_report else "You write no file.")
         )
     return (
         "Your working directory is an empty scratch directory (no repository). "
@@ -497,6 +536,7 @@ def _default_claude_runner(
 ) -> dict[str, Any]:
     from factory.claude_session.run import run_claude
 
+    read_only = ref.meta.get("kind") in READ_ONLY_KINDS
     prompt = (
         _persona_text().rstrip()
         + "\n\n---\n\n"
@@ -515,13 +555,29 @@ def _default_claude_runner(
         app=ref.app_label,
         direction_id=ref.task_id,
         story_path=str(brief_path),
-        gate_check=_report_gate(cwd),
-        max_gate_rounds=TASK_MAX_GATE_ROUNDS,
+        # A read-only run cannot write the report, so there is nothing for the
+        # report gate to send it back for: the factory writes the report below.
+        gate_check=None if read_only else _report_gate(cwd),
+        max_gate_rounds=1 if read_only else TASK_MAX_GATE_ROUNDS,
         cancelled=lambda: _cancel_requested(ref.dir_path),
         links={"external": ref.meta.get("external_id")},
+        permission_mode=READ_ONLY_PERMISSION_MODE if read_only else None,
     )
     conv = outcome.conversation
+    if read_only:
+        save_plan(cwd, conv.plan_text, is_error=bool(conv.error))
     return {"error": conv.error, "warning": outcome.warning, "stop": conv.stop_reason}
+
+
+def save_plan(cwd: Path, text: str, *, is_error: bool = False) -> bool:
+    """A read-only run's plan, written as its report by the factory (the run
+    itself may not write). An errored run's text is Claude's error, not a plan:
+    nothing is saved and the job fails with it. Returns whether it was saved."""
+    plan = (text or "").strip()
+    if not plan or is_error:
+        return False
+    (Path(cwd) / REPORT_NAME).write_text(plan + "\n", encoding="utf-8")
+    return True
 
 
 #: Seams: tests replace these to fake the agent.
@@ -545,12 +601,18 @@ def run_task(root: Path, job_id: str) -> dict[str, Any]:
         cwd, sha = prepare_workspace(root, ref)
         ref.meta = update_meta(d, workspace=str(cwd), base_sha=sha)
         ask = (d / "ask.md").read_text(encoding="utf-8")
+        final_answer = (
+            meta.get("kind") in READ_ONLY_KINDS and meta.get("runtime") == RUNTIME_CLAUDE
+        )
         brief = build_brief(
             kind=str(meta.get("kind")),
             title=str(meta.get("title")),
             ask=ask,
             questions=[str(q) for q in meta.get("done") or []],
-            workspace_note=_workspace_note(ref.meta.get("repo") or ref.app, sha),
+            workspace_note=_workspace_note(
+                ref.meta.get("repo") or ref.app, sha, writes_report=not final_answer
+            ),
+            final_answer=final_answer,
         )
         brief_path = d / "brief.md"
         brief_path.write_text(brief, encoding="utf-8")

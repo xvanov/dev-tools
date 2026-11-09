@@ -11,8 +11,9 @@ cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
 **Since 2026-11-06 (JOBS-API v1.2):** it is also the layer the personal
 assistant dispatches ALL work through — `code` jobs (the chain/solo below) and
-`research`/`report` jobs (one agent writes a report the factory keeps,
-`factory/jobs/tasks.py`) — on either runtime: `api` (OpenHands + LiteLLM, the
+`research`/`report`/`plan` jobs (one agent writes a report the factory keeps,
+`factory/jobs/tasks.py`; `plan` is read-only, Claude Code's plan permission
+mode, JOBS-API v1.8) — on either runtime: `api` (OpenHands + LiteLLM, the
 models above) or `claude_session` (Claude Code on the operator's subscription,
 started in a termhub session a human can open; `factory/claude_session/`). See
 `docs/JOBS-API.md`. **Location:** this tree is `software-factory/` in the
