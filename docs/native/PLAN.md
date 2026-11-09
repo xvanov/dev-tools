@@ -1883,7 +1883,7 @@ not in the Map is not done, and a new one gets added there first.
   the teams-ask step point at `sqlite-store`. The store dot pings whichever store `PA_DB`
   selects; factory-api's dot probes local `factory serve`.
 - [ ] **8.6 Every PA dispatch through the factory (D28).**
-  - [x] **8.6.1 A read-only `plan` job kind** (6b58269): `factory job submit --kind plan`; on
+  - [x] **8.6.1 A read-only `plan` job kind** (6ffea2f): `factory job submit --kind plan`; on
     `claude_session` Claude Code starts with `--permission-mode plan` instead of skipping
     permissions, and the factory saves the plan (the last `ExitPlanMode` plan, else the final
     message) as the report. JOBS-API v1.8.
@@ -1893,8 +1893,7 @@ not in the Map is not done, and a new one gets added there first.
     `route.decide`, `--via claude` and `--machine` are gone. Card dispatch settings
     (`src/dispatch/settings.ts`, `GET/POST /api/commitments/:id/dispatch-settings`): runtime
     claude_session, mode full, the end state from the factory app's `delivery.default`, the kind
-    from the ask (`factoryCore.inferKind`), each overridable per card. Landed in the commit after
-    6b58269 (see `git log -- personal-assistant/src/dispatch/settings.ts`).
+    from the ask (`factoryCore.inferKind`), each overridable per card (537c720).
   - [ ] **8.6.3 Delete `dispatch.startSession` and `startRemote`.** No production caller since
     8.6.2; `test/dispatchStart.test.js` (and the remote tests) still seed their runs through it.
     Rebase those tests on seeded run rows, then delete both with `sessionDelivery`, the
