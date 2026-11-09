@@ -263,6 +263,14 @@ const vault = {
 const MIC_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone';
 const CAM_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam';
 
+// The gate polls every few seconds. `reg query /s` is async, but creating the
+// process still stalls the serving loop (measured 18-177 ms). A call is
+// remembered for 15 s — inside the 180 s call grace — and a poll inside that
+// does not spawn. After it expires the last answer is returned at once and
+// the next read runs in the background.
+const MIC_HOLDERS_TTL_MS = 15_000;
+const micHoldersCache = common.cachedAsync(MIC_HOLDERS_TTL_MS);
+
 // Pure: the apps holding the microphone (or camera), from `reg query /s /v
 // LastUsedTimeStop` output. Python is left out: that is our own recorder and
 // voice-dictation, and counting them would keep the gate open forever.
@@ -304,32 +312,29 @@ const capture = {
     await exec(c.cmd, c.args, { windowsHide: true, timeout: 60_000 });
   },
   async micHolders() {
-    const queryKey = async (k: string) => {
-      try {
-        const { stdout } = await exec('reg.exe', ['query', k, '/s', '/v', 'LastUsedTimeStop'], {
-          windowsHide: true,
-          timeout: 10_000,
-        });
-        return stdout;
-      } catch (err) {
-        // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
-        return (err as { stdout?: string }).stdout || '';
-      }
-    };
-    const [micOut, camOut] = await Promise.all([queryKey(MIC_KEY), queryKey(CAM_KEY)]);
-    return parseMicHolders(`${micOut}\n${camOut}`);
+    return micHoldersCache('mic', async () => {
+      const queryKey = async (k: string) => {
+        try {
+          const { stdout } = await exec('reg.exe', ['query', k, '/s', '/v', 'LastUsedTimeStop'], {
+            windowsHide: true,
+            timeout: 10_000,
+          });
+          return stdout;
+        } catch (err) {
+          // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
+          return (err as { stdout?: string }).stdout || '';
+        }
+      };
+      const [micOut, camOut] = await Promise.all([queryKey(MIC_KEY), queryKey(CAM_KEY)]);
+      return parseMicHolders(`${micOut}\n${camOut}`);
+    });
   },
 };
 
-// Free bytes on the drive holding `dir` (its drive letter).
-async function freeBytes(dir: string) {
-  const drive = path.parse(path.resolve(dir)).root.slice(0, 1);
-  const { stdout } = await exec(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', `(Get-PSDrive -Name '${drive}').Free`],
-    { windowsHide: true, timeout: 30_000 }
-  );
-  return Number(String(stdout).trim());
+// Free bytes on the drive holding `dir`. statfs is one syscall (~0.1 ms);
+// Get-PSDrive via PowerShell was 35-40 ms and stalled the serving loop.
+function freeBytes(dir: string) {
+  return common.cachedFreeBytes(dir);
 }
 
 const services = {

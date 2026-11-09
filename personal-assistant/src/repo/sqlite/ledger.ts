@@ -34,11 +34,12 @@ const BASENAME = (x: unknown) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x
 // $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
 // $4 = only these commitment ids (null: all), $5 = sessions settled before,
 // $6 = "fresh" evidence after. See src/repo/ledger.js DIRTY for the why of each rule.
-// `r.id in (...)` only narrows: the window and fetched_at terms below still
-// hold, but tested first on source_item_window_idx (sql-sqlite/008), so an
-// item is read (its fetched_at sits behind the body, on overflow pages) only
-// when it is new since the last check. Reading every item in each ask's
-// window took 0.7-2.8 s a pass on the work stack.
+// Used for commitments never checked (ledger_checked_at is null): their window
+// is the occurred_at index (sql-sqlite/008). A checked commitment does not use
+// this. Walking every ask's 30-day window on source_item_window_idx was
+// 120-230 ms idle and 250-480 ms with new items, every minute, on the loop.
+// dirty() instead reads items fetched since the oldest check (source_item_fresh_idx,
+// sql-sqlite/011) and matches them in process. An idle pass is one index seek.
 const DIRTY = `
   with o as (
     select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
@@ -94,6 +95,169 @@ const DIRTY = `
             coalesce(o.ledger_checked_at, ''),
             max(cand.fetched_at) desc
    limit $2`;
+
+// Open commitments, without the ask's body (loaded only for the rows returned).
+// Times stay text: a JS Date drops the microseconds fetched_at keeps, and a
+// truncated check is older than the item it covered, so the ask stays dirty.
+const OPEN = `
+  select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id,
+         cast(coalesce(c.ledger_checked_at, '') as text) as ledger_checked_at,
+         si.id as item_id, si.source, si.thread_external_id, cast(si.occurred_at as text) as asked_at,
+         per.display_name as counterparty,
+         pr.gitlab_path, pr.repo_path, ${BASENAME('pr.repo_path')} as repo_base,
+         strftime('%Y-%m-%dT%H:%M:%fZ', si.occurred_at, '+${WINDOW_DAYS} days') as window_end
+    from commitment c
+    join source_item si on si.id = c.source_item_id
+    left join person per on per.id = c.counterparty_person_id
+    left join project pr on pr.id = c.project_id and pr.active
+   where c.status = 'open' and c.superseded_by is null
+     and ($1 is null or c.id in (select value from json_each($1)))`;
+
+// Items fetched after $1. $1 is ' ' || the oldest check, and substr drops the
+// space: a bound ISO string would be re-encoded and lose its microseconds.
+// $2 = sessions settled before this (a live Claude session is not evidence yet).
+const FRESH = `
+  select id, cast(fetched_at as text) as fetched_at, cast(occurred_at as text) as occurred_at, source, thread_external_id, author_identity,
+         case when json_type(raw, '$.repaired') is not null then 1 else 0 end as repaired,
+         json_extract(raw, '$.project') as project,
+         json_extract(raw, '$.cwd') as cwd,
+         json_extract(raw, '$.machine') as machine
+    from source_item indexed by source_item_fresh_idx
+   where fetched_at > substr($1, 2)
+     and source <> 'graph_event'
+     and (source <> 'claude_session' or fetched_at < $2)
+     and ${atLeastChars('body_text', 8)}`;
+
+const FORMS = `
+  select person_id,
+         case kind when 'smtp' then lower(value)
+                   when 'aad_oid' then 'aad:' || lower(value)
+                   when 'github_username' then 'github:' || lower(value) end as form
+    from person_identity
+   where person_id in (select value from json_each($1))`;
+
+/** SQLite LIKE, both sides already lower-cased: % and _ in the pattern are wildcards. */
+function like(text: string, pattern: string) {
+  let re = '';
+  for (const ch of pattern) {
+    if (ch === '%') re += '[\\s\\S]*';
+    else if (ch === '_') re += '[\\s\\S]';
+    else re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp('^' + re + '$').test(text);
+}
+
+function sameThread(c: Row, item: Row) {
+  return c.thread_external_id != null && c.thread_external_id !== '' && item.source === c.source && item.thread_external_id === c.thread_external_id;
+}
+
+function pushMap(map: Map<string, Row[]>, key: string, item: Row) {
+  let list = map.get(key);
+  if (!list) map.set(key, list = []);
+  list.push(item);
+}
+
+/**
+ * Which fresh items belong to each checked commitment. The rules are DIRTY's
+ * (src/repo/ledger.js); the scan is one read of the fresh items, not one
+ * window per commitment.
+ */
+function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommitment }: { mine: Set<string>; forms: Map<string, Set<string>>; perCommitment: number }) {
+  const byThread = new Map<string, Row[]>();
+  const chatByAuthor = new Map<string, Row[]>();
+  const githubByAuthor = new Map<string, Row[]>();
+  const sessions: Row[] = [];
+  const byId = new Map<number, Row>();
+  for (const item of items) {
+    byId.set(Number(item.id), item);
+    if (item.thread_external_id) pushMap(byThread, `${item.source}\0${item.thread_external_id}`, item);
+    const author = String(item.author_identity || '').toLowerCase();
+    if (item.source === 'graph_chat' || item.source === 'graph_mail') pushMap(chatByAuthor, author, item);
+    else if (/^github/i.test(String(item.source))) pushMap(githubByAuthor, author, item);
+    else if (item.source === 'claude_session') sessions.push(item);
+  }
+  const out: Row[] = [];
+  for (const c of commitments) {
+    const cand = new Map<number, Row>();
+    const add = (item: Row | undefined) => {
+      if (!item || !related(c, item, mine, forms)) return;
+      cand.set(Number(item.id), item);
+    };
+    if (c.thread_external_id) for (const item of byThread.get(`${c.source}\0${c.thread_external_id}`) || []) add(item);
+    // Owed to me: what they wrote in chat, mail, or this ask's repo. My own
+    // chat only counts in the thread (above); elsewhere only my GitHub and
+    // sessions do, matching DIRTY.
+    if (c.direction === 'owed_to_me' && c.counterparty_person_id != null) {
+      for (const a of forms.get(String(c.counterparty_person_id)) || []) {
+        for (const item of chatByAuthor.get(a) || []) add(item);
+        for (const item of githubByAuthor.get(a) || []) add(item);
+      }
+    }
+    for (const a of mine) for (const item of githubByAuthor.get(a) || []) add(item);
+    for (const item of sessions) if (mine.has(String(item.author_identity || '').toLowerCase())) add(item);
+    add(byId.get(Number(c.item_id)));
+    if (!cand.size) continue;
+    const ranked = [...cand.values()].sort((a, b) => {
+      const as = sameThread(c, a) ? 1 : 0;
+      const bs = sameThread(c, b) ? 1 : 0;
+      if (as !== bs) return bs - as;
+      if (a.fetched_at < b.fetched_at) return -1;
+      if (a.fetched_at > b.fetched_at) return 1;
+      return Number(a.id) - Number(b.id);
+    });
+    const kept = ranked.slice(0, perCommitment);
+    kept.sort((a, b) => (a.fetched_at < b.fetched_at ? -1 : a.fetched_at > b.fetched_at ? 1 : Number(a.id) - Number(b.id)));
+    let through = String(kept[0].fetched_at);
+    for (const item of kept) if (String(item.fetched_at) > through) through = String(item.fetched_at);
+    out.push({
+      id: c.id,
+      direction: c.direction,
+      summary: c.summary,
+      detail: c.detail,
+      counterparty: c.counterparty,
+      asked_at: c.asked_at,
+      source: c.source,
+      item_id: c.item_id,
+      item_ids: kept.map((i) => Number(i.id)),
+      through,
+      ledger_checked_at: c.ledger_checked_at || '',
+    });
+  }
+  return out;
+}
+
+function related(c: Row, item: Row, mine: Set<string>, forms: Map<string, Set<string>>) {
+  if (!(String(item.fetched_at) > String(c.ledger_checked_at))) return false;
+  const self = Number(item.id) === Number(c.item_id);
+  if (!(String(item.occurred_at) > String(c.asked_at) || self)) return false;
+  if (!(String(item.occurred_at) < String(c.window_end))) return false;
+  // The ask itself counts only once its text arrived later (raw.repaired).
+  // Its own thread would otherwise match it on every pass.
+  if (self && !item.repaired) return false;
+  if (self || sameThread(c, item)) return true;
+  const author = String(item.author_identity || '').toLowerCase();
+  const project = String(item.project || '').toLowerCase() === String(c.gitlab_path || '').toLowerCase();
+  const github = /^github/i.test(String(item.source)) && c.gitlab_path && project;
+  if (c.direction === 'owed_to_me' && c.counterparty_person_id != null) {
+    const set = forms.get(String(c.counterparty_person_id));
+    if (set && set.has(author) && (item.source === 'graph_chat' || item.source === 'graph_mail' || github)) return true;
+  }
+  if (mine.has(author)) {
+    if (github) return true;
+    if (c.repo_path && item.source === 'claude_session') {
+      const cwd = String(item.cwd || '').toLowerCase();
+      const repo = String(c.repo_path).toLowerCase();
+      if (like(cwd, `${repo}%`)) return true;
+      if (item.machine && c.repo_base && like(`/${cwd.replace(/\\/g, '/')}/`, `%/${c.repo_base}/%`)) return true;
+    }
+  }
+  return false;
+}
+
+function stamp(v: unknown) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v || '');
+}
 
 function setClause(cols: string[]) {
   for (const k of cols) if (!STATUS_COLUMNS.includes(k)) throw new Error(`a transition does not write commitment.${k}`);
@@ -164,19 +328,77 @@ function create(db: Db) {
 
     /** Open asks with items the judge has not seen (see src/repo/ledger.js). */
     async dirty({ myForms, limit, perCommitment, ids = null }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null }) {
-      const rows = await db.rows(DIRTY, [
-        myForms || [],
-        limit,
-        perCommitment,
-        ids && ids.length ? ids.map(Number) : null,
-        sinceMs(SESSION_SETTLE_MINUTES * 60_000),
-        sinceMs(15 * 60_000),
-      ]);
-      for (const r of rows) {
-        r.item_ids = JSON.parse(String(r.item_ids));
+      const idList = ids && ids.length ? ids.map(Number) : null;
+      const open = await db.rows(OPEN, [idList]);
+      if (!open.length) return [];
+      const cap = limit == null ? open.length : Number(limit);
+      const per = perCommitment == null ? 10 : Number(perCommitment);
+      const freshAfter = sinceMs(15 * 60_000);
+      const settledBefore = sinceMs(SESSION_SETTLE_MINUTES * 60_000);
+      const unchecked = open.filter((c: Row) => !c.ledger_checked_at);
+      const checked = open.filter((c: Row) => c.ledger_checked_at);
+      const parts: Row[] = [];
+      if (unchecked.length) {
+        // Never-checked asks still walk their window. There are few of them
+        // (a new ask), and they sort ahead of a checked ask with nothing fresh.
+        const rows = await db.rows(DIRTY, [myForms || [], cap, per, unchecked.map((c: Row) => Number(c.id)), settledBefore, freshAfter]);
+        for (const r of rows) {
+          r.item_ids = JSON.parse(String(r.item_ids));
+          r.ledger_checked_at = '';
+          parts.push(r);
+        }
+      }
+      if (checked.length) {
+        let oldest = String(checked[0].ledger_checked_at);
+        for (const c of checked) if (String(c.ledger_checked_at) < oldest) oldest = String(c.ledger_checked_at);
+        // Idle: nothing fetched since every open ask was checked. One seek.
+        const hit = await db.one(
+          'select 1 as x from source_item indexed by source_item_fresh_idx where fetched_at > substr($1, 2) limit 1',
+          [' ' + oldest]
+        );
+        if (hit) {
+          const items = await db.rows(FRESH, [' ' + oldest, settledBefore]);
+          const people = [...new Set(checked.filter((c: Row) => c.direction === 'owed_to_me' && c.counterparty_person_id != null).map((c: Row) => Number(c.counterparty_person_id)))];
+          const forms = new Map<string, Set<string>>();
+          if (people.length) {
+            for (const r of await db.rows(FORMS, [people])) {
+              if (!r.form) continue;
+              const id = String(r.person_id);
+              let set = forms.get(id);
+              if (!set) forms.set(id, set = new Set());
+              set.add(String(r.form));
+            }
+          }
+          const mine = new Set((myForms || []).map((s) => String(s)));
+          parts.push(...matchChecked(checked, items, { mine, forms, perCommitment: per }));
+        }
+      }
+      parts.sort((a, b) => {
+        const fa = stamp(a.through) > freshAfter ? 0 : 1;
+        const fb = stamp(b.through) > freshAfter ? 0 : 1;
+        if (fa !== fb) return fa - fb;
+        const ca = stamp(a.ledger_checked_at);
+        const cb = stamp(b.ledger_checked_at);
+        if (ca < cb) return -1;
+        if (ca > cb) return 1;
+        const ta = stamp(a.through);
+        const tb = stamp(b.through);
+        if (ta < tb) return 1;
+        if (ta > tb) return -1;
+        return Number(a.id) - Number(b.id);
+      });
+      const out = parts.slice(0, cap);
+      const need = out.filter((r) => r.ask_text == null && r.item_id != null);
+      if (need.length) {
+        const bodies = new Map((await db.rows('select id, body_text from source_item where id in (select value from json_each($1))', [need.map((r) => Number(r.item_id))])).map((r: Row) => [Number(r.id), r.body_text]));
+        for (const r of need) r.ask_text = bodies.get(Number(r.item_id)) ?? null;
+      }
+      for (const r of out) {
+        delete r.ledger_checked_at;
+        delete r.item_id;
         dates(r, 'through', 'asked_at');
       }
-      return rows;
+      return out;
     },
 
     /** Which of these commitments you reopened yourself (and did not undo): their ids, as strings. */

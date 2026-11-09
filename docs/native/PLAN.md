@@ -1455,6 +1455,24 @@ not in the Map is not done, and a new one gets added there first.
     live traffic), `micHolders` shelling out to reg.exe (18-177 ms of lag), `freeBytes` via
     PowerShell (~35-40 ms), and blocks right after a handoff whose statement was not found. Not
     re-checked against the live supervisor log (no deploy from this work).
+    Partly (this commit). The three measured blockers are off the loop's back; the handoff blocks
+    are not, so the 1-3 s target is not closed and this is not ticked. Scratch encrypted SQLite:
+    `ledger.dirty` with the window index was 185 ms median idle (161-292) on 8000 items and 400
+    open asks, 262 ms with 40 new items, 1211 ms with 2000. It now reads items fetched since the
+    oldest check (`source_item_fresh_idx`, sql-sqlite/011) and matches them in process: 2.0 ms
+    median idle on 6000 items and 300 asks (1.6-9.6), 2.1 ms with a few dozen new, 11 ms median
+    with 2000 (10-46). The new matcher matches the old SQL on threads, a repaired ask, owed-to-me
+    mail, a GitHub project and a session cwd. `freeBytes` is one statfs, cached a minute: 1.4 ms,
+    then 0.1 ms (was PowerShell 35-40 ms). `micHolders` is async `reg.exe`, cached 15 s (inside
+    the 180 s call grace): a cold read stalled the loop 72 ms (wall 127 ms) and a poll inside the
+    TTL returns in 0 ms. A guard test refuses `spawnSync`/`execSync`/`execFileSync` on the gate,
+    the disk check and the Windows platform module. Still sync on a pass, not this change:
+    `ingest/cursorSessions.ts` `readFileSync` of up to 40 transcript jsonl files; `repos` `readSafe`
+    reads a file then slices; `projects` `execFileSync` git remote (disk-only sync); `vault.list` /
+    `vault.get` `spawnSync` (the five-minute re-list is async, the first list and a get are not);
+    `backup` restore `spawnSync` tar (not the hourly dump). Dashboard pages `readFileSync` the HTML
+    per request. `common.runSync` remains for the Linux doctor (`xdg-mime`, `notify-send --help`).
+    Not re-checked against the live supervisor log.
   - [x] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
     session (p(answer_here) 0.775-0.78, threshold 0.85), although the snapshot lists tomorrow's
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from

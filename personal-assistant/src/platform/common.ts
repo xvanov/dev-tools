@@ -129,6 +129,55 @@ function pipeTo(cmd: string, args: string[], text: string): Promise<boolean> {
   });
 }
 
+/**
+ * One cached async result per key. Inside `ttlMs` the last value is returned
+ * and `fn` does not run. Once it expires, a refresh starts; a value already
+ * cached is returned at once and the refresh finishes in the background, so a
+ * serving pass does not wait on a process. The first call, with nothing
+ * cached, waits. A failed refresh keeps the previous value.
+ */
+function cachedAsync(ttlMs: number) {
+  const slots = new Map<string, { value: unknown; at: number; pending: Promise<unknown> | null }>();
+  return function get<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    let slot = slots.get(key);
+    if (!slot) {
+      slot = { value: undefined, at: 0, pending: null };
+      slots.set(key, slot);
+    }
+    if (slot.at && Date.now() - slot.at < ttlMs) return Promise.resolve(slot.value as T);
+    if (!slot.pending) {
+      const current = slot;
+      current.pending = Promise.resolve()
+        .then(fn)
+        .then((value) => {
+          current.value = value;
+          current.at = Date.now();
+          current.pending = null;
+          return value;
+        })
+        .catch((err: unknown) => {
+          current.pending = null;
+          throw err;
+        });
+      // A background refresh has no caller waiting on it.
+      if (current.at) current.pending.catch(() => {});
+    }
+    if (slot.at) return Promise.resolve(slot.value as T);
+    return slot.pending as Promise<T>;
+  };
+}
+
+// Free space changes slowly next to a once-a-minute check, and spawning
+// PowerShell to read a drive took 35-40 ms on the serving loop. One statfs,
+// remembered per filesystem for a minute.
+const FREE_BYTES_TTL_MS = 60_000;
+const freeBytesCache = cachedAsync(FREE_BYTES_TTL_MS);
+
+function cachedFreeBytes(dir: string): Promise<number> {
+  const root = path.parse(path.resolve(dir || '.')).root || String(dir);
+  return freeBytesCache(root, async () => statfsFree(dir));
+}
+
 // Free bytes for unprivileged writes on the filesystem holding `dir` (or its
 // nearest existing ancestor: the spool may not exist yet). statfs is a single
 // syscall, so this is cheap enough to run every minute.
@@ -152,4 +201,4 @@ function stack({ env = process.env, platform = process.platform }: { env?: Env; 
   return platform === 'win32' ? 'work' : 'personal';
 }
 
-module.exports = { stack, which, forgetWhich, runSync, run, spawnDetached, pipeTo, statfsFree };
+module.exports = { stack, which, forgetWhich, runSync, run, spawnDetached, pipeTo, statfsFree, cachedAsync, cachedFreeBytes, FREE_BYTES_TTL_MS };

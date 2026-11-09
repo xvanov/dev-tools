@@ -100,8 +100,8 @@ async function checkCapture() {
   return stale;
 }
 
-// Free bytes on the filesystem holding the audio spool: a PowerShell drive
-// query on Windows, one statfs call elsewhere (src/platform).
+// Free bytes on the filesystem holding the audio spool: one statfs call,
+// cached for a minute (src/platform). Not a PowerShell spawn.
 function freeBytes() {
   return platform.freeBytes(config.audioDir);
 }

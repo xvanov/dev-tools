@@ -118,8 +118,8 @@ const capture = {
   },
 };
 
-async function freeBytes(dir: string) {
-  return common.statfsFree(dir);
+function freeBytes(dir: string) {
+  return common.cachedFreeBytes(dir);
 }
 
 const services = {

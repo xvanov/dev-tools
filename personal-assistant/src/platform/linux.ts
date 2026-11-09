@@ -438,6 +438,8 @@ function micHoldersFromPactl(sourceOutputsText: string, shortSourcesText: string
 
 // Our own processes must parse pactl in English whatever the desktop's locale.
 const PACTL_ENV = { LC_ALL: 'C' };
+const MIC_HOLDERS_TTL_MS = 15_000;
+const micHoldersCache = common.cachedAsync(MIC_HOLDERS_TTL_MS);
 
 function unitDir(env: Env = process.env) {
   return path.join(xdgConfig(env), 'systemd', 'user');
@@ -465,18 +467,22 @@ const capture = {
   // No pactl (a box with neither PipeWire's pulse layer nor PulseAudio) means
   // no unplanned-call detection: the gate then records calendar meetings only,
   // and `pa doctor` says so.
+  // Same TTL as Windows: a poll inside 15 s does not spawn pactl, and a stale
+  // answer is returned while the next read runs off the pass.
   async micHolders() {
-    if (!common.which('pactl')) return [];
-    const [outs, srcs] = await Promise.all(
-      capture.micHoldersCommands().map((c) => common.run(c.cmd, c.args, { env: c.env, timeoutMs: 10_000 }))
-    );
-    if (outs.error || outs.status !== 0) return [];
-    return micHoldersFromPactl(outs.stdout, srcs.stdout);
+    return micHoldersCache('mic', async () => {
+      if (!common.which('pactl')) return [];
+      const [outs, srcs] = await Promise.all(
+        capture.micHoldersCommands().map((c) => common.run(c.cmd, c.args, { env: c.env, timeoutMs: 10_000 }))
+      );
+      if (outs.error || outs.status !== 0) return [];
+      return micHoldersFromPactl(outs.stdout, srcs.stdout);
+    });
   },
 };
 
-async function freeBytes(dir: string) {
-  return common.statfsFree(dir);
+function freeBytes(dir: string) {
+  return common.cachedFreeBytes(dir);
 }
 
 const services = {
