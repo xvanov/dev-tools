@@ -36,7 +36,7 @@ const CLIENT = path.join(__dirname, 'factory.client.js');
 const KIND_LABEL: Record<string, string> = { code: 'code — change a repo', research: 'research — answer a question, write a report', report: 'report — write a document', plan: 'plan — read-only: an implementation plan, change nothing' };
 const RUNTIME_LABEL: Record<string, string> = { api: 'API models (metered)', claude_session: 'Claude session (subscription)' };
 
-/** The kind and runtime pickers, for the card's Do and the New job form. */
+/** The kind and runtime pickers, for the New job form. */
 function pickers() {
   return {
     kinds: F.KINDS.map((k: string) => ({ value: k, label: KIND_LABEL[k] })),

@@ -1900,10 +1900,11 @@ not in the Map is not done, and a new one gets added there first.
     `PA_SANDBOX` plan-session wrapper and the Claude-session branch of `cli do`'s output. Until
     then a call logs a warning and records an `llm_spend` row of unknown cost
     (`dispatch-session-unmetered`).
-  - [ ] **8.6.4 The Plan card UI on the dispatch settings API** (another agent): runtime, mode,
+  - [x] **8.6.4 The Plan card UI on the dispatch settings API** (the commit adding `dispatchMenu.client.js`): runtime, mode,
     end state, job kind, app/repo pickers that read and write
-    `/api/commitments/:id/dispatch-settings`; drop the route and machine pickers and `/api/machines`'
-    `routes`/`defaultRoute`/`machines` fields once nothing reads them.
+    `/api/commitments/:id/dispatch-settings`, in a ☰ menu on each card
+    (`dashboard/dispatchMenu.client.js`); the card keeps one read-only line of what Do sends. The
+    route and machine pickers are gone, and with them `/api/machines` (nothing read it).
   - [ ] **8.6.5 Meter the dashboard's "resume a Claude session"** (`cards.openSession`,
     `claude --resume`). It reopens an existing interactive session, which the factory has no job
     shape for; today it is logged and recorded in `llm_spend` with cost unknown

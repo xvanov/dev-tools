@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="theme.css">
 <script src="nav.js" data-layer="dashboard"></script>
 <script src="events.js"></script>
+<script src="dispatchMenu.js"></script>
 <style>
   /* This page's names for the shared tokens in theme.css (the Jarvis design
      system). Colours are defined there, once, for light and dark. */
@@ -64,8 +65,24 @@
   .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .sub a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
   .due-over { color: var(--warn); font-weight: 600; }
-  .actions { display: flex; gap: 6px; margin-top: 6px; }
-  .actions select { font: inherit; font-size: 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  /* What Do sends (dispatchMenu.client.js): one quiet line; the settings sit
+     behind the card's ☰ in a small menu anchored to it. */
+  .dsum { color: var(--ink-3); font: 500 11px var(--font-mono); margin-top: 6px; }
+  .dmenu-wrap { position: relative; display: inline-flex; }
+  .dmenu-btn { padding-inline: 8px; line-height: 1; }
+  .dmenu-btn[aria-expanded="true"] { border-color: var(--accent); }
+  .dmenu { position: absolute; z-index: 20; left: 0; top: calc(100% + 4px); width: min(360px, calc(100vw - 32px));
+    background: var(--surface-1); border: 1px solid var(--line-strong); border-radius: var(--radius);
+    box-shadow: var(--shadow-2); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+  .dmenu-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .dmenu-row label { display: flex; justify-content: space-between; gap: 8px; color: var(--ink-2); margin-bottom: 2px; }
+  .dmenu-src { color: var(--ink-3); }
+  .dmenu-src.set { color: var(--accent); font-weight: 600; }
+  .dmenu-ctl { display: flex; gap: 6px; }
+  .dmenu-ctl select { flex: 1; min-width: 0; font: inherit; font-size: 12px; }
+  .dmenu-hint { color: var(--ink-3); }
+  .dmenu-warn { color: var(--warn); }
   .ctx-toggle { margin-top: 6px; font-size: 12px; }
   .ctx-toggle > summary { cursor: pointer; color: var(--muted); }
   .ctx { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--line); font-size: 13px; }
@@ -506,25 +523,10 @@ function link(url, text) {
   return url && /^https?:\/\//.test(url) ? el('a', { href: url, target: '_blank', rel: 'noopener' }, text) : null;
 }
 
-// Where a run can go and in which mode (GET api/machines), loaded once. A
-// commitment's context is fetched when asked for and kept open across the
+// A commitment's context is fetched when asked for and kept open across the
 // page's refreshes, so reading it is not interrupted.
-let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local', routes: ['factory'], defaultRoute: 'factory' };
-fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
 const openBlockers = new Set();
-
-function picker(options, value) {
-  const s = el('select', {});
-  for (const o of options) {
-    const opt = el('option', { value: o.value }, o.label);
-    if (o.value === value) opt.selected = true;
-    s.append(opt);
-  }
-  s.addEventListener('focus', () => { editing = true; });
-  s.addEventListener('blur', () => { editing = false; });
-  return s;
-}
 
 // Mail and Teams bodies arrive with runs of blank (or nbsp/space-only) lines
 // from the HTML they were flattened from; pre-wrap would draw every one.
@@ -651,51 +653,20 @@ function cardSource(x, wanted) {
   return [whyBlock(x, wanted), linkChips(x), ...sessionLines(x)];
 }
 
-// What each mode lets the session do, shown in the mode picker. A review or a
-// question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
-// Where the work goes. Its end state is the end-state picker's (unpicked: the
-// repo's default); a mode changed from its default maps to one instead (local
-// → nothing pushed, branch → a branch, mr/full → a draft PR). Every Do is a
-// factory job (D28): there is no route or machine to pick, and plan is a
-// read-only plan job. A card's stored choices: api/commitments/<id>/dispatch-settings.
-const ROUTE_HELP = {
-  claude: 'Claude session',
-  factory: 'software factory',
-  auto: 'auto — the routing rule picks',
-};
-
-const MODE_HELP = {
-  plan: 'plan — read and write a plan, change nothing',
-  local: 'local — commit in its worktree, push blocked',
-  branch: 'branch — commit and push the branch',
-  mr: 'mr — push and open a draft PR',
-  full: 'full — push, draft PR, and draft a reply to the asker',
-};
+// A card's dispatch settings (runtime, mode, end state, job kind, repo) live
+// behind its ☰ (dispatchMenu.client.js, GET/POST api/commitments/<id>/
+// dispatch-settings); the card shows one line of what Do will send. Every Do
+// is a factory job (D28): there is no route or machine to pick.
+const dispatchMenu = window.DispatchMenu.controller({
+  getJson, post, toast,
+  setEditing: (on) => {
+    editing = on;
+    if (!on && refreshMissed) refresh();
+  },
+});
 
 function commitmentCard(c) {
-  const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
-  const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
-  const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
-  const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
-  // The end state (src/dispatch/deliveryCore.ts). Unpicked: the repo's default.
-  const deliveryPick = picker([{ value: '', label: 'end state: the factory app\'s default' },
-    ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
-  // On the factory route: what kind of work, and who does it (JOBS-API v1.2).
-  // A research or report job delivers a report: no end state, no mode, no repo needed.
-  const kindPick = picker([{ value: '', label: 'kind: decided from the ask' }, ...(MACHINES.kinds || []).map((k) => ({ value: k.value, label: k.label }))], '');
-  const runtimePick = picker((MACHINES.runtimes || []).map((r) => ({ value: r.value, label: r.label })), MACHINES.defaultRuntime || 'api');
-  const factoryOnly = () => {
-    const f = routePick.value === 'factory';
-    kindPick.hidden = !f || !(MACHINES.kinds || []).length;
-    runtimePick.hidden = !f || !(MACHINES.runtimes || []).length;
-    const report = f && Boolean(kindPick.value) && kindPick.value !== 'code';
-    modePick.hidden = report;
-    deliveryPick.hidden = report;
-    machinePick.hidden = f;
-  };
-  routePick.addEventListener('change', factoryOnly);
-  kindPick.addEventListener('change', factoryOnly);
-  factoryOnly();
+  const doBtn = el('button', { class: 'primary', title: 'Send this to the software factory with the settings shown (change them with ☰)' }, 'Do');
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -740,56 +711,46 @@ function commitmentCard(c) {
     // Opened now, while this is still the click: a tab opened after the
     // request returns is a popup, and the browser blocks it.
     const tab = window.open('about:blank', '_blank');
-    if (tab) tab.document.title = 'starting a session…';
-    machinePick.disabled = true;
-    modePick.disabled = true;
-    routePick.disabled = true;
-    deliveryPick.disabled = true;
-    kindPick.disabled = true;
-    runtimePick.disabled = true;
-    toast(routePick.value !== 'claude' ? 'sending it on its way…' : machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
+    if (tab) tab.document.title = 'starting…';
+    dispatchMenu.close(false);
+    toast('sending it on its way…');
     try {
-      // A mode left at its default is not a choice: the end state decides then.
-      const onFactory = routePick.value === 'factory';
-      const kind = onFactory && !kindPick.hidden && kindPick.value ? kindPick.value : null;
-      const report = kind && kind !== 'code';
-      const mode = !report && modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
-      // The level this will resolve to (a repo default included), shown and
+      // Do sends nothing of its own: the card's dispatch settings decide.
+      // The level they resolve to (a repo default included) is shown and
       // confirmed here when nothing human follows it; the server checks the
-      // page sent back exactly that level. A research/report job has none.
-      const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(kind ? { kind } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
-      const pre = report ? { unattended: false } : await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
+      // page sent back exactly that level. A research/report/plan job has none.
+      const pre = await getJson(`api/commitments/${c.id}/delivery`);
       let confirmedLevel = null;
       if (pre.unattended) {
-        if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}\n\nNo human step after this. Start it?`)) throw new Error('not started');
+        if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}
+
+No human step after this. Start it?`)) throw new Error('not started');
         confirmedLevel = pre.delivery;
       }
-      const send = (register) => post(`api/commitments/${c.id}/dispatch`, {
-        machine: onFactory ? null : machinePick.value || null, mode, via: routePick.value, delivery: report ? null : deliveryPick.value || null, confirmedLevel,
-        kind, runtime: onFactory && !runtimePick.hidden && runtimePick.value !== MACHINES.defaultRuntime ? runtimePick.value : null, ...(register ? { register: true } : {}),
+      const send = (register) => post(`api/commitments/${c.id}/dispatch`, { confirmedLevel, ...(register ? { register: true } : {}) });
+      // With PA_PASSKEYS=on a merge or push to main may need a passkey tap
+      // first (src/auth/stepup.ts): tap, then send again.
+      const sendStepped = (register) => send(register).catch(async (err) => {
+        if (!err.data?.needsStepUp || !window.paAuth) throw err;
+        await window.paAuth.stepUp(err.data.approvalId);
+        return send(register);
       });
       // A repo the factory does not know yet is a setup step on you, with
       // its fix (src/dispatch/route.ts): one click registers it and sends.
-      const r = await send(false).catch((err) => {
+      const r = await sendStepped(false).catch((err) => {
         const fix = err.data?.fix;
         if (fix?.action !== 'register') throw err;
-        if (!window.confirm(`${fix.slug} is not registered with the software factory.\n\nRegister it now (${fix.command}) and send this?`)) throw err;
-        return send(true);
+        if (!window.confirm(`${fix.slug} is not registered with the software factory.
+
+Register it now (${fix.command}) and send this?`)) throw err;
+        return sendStepped(true);
       });
-      toast(r.route === 'factory'
-        ? `run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
-        : `run #${r.id} started (${r.mode}${r.delivery ? ` → ${r.delivery}` : ''}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
+      toast(`run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
       if (tab && r.url) tab.location.href = r.url;
-      else if (r.url) window.open(r.url, '_blank');
+      else if (tab) tab.close();
       openContext.set(c.id, null);
     } catch (err) {
       if (tab) tab.close();
-      machinePick.disabled = false;
-      modePick.disabled = false;
-      routePick.disabled = false;
-      deliveryPick.disabled = false;
-      kindPick.disabled = false;
-      runtimePick.disabled = false;
       throw err;
     }
   }));
@@ -817,6 +778,7 @@ function commitmentCard(c) {
   const asks = c.asks || [];
   // A prepared offer is the start button: no second set of pickers beside it.
   const canDo = c.direction === 'owed_by_me' && c.status === 'open' && !settledOnly && !asks.some((p) => p.kind === 'dispatch');
+  const dm = canDo ? dispatchMenu.parts(c.id) : null;
   const flags = [
     c.settled ? el('span', { class: 'flag settled', title: 'The assistant found something that looks like it settles this, but is not sure enough to close it alone' }, 'looks done — confirm?') : null,
     asks.some((p) => p.kind === 'dispatch') ? el('span', { class: 'flag offer', title: 'A session is prepared: start it below' }, 'ready to start') : null,
@@ -841,10 +803,9 @@ function commitmentCard(c) {
     ...(c.unblocked || []).map((u) => el('div', { class: 'unblocked-note' },
       `Unblocked: ${u.who || 'they'} delivered “${u.summary}”${u.closed_at ? ` ${ago(u.closed_at)}` : ''}`)),
     c.chase ? chaseBlock(c, c.chase) : null,
+    dm ? dm.line : null,
     settledOnly ? null : el('div', { class: 'actions' },
-      canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
-      canDo && (MACHINES.kinds || []).length ? kindPick : null, canDo && (MACHINES.runtimes || []).length ? runtimePick : null,
-      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
+      canDo ? doBtn : null, dm ? dm.button : null,
       canReply ? replyBtn : null, doneBtn, blockBtn, dropBtn),
     ctx);
 }
@@ -1422,13 +1383,27 @@ function closedCard(c) {
 }
 
 let editing = false;
+// A refresh skipped while a menu was open runs when it closes.
+let refreshMissed = false;
+
+const holdRefresh = () => editing || dispatchMenu.isOpen() || document.querySelector('.confirm:not([hidden])');
 
 async function refresh() {
-  if (editing || document.querySelector('.confirm:not([hidden])')) return;
+  if (holdRefresh()) {
+    refreshMissed = true;
+    return;
+  }
+  refreshMissed = false;
   try {
     const res = await fetch('api/state');
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    render(await res.json());
+    const data = await res.json();
+    // A menu opened while this was fetched stays open: drawn when it closes.
+    if (holdRefresh()) {
+      refreshMissed = true;
+      return;
+    }
+    render(data);
   } catch (err) {
     document.getElementById('updated').textContent = `error: ${err.message}`;
   }

@@ -381,7 +381,7 @@ is no handler that takes a command or free text.
 **A finished run is delivered to the end state I chose for it, and to nothing past it.** Every run
 records its delivery level (`run.delivery`, src/dispatch/deliveryCore.ts): `none` < `branch` <
 `draft_pr` < `pr` < `auto_merge` < `push_to_main`. It is set only from my side — `--delivery`, the
-card's picker, an explicit `--mode`, my own words in `--task`, my per-repo default (`pa delivery
+card's dispatch settings (its ☰ menu), an explicit `--mode`, my own words in `--task`, my per-repo default (`pa delivery
 set`), `PA_DELIVERY_DEFAULT` — and never from a third party's message: the planner's offers and a
 commitment's text never infer one. Inference from my words reaches at most `pr` (ordinary text says
 "runs on push to main"). The two levels with no human step after the yes (`auto_merge`,

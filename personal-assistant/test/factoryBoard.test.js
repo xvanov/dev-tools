@@ -490,9 +490,8 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     const ok = await call('POST', '/api/factory/jobs/widget%3A015/approve', { headers: { 'x-pa': '1' } });
     assert.strictEqual(ok.status, 200);
     assert.ok(calls.some((c) => c.argv.includes('approve-direction')));
-    const m = JSON.parse((await call('GET', '/api/machines')).body);
-    assert.deepStrictEqual(m.runtimes.map((x) => x.value), ['api', 'claude_session'], 'the card\'s Do gets the runtime picker');
-    assert.strictEqual(m.defaultRoute, 'factory');
+    // No route or machine to pick (D28): the card's ☰ reads …/dispatch-settings (8.6.4).
+    assert.strictEqual((await call('GET', '/api/machines')).status, 404, '/api/machines is gone');
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });

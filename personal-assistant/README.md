@@ -831,8 +831,8 @@ pa meeting undo <debrief-id> <n>
 `pa attach` and the reconcile pass still manage.
 
 Some work belongs on a particular machine — the VM that runs the service, holds the OneDrive
-sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
-**Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
+sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or, then, the machine picker
+beside **Do**) started the run in *that* machine's termhub, which is already one of
 your hub's peers, so you attach to it the same way. Machines are listed in `PA_MACHINES`
 (`name=termhubUrl|reposRoot[|os]`); the repo must be cloned there under the same folder name.
 Windows, Linux and macOS machines all take runs. The OS (`windows`, `linux`, `macos`) is optional:
@@ -1727,8 +1727,11 @@ drop`), **Open in termhub** (a session on the factory machine running `uv run fa
 and only that one), and **New job** (title, ask, kind, runtime, optional repo, end state; a code job
 that would merge or push to main is confirmed on the page, as on a card). In the settings panel: today's PA
 model spend (`llm_spend`), the factory's metered spend and the subscription-equivalent of its Claude
-Code runs. On the board, a card's **Do** grows **kind** and **runtime** pickers when its route is the
-factory.
+Code runs. On the board, a card that can be started shows one quiet line of what **Do** will send
+(`Claude · full · draft PR · code (auto)`) and a **☰** beside Do: its menu holds the card's dispatch
+settings — runtime, mode, end state, job kind (default: decided from the ask, with the reason) and
+repo/app — each marked default, inferred or set on this card, with a reset. A change is saved on
+the card at once (`POST /api/commitments/<id>/dispatch-settings`); Do sends nothing of its own.
 
 The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);
 the switcher is `src/dashboard/nav.js` (`/nav.js`). These are the canonical copies: termhub

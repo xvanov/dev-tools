@@ -307,27 +307,6 @@ const ROUTES: Route[] = [
     },
   },
   { method: 'GET', path: '/api/state', handle: async ({ res, send }) => send(res, 200, await state()) },
-  // Where a run can go: this machine, and each one in PA_MACHINES.
-  {
-    method: 'GET',
-    path: '/api/machines',
-    handle: ({ res, send }) =>
-      send(res, 200, {
-        // Every run goes to the factory's machine (D28): no machine to pick.
-        machines: [{ name: '', label: 'the factory' }],
-        modes: Object.keys(require('../dispatch/modes.ts').MODES),
-        defaultMode: require('../dispatch/modes.ts').mode(config.factory.mode).name,
-        // No route to pick (D28): every dispatch is a factory job. Kept for the
-        // page until its Plan card reads /api/commitments/<id>/dispatch-settings.
-        routes: ['factory'],
-        defaultRoute: 'factory',
-        // The end states the operator may pick on Do (src/dispatch/deliveryCore.ts);
-        // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
-        deliveries: require('../dispatch/deliveryCore.ts').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore.ts').describe(d) })),
-        // On the factory route: the job's kind and runtime (JOBS-API v1.2).
-        ...(require('../dispatch/factory.ts').enabled() ? require('./factory.ts').pickers() : {}),
-      }),
-  },
   // One commitment with what it came from, so it can be judged before it is
   // dispatched: the ask itself, the thread around it, and any runs so far.
   { method: 'GET', path: /^\/api\/commitments\/(\d+)$/, handle: async ({ res, m, send }) => send(res, 200, await commitmentContext(Number(m?.[1]))) },
@@ -393,6 +372,8 @@ const ROUTES: Route[] = [
   // path for the chat's permission prompt; Talk answers it by voice.
   { method: 'GET', path: '/permission.js', handle: file('permission.client.js', JS) },
   { method: 'GET', path: '/chat.js', handle: file('chat.client.js', JS) },
+  // A Plan card's ☰ dispatch settings menu (reads and writes …/dispatch-settings below).
+  { method: 'GET', path: '/dispatchMenu.js', handle: file('dispatchMenu.client.js', JS) },
   {
     method: 'GET',
     path: '/api/secrets',
