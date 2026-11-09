@@ -1659,7 +1659,7 @@ not in the Map is not done, and a new one gets added there first.
     paid 57 s more. Another agent's `pytest -n auto` ran meanwhile, so re-measure on an idle
     machine, then cut what remains: scope the baseline to the diff's tool, and reuse a warm
     runtime.
-    Partly (pending-8451): a story that names a top-level tool other than
+    Partly (f96d7b2): a story that names a top-level tool other than
     software-factory no longer runs `cd software-factory && uv run --all-extras
     ruff check .` (the 95 s baseline, and the same command in the conversation).
     A software-factory path replaces `ruff check .` with those paths; a story
