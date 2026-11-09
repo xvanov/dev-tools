@@ -10,6 +10,8 @@
 //!     ptyd [--port N]      # 127.0.0.1:N, default $TERMHUB_PTYD_PORT or 7020; 0 = any
 
 mod guard;
+#[cfg(windows)]
+mod job;
 mod session;
 mod spec;
 

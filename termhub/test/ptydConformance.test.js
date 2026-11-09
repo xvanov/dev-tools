@@ -363,6 +363,51 @@ test('cwd fallback, kill, idempotent delete, websocket refusals', async ({ port 
   await t.close();
 });
 
+// Closing a terminal is a click in the UI: DELETE must answer quickly *and* only
+// once the whole tree is gone (shell -> node -> node here). It used to cost a
+// taskkill process plus a 300 ms reader wait on Windows, ~0.7-0.8 s per close.
+function alivePid(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+test('delete of a busy session is fast and ends the tree', async ({ port, dir }) => {
+  const script = path.join(dir, 'tree.js');
+  fs.writeFileSync(script, [
+    "const { spawn } = require('child_process');",
+    "const c = spawn(process.execPath, ['-e', 'setTimeout(()=>{},600000)'], { stdio: 'ignore' });",
+    "console.log('TREE' + process.pid + ':' + c.pid + 'END');",
+    'setTimeout(()=>{},600000);',
+  ].join('\n'));
+  const r = await getJson(port, '/api/sessions', { method: 'POST', timeoutMs: 15_000, body: { cwd: dir, noRc: true, command: `node "${script}"` } });
+  assert.strictEqual(r.status, 201, r.text);
+  const t = term(port, r.body.id);
+  await t.opened;
+  let pids = null;
+  await waitFor(() => {
+    const m = /TREE(\d+):(\d+)END/.exec(t.plain().replace(/\n/g, ''));
+    if (m) pids = [Number(m[1]), Number(m[2])];
+    return !!pids;
+  }, 20_000, 'tree started');
+  assert.ok(pids.every(alivePid), 'tree is running before the delete');
+
+  const t0 = Date.now();
+  const del = await getJson(port, `/api/sessions/${r.body.id}`, { method: 'DELETE', timeoutMs: 15_000 });
+  const ms = Date.now() - t0;
+  assert.strictEqual(del.status, 200);
+  if (process.env.CONFORMANCE_TRACE === '1' || process.env.DELETE_TRACE === '1') console.log(`       DELETE answered in ${ms} ms`);
+  // On Windows the answer comes after the job reports no live process; on
+  // Unix a SIGHUP'd grandchild may linger a moment as a zombie before init reaps it.
+  if (process.platform === 'win32') assert.deepStrictEqual(pids.filter(alivePid), [], 'tree gone when DELETE answers');
+  else await waitFor(() => !pids.some(alivePid), 3000, 'tree gone after DELETE');
+  // Windows: a job object answers in ~10-20 ms; the old taskkill + reader wait
+  // took 700-800 ms, so 500 catches that while leaving a loaded box headroom.
+  // Unix keeps its killpg path, held to a looser bound.
+  const limit = process.platform === 'win32' ? 500 : 1500;
+  assert.ok(ms < limit, `DELETE took ${ms} ms (limit ${limit})`);
+  await waitFor(() => t.of('exit').length > 0 || t.closed, 5000, 'killed session ends its stream');
+  await t.close();
+});
+
 // ---- runner -----------------------------------------------------------------
 
 async function runAgainst(target) {

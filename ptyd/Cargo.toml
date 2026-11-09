@@ -16,6 +16,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync",
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Job objects: one per terminal, so closing it ends the whole tree at once.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

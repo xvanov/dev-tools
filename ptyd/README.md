@@ -34,7 +34,7 @@ The same as sessiond (`termhub/AGENT.md`, *HTTP API*), for these routes:
 | `GET /api/sessions` | `{machine, sessions, restorable: []}`; ptyd keeps no archive |
 | `POST /api/sessions` | `{cwd, command, title, cols, rows, env, unsetEnv, noRc, links}` -> 201 info (+`envApplied`, `rcSkipped`) |
 | `PATCH /api/sessions/:id` | `{title, links, paused}` |
-| `DELETE /api/sessions/:id` | kills the whole process tree, answers when it is gone; idempotent |
+| `DELETE /api/sessions/:id` | kills the whole process tree, answers when it is gone (*Closing a terminal*); idempotent |
 | `POST /api/sessions/:id/input` | `{data, submit?}` -> `{ok, bytes}` |
 | `WS /ws/term/:id` | up: `input`, `resize` (a size claim); down: `replay` first, then `output`, `size`, `exit` |
 
@@ -55,6 +55,25 @@ no agent work (no `--session-id` splicing, model badge, voice or idle episodes):
 sessiond. On Windows ptyd answers ConPTY's opening cursor-position query itself, because
 `portable-pty` opens the pseudoconsole with `PSEUDOCONSOLE_INHERIT_CURSOR` and it draws nothing
 until someone answers, and a session nobody is watching yet would otherwise sit blank.
+
+## Closing a terminal
+
+On Windows every shell goes into its own Job Object right after spawn (`src/job.rs`), and its
+descendants inherit it (node's own nested job included). `DELETE` calls `TerminateJobObject`,
+waits until the job counts no live process (bounded at 3 s, typically a few ms), marks the
+session ended and closes the pseudoconsole, then answers: about 10-20 ms, where the old
+`taskkill /T /F` process plus a 300 ms reader wait took 700-800 ms. "When it is gone" means
+the kernel reports every process in the job exited, not merely signalled. The job also has
+`KILL_ON_JOB_CLOSE`: a tree never outlives ptyd (a `-Restart` ends it too), and deleting a
+session whose shell already exited ends what that shell left running once ptyd drops the
+session. That includes GUI programs started from the terminal
+(`code .`, `Start-Process`), which a parent-pid walk used to miss once their launcher exited.
+Not covered: a process started in the instant between `CreateProcessW` and the assignment, and
+one created with `CREATE_BREAKAWAY_FROM_JOB` (the job allows breakaway, so such a call leaves
+rather than fails). If assignment fails (ptyd runs in a job that forbids nesting), ptyd logs it
+and that session falls back to `taskkill /T /F`, bounded at 3 s, and waits for the exit.
+
+On Unix it is unchanged: `SIGHUP` to the shell's process group, then wait for the exit.
 
 ## Conformance
 
@@ -106,5 +125,5 @@ rollback on this commit: sessiond refuses to start.
 `<dataDir>/bin/ptyd-<hash>` (named by `<dataDir>/bin/ptyd-current`; `node lib/ptyHost.js
 install`), so a build never writes over it (Windows locks a running binary, Linux refuses with
 ETXTBSY). A new build is installed beside it and used from ptyd's next start:
-`.\windows\ptyd.ps1 -Restart` or `bash linux/ptyd-unit.sh --restart`, which end its terminals,
-so only on purpose.
+`.\windows\ptyd.ps1 -Restart` or `bash linux/ptyd-unit.sh --restart`, which end its terminals
+(on Windows with everything started from them, see *Closing a terminal*), so only on purpose.

@@ -146,8 +146,19 @@ pub struct Session {
     input: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>,
+    /// The terminal's process tree (see job.rs). None if assignment failed;
+    /// `kill` then falls back to `taskkill /T`.
+    #[cfg(windows)]
+    job: Option<crate::job::Job>,
     rt: tokio::runtime::Handle,
 }
+
+/// How long `kill` waits for a terminated job to report no live process.
+#[cfg(windows)]
+const JOB_KILL_WAIT: Duration = Duration::from_secs(3);
+/// How long the fallback `taskkill /T /F` may run before it is abandoned.
+#[cfg(windows)]
+const TASKKILL_WAIT: Duration = Duration::from_secs(3);
 
 pub struct CreateOpts {
     pub id: Option<String>,
@@ -243,6 +254,15 @@ impl Session {
         // reader from ever seeing EOF on Linux.
         drop(pair.slave);
         let pid = child.process_id();
+        // Into its own job before the shell has had time to start anything.
+        #[cfg(windows)]
+        let job = child.as_raw_handle().and_then(|h| match crate::job::Job::assign(h) {
+            Ok(j) => Some(j),
+            Err(e) => {
+                eprintln!("[ptyd] no job object for pid {pid:?} ({e}); closing it will use taskkill /T");
+                None
+            }
+        });
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader().map_err(|e| format!("pty reader: {e}"))?;
         let mut writer = pair.master.take_writer().map_err(|e| format!("pty writer: {e}"))?;
@@ -283,6 +303,8 @@ impl Session {
             input: Mutex::new(None),
             master: Mutex::new(Some(pair.master)),
             killer: Mutex::new(Some(killer)),
+            #[cfg(windows)]
+            job,
             rt: tokio::runtime::Handle::current(),
         });
 
@@ -543,8 +565,10 @@ impl Session {
         self.state.lock().unwrap().alive
     }
 
-    /// End the session: the whole process tree, then the PTY. Blocking (up to a
-    /// few seconds on Windows); call from a blocking context.
+    /// End the session: the whole process tree, then the PTY. Blocking; call
+    /// from a blocking context. Returns once the tree is gone: on Windows when
+    /// the job counts no live process (typically a few ms), else when the
+    /// waiter has seen the shell exit (bounded at a few seconds either way).
     pub fn kill(&self) {
         {
             let mut st = self.state.lock().unwrap();
@@ -552,6 +576,22 @@ impl Session {
                 return;
             }
             st.killed = true;
+        }
+        #[cfg(windows)]
+        if let Some(job) = self.job.as_ref() {
+            if !job.terminate(JOB_KILL_WAIT) {
+                eprintln!(
+                    "[ptyd] session {}: job still had live processes after {JOB_KILL_WAIT:?}",
+                    self.id
+                );
+            }
+            // The tree is gone; don't wait for the waiter. It would hold the
+            // exit up to 300 ms for a reader that, on ConPTY, only ends once
+            // the pseudoconsole is closed, which is what happens next.
+            self.handle_exit(None);
+            self.input.lock().unwrap().take();
+            self.master.lock().unwrap().take();
+            return;
         }
         if let Some(pid) = self.pid {
             kill_tree(pid);
@@ -642,17 +682,31 @@ fn broadcast_locked(st: &mut State, msg: &Value) {
     st.clients.retain(|c| c.tx.send(text.clone()).is_ok());
 }
 
+/// The fallback for a session without a job object: walk the tree by parent
+/// pid. Bounded, so a wedged taskkill can't hold DELETE open indefinitely.
 #[cfg(windows)]
 fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let _ = std::process::Command::new("taskkill")
+    let Ok(mut tk) = std::process::Command::new("taskkill")
         .args(["/pid", &pid.to_string(), "/T", "/F"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
-        .status();
+        .spawn()
+    else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + TASKKILL_WAIT;
+    while std::time::Instant::now() < deadline {
+        if !matches!(tk.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = tk.kill();
+    let _ = tk.wait();
 }
 
 #[cfg(unix)]
