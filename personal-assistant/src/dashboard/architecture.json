@@ -851,7 +851,7 @@
       "details": {
         "Only people create tasks": "sourcePolicy decides in code before any model call; bots, CI and the assistant's own sessions are evidence only",
         "Short messages": "distill reads an item from 40 characters, but a Teams DM, the self chat or a mention from 6 (8.4.36) if it arrived in the last 7 days; one that is only a courtesy ('thanks!', 'sounds good', your name and a ^) is marked done without a model call (src/distill/short.ts, eval set src/eval/short-asks-cases.json)",
-        "Blocks pass": "links what someone owes you to the task it holds up (commitment_block)",
+        "Blocks pass": "links what someone owes you to the task it holds up (commitment_block). A card whose summary, detail or run ask carries e2e-<uuid> is left out of this pass and the card-context pass; a stored verdict that cites one is left out when the board reads it",
         "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
         "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.ts)",
         "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose"
@@ -1292,9 +1292,9 @@
         "Scheduler": "`factory serve` on both stacks (Windows: the factory-serve logon task, scripts/windows/install-serve.ps1, running `--supervise`; Linux: factory-serve.service, replacing the factory-tick@<app> timers; `factory on/off` manage it): ticks only apps whose config sets serve_tick: true, every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d within 1 s: it dispatches research/report jobs at once; a submit runs PM triage in the serve process and the tick starts when that triage finishes (a submit no longer starts a maintenance tick beside it); a resume or a finished step ticks the app at once, and that tick dispatches before the interval tick's GitHub maintenance; one serve per factory root (state/locks/serve.lock plus a SQLite lease, state/scheduler/leases.db, 30 s TTL); exits 75 for a restart when the checkout's HEAD moves; `factory serve --status`. A code job for an app nothing ticks (no serve_tick, no factory-tick@ timer) is accepted with a `ticker:` warning, and submit, job status/list and app list carry `ticked: false` (status why: `waiting: app X is not ticked`; JOBS-API v1.6, factory/scheduler/coverage.py)",
         "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
         "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
-        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): a high-severity finding gets one fix round, one that survives it parks the story (blocked_review_nonconvergent); medium and low findings are posted on the PR and do not spend a round; a reviewer that resolves to the dev's model is refused; claude_session solo has no reviewer",
-        "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; never merged below auto_merge",
-        "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch",
+        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): one fix round, only for a high or blocking finding, test slop, or a score under 0.7, and a finding that survives that round parks the story (blocked_review_nonconvergent); medium and low findings do not spend a round; a reviewer that resolves to the dev's model is refused; claude_session solo has no reviewer",
+        "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; a worktree a terminal still holds is left in place and the next checkout is created beside it and reused; never merged below auto_merge",
+        "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch. The tech_writer's context update is committed on the story branch before the PR is opened; a failed commit bounces the story",
         "Research/report": "detached workers (python -m factory.jobs.worker), at most FACTORY_TASK_MAX_WORKERS (default 2), 5400 s wall clock",
         "Self-edit": "apps/factory (the factory building itself) is paused since the cutover"
       },
@@ -1620,7 +1620,7 @@
       "id": "ptyd",
       "layer": "sessions",
       "name": "ptyd",
-      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. The only PTY host: sessiond keeps every terminal here, so a sessiond restart adopts them. node-pty is retired (Exit 5 code; the lead deploys before that box is ticked).",
+      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. The only PTY host: sessiond keeps every terminal here, so a sessiond restart adopts them. node-pty is retired (Exit 5, deployed on both stacks).",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -2226,7 +2226,7 @@
         },
         {
           "c": "factory-chain",
-          "t": "Solo pipeline: one dev agent, one independent review (azure/Kimi-K2.7-Code, one fix round on a high-severity finding; medium and low go on the PR), then gates, a PR, and the CI watch (up to 3 CI-fix cycles)."
+          "t": "Solo pipeline: one dev agent, one independent review (azure/Kimi-K2.7-Code, one fix round only on a high or blocking finding, or on test slop or a score under 0.7; medium and low do not spend a round), the tech_writer commits its context update on the story branch, then gates, a PR, and the CI watch (up to 3 CI-fix cycles; a held worktree gets a sibling checkout)."
         },
         {
           "c": "runtime-api",
