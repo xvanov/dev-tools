@@ -132,6 +132,7 @@ const HELP = `pa — your context layer
     pa eval answerer                voice fast lane answerer: right day, every meeting, titles as titles
     pa e2e [--dry-run|--sweep]      the golden path end to end on the live stack, timed per hop (pa help e2e)
     pa audit verify|tail|check      the policy audit log: verify its hash chain, show the newest rows, or dry-run a decision (pa help audit)
+    pa version                       print the commit the running worker serves (dashboard, or git in the checkout)
 `;
 
 function out(text: any) {
@@ -1817,6 +1818,7 @@ Object.assign(commands, require('./routine.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./version.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
@@ -1824,6 +1826,7 @@ Object.assign(commands, require('./audit.ts').make(out, fail));
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
   routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  version: './version.ts',
 };
 
 async function main(argv: string[]) {

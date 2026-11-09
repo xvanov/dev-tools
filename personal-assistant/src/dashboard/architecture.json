@@ -688,7 +688,9 @@
         "personal-assistant/src/dashboard/auth.ts",
         "personal-assistant/src/dashboard/login.client.js",
         "personal-assistant/src/cli/passkeys.ts",
+        "personal-assistant/src/cli/version.ts",
         "personal-assistant/test/passkeys.test.js",
+        "personal-assistant/test/version.test.js",
         "personal-assistant/test/dashboardAuth.test.js"
       ]
     },
