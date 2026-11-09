@@ -2372,7 +2372,7 @@
         ],
         "cost": {
           "max_usd": 0.05,
-          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning and docs steps (pm, sm, tech_writer) run metered on DeepSeek-V4-Flash, about $0.01-0.03 a job (D26)"
+          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning steps (pm, sm) run metered on DeepSeek-V4-Flash and its docs step (tech_writer) on Kimi-K2.7-Code, about $0.01-0.03 a job (D26)"
         },
         "views": [
           "build",
@@ -2551,7 +2551,7 @@
         ],
         "cost": {
           "max_usd": 0.05,
-          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning and docs steps (pm, sm, tech_writer) run metered on DeepSeek-V4-Flash, about $0.01-0.03 a job (D26)"
+          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning steps (pm, sm) run metered on DeepSeek-V4-Flash and its docs step (tech_writer) on Kimi-K2.7-Code, about $0.01-0.03 a job (D26)"
         },
         "views": [
           "plan",
