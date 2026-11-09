@@ -949,7 +949,10 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   (watched, never read; `src/dispatch/factoryPace.ts`), and every `PA_FACTORY_POLL_SECONDS` (120)
   otherwise: one `factory job list --source pa --active`, plus `job status` for jobs that ended
   since. A factory can also push a job's new state (`POST /api/factory/events`, below), which
-  Build shows at once; the next pass overwrites it with the full list. A blocked job makes the run `waiting` and
+  Build shows at once; the next pass overwrites it with the full list. A pushed end (done, failed,
+  cancelled) also settles its run there and then, through the same per-run step as the pass (the
+  stored job under the pushed state): the run closes, the card moves and "Factory run #N" is raised
+  within about 20 ms of the push, and the next pass finds nothing left to do. A blocked job makes the run `waiting` and
   tells you why; a finished one is `landed` with its PR on the card and closes the commitment *done*
   through the ledger (actor `factory`); a failed or cancelled one reopens it. `none` delivery
   closes nothing — the work is in the factory, and the ask stays dispatched until you close it.
@@ -1613,7 +1616,7 @@ The contract (the voice page depends on it):
 | `POST /api/chat` | `{ "text": string, "source": "typed" \| "voice" }`, header `X-PA: 1` | `{ "id": string }` once the text is typed (or queued, for a session still starting). 400 bad input, 403 no `X-PA`, 409 waiting on an answer in termhub |
 | `GET /api/chat/stream` | — | Server-Sent Events; each `data:` is one event (below). No replay: the first event is the current `status`, then live events only. A `: ping` comment every 20 s |
 | `GET /api/events?topics=board,run` | `topics` optional (all if absent): `board`, `run`, `factory`, `routine`; `resync` always. `Last-Event-ID` header or `?lastEventId=` | Server-Sent Events of row changes (plan 0.4): each frame has `id:` and a `data:` `{ id, topic, at, payload }`, payload ids and states only (`{ table, op, id, status, … }`, from the triggers in `sql/034_events_notify.sql`). The first frame is `hello` with the newest id; with a Last-Event-ID still in the 1000-event ring the missed events are replayed, otherwise one `resync` frame says refetch. A `: ping` comment every 20 s. Plan, Build and Routines refetch on it (`/events.js`) |
-| `POST /api/factory/events` | `{ job_id, state, why?, updated_at? }` or `{ jobs: [...] }` (50 at most), header `X-PA: 1` | A factory pushing job status: merged into the stored job list at once and put on the feed; `{ ok, received, patched }` |
+| `POST /api/factory/events` | `{ job_id, state, why?, updated_at? }` or `{ jobs: [...] }` (50 at most), header `X-PA: 1` | A factory pushing job status: merged into the stored job list at once and put on the feed; a done, failed or cancelled job then settles the PA run that holds it (after the answer). `{ ok, received, patched }` |
 | `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
 | `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
 | `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, p?, routerMs?, overridden? }` (`p`: the `logprob` router's `{ answer_here, hand_off, action }`), then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |

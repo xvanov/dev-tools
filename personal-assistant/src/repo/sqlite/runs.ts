@@ -292,16 +292,20 @@ function create(db: Db) {
       );
     },
 
-    /** Writes what the factory now says about a job onto its run (`ended`: stamp ended_at when unset). */
-    async applyFactoryState(id: number | string, { status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended }: { status?: string | null; outcome?: unknown; factoryState?: unknown; costUsd?: unknown; mrUrl?: unknown; exitNote?: unknown; delivery?: string | null; ended?: unknown }) {
-      await db.query(
+    /**
+     * Writes what the factory now says about a job onto its run (`ended`: stamp ended_at when unset;
+     * `whileStatus`: only while the run's status is still that one). Resolves whether the row was written.
+     */
+    async applyFactoryState(id: number | string, { status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended, whileStatus = null }: { status?: string | null; outcome?: unknown; factoryState?: unknown; costUsd?: unknown; mrUrl?: unknown; exitNote?: unknown; delivery?: string | null; ended?: unknown; whileStatus?: string | null }) {
+      const r = await db.query(
         `update run set status = $2, outcome = $3, outcome_at = case when $3 is not outcome then ${NOW} else outcome_at end,
                       factory_state = $4, cost_usd = coalesce($5, cost_usd), mr_url = coalesce($6, mr_url),
                       exit_note = coalesce($7, exit_note), delivery = coalesce($8, delivery),
                       ended_at = case when $9 and ended_at is null then ${NOW} else ended_at end
-        where id = $1`,
-        [id, status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, Boolean(ended)]
+        where id = $1 and ($10 is null or status = $10)`,
+        [id, status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, Boolean(ended), whileStatus]
       );
+      return (r.rowCount || 0) > 0;
     },
 
     /** Stores the subscription-equivalent cost. */

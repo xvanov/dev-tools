@@ -358,6 +358,19 @@ module.exports = {
     assert.strictEqual(Number((await db.one('select cost_usd from run where id = $1', [id])).cost_usd), 1.5, 'null keeps');
   },
 
+  'applyFactoryState whileStatus: written only while the run still has that status': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'running' });
+    const end = { status: 'landed', outcome: 'delivered', factoryState: 'done', costUsd: null, mrUrl: null, exitNote: null, delivery: null, ended: true, whileStatus: 'running' };
+    assert.strictEqual(await repos.runs.applyFactoryState(id, end), true);
+    const first = await db.one('select status, ended_at from run where id = $1', [id]);
+    assert.strictEqual(first.status, 'landed');
+    // A second writer that read the run while it was still running loses.
+    assert.strictEqual(await repos.runs.applyFactoryState(id, { ...end, status: 'running', outcome: null, factoryState: 'in_progress', ended: false }), false);
+    const after = await db.one('select status, factory_state, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([after.status, after.factory_state, String(after.ended_at)], ['landed', 'done', String(first.ended_at)]);
+    assert.strictEqual(await repos.runs.applyFactoryState(id, { ...end, factoryState: 'done', whileStatus: null }), true, 'no guard: written');
+  },
+
   'setSubscriptionEquiv: stores the figure': async ({ repos, seed, db, assert }) => {
     const id = await seed.run();
     await repos.runs.setSubscriptionEquiv(id, 2.25);
