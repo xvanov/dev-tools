@@ -1434,8 +1434,17 @@ not in the Map is not done, and a new one gets added there first.
     the status it was read with, so it is ended once. `test/factoryPushSettle.test.js` (real
     SQLite store): the push is answered in 2 ms, and the run is settled and notified 17 ms
     after it. A poll afterwards, and a poll holding the stale row, change nothing; a
-    non-terminal push only patches the board. (this commit: `fix(personal-assistant): settle a
-    factory run from its pushed end`)
+    non-terminal push only patches the board. (9ed9172)
+    Follow-up, the factory side: fe23854 ran the end's GitHub confirm (`job status`, about 3 s
+    of `gh`) on serve's push-watch thread, so another job's push could wait those seconds.
+    `JobStateWatch` now gives the pusher a confirm thread of its own (`defer`). The confirm
+    reads run there one at a time, and each correction is pushed as soon as it is known. An
+    answer for a job whose local reading has moved on is dropped. Deciding and sending share
+    one lock, so a correction never overtakes a newer push. `tests/test_serve_push_latency.py`
+    (real factory.db, `gh` faked at 1 s a call): another job's transition, written while an
+    end is being confirmed, reaches the fake PA in 216 ms. With the confirm on the watch thread
+    the same test fails at 4234 ms. (this commit: `fix(software-factory): confirm a job's end
+    off the push-watch thread`)
   - [ ] **8.4.45 research: the factory submit stalls ~9 s after the job is written.** In the
     research re-review, `factory_start`'s submit lap was 10864 ms. The factory wrote the job at
     23:34:13.697 (`created_at`), 2.2 s into the submit. PA logged the factory's answer at
@@ -1453,6 +1462,8 @@ not in the Map is not done, and a new one gets added there first.
     runs updated … ended: 1") at 23:38:04.02, 125.5 s after the job. The first review measured
     5.9 s for this, and 8.4.44 says a push hurries PA's next poll to 5 s. Make the card follow the
     pushed state, or make the push's hurry reach the run-row pass, and time it in the e2e (8.4.10).
+    Since 9ed9172 the pushed end ends the run row itself, so the card chain follows the push
+    (17 ms from push to settled, in `test/factoryPushSettle.test.js`). Not yet timed in the e2e.
   - [ ] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
     "loading…" (the page shows "Tap once to enable Jarvis"). So the shot always waits its full
     20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool
@@ -1464,6 +1475,10 @@ not in the Map is not done, and a new one gets added there first.
   interval tick ended. Suspect: fe23854's end-of-job GitHub confirm run for every finished job at
   start, on the watch thread, holding what the API needs. Serve must answer within its warm budget
   from start; confirm only jobs that ended since the last push, off the API path.
+  Against the suspect: the first check after a start seeds jobs that had already ended without
+  asking GitHub (`test_jobs_that_ended_before_serve_started_are_not_announced` asserts no reads),
+  so only jobs that end afterwards are confirmed. The confirm never ran on the API's threads, and
+  since the 8.4.44 factory follow-up it is off the watch thread too.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
