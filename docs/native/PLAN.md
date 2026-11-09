@@ -1605,12 +1605,16 @@ not in the Map is not done, and a new one gets added there first.
     files, and the checkout's file is unchanged since bec30c1. So each job pays for a docs step
     ($0.04 here) whose output goes nowhere. Where the write ended up was not traced. Commit it
     with the story, or skip the step for this app.
-  - [ ] **8.4.53 PA: an e2e dummy card leaks into a real card's blocker verdict.** On the Plan
+  - [x] **8.4.53 PA: an e2e dummy card leaks into a real card's blocker verdict.** On the Plan
     board, an unrelated work card shows "You need: Needs the ArgoCD sync to deploy the target
     service before adding the pa version verb." It is a stored block row (`verdict: blocks`,
     `task_id: null`) whose reason names the e2e's dummy task, so the blocker pass counted an open
     e2e card among the owner's tasks. Leave cards that carry an e2e marker out of the blocker and
     context passes, and drop verdicts that cite one.
+    Done (this commit): a card whose summary, detail or run ask carries `e2e-<uuid>` is left
+    out of the blocker pass (tasks and candidates) and the context pass. A stored verdict is
+    ignored when read if its task or blocker is such a card, or its why carries the marker or a
+    phrase of that card's ask or title. The row stays. Not run live.
 - [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
   checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
   backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`

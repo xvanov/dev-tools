@@ -9,6 +9,7 @@ type Db = import('./types.ts').Db;
 type Row = import('./types.ts').Row;
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
+const { omitCards, omitVerdicts } = require('../commitments/e2eMarker.ts');
 
 // Every commitment folded into the same survivor as `id` (superseded_by
 // chains), `id` itself excluded. `union`, not `union all`: a cycle ends.
@@ -345,10 +346,11 @@ function create(db: Db) {
      * @returns {Promise<Array<{id, summary, detail, extracted_at}>>}
      */
     async blockTasks(srcSql: unknown) {
-      return db.rows(
+      const rows = await db.rows(
         `select c.id, c.summary, c.detail, c.extracted_at from commitment c join source_item si on si.id = c.source_item_id
       where ${LIVE} and c.direction = 'owed_by_me' and ${srcSql} order by c.id`
       );
+      return omitCards(db, rows);
     },
 
     /**
@@ -357,7 +359,7 @@ function create(db: Db) {
      * @returns {Promise<object[]>}
      */
     async blockCandidates(srcSql: unknown) {
-      return db.rows(
+      const rows = await db.rows(
         `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
             coalesce(si.raw->>'chatTopic', si.subject, '') as place, si.body_text as body,
             b.verdict, b.task_id, b.manual, b.judged_at,
@@ -369,6 +371,7 @@ function create(db: Db) {
        left join commitment_block b on b.blocker_id = c.id
       where ${LIVE} and c.direction = 'owed_to_me' and ${srcSql} order by c.id`
       );
+      return omitCards(db, rows);
     },
 
     /**
@@ -415,7 +418,7 @@ function create(db: Db) {
      * @returns {Promise<object[]>}
      */
     async blocksForBoard(days: number) {
-      return db.rows(
+      const rows = await db.rows(
         `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, b.manual,
             c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
        from commitment_block b
@@ -427,6 +430,7 @@ function create(db: Db) {
                  and c.closed_at > now() - make_interval(days => $1)))`,
         [days]
       );
+      return omitVerdicts(db, rows);
     },
 
     // --- src/commitments/policyClose.js
@@ -503,7 +507,7 @@ function create(db: Db) {
      * @returns {Promise<Array<{id, prio}>>}
      */
     async dueForContext(limit: number, version: string, refreshMinutes: unknown, selfNoteSql: unknown) {
-      return db.rows(
+      const rows = await db.rows(
         `with card as (
        select p.commitment_id as id, 0 as prio from proposal p
         where p.status = 'pending' and p.commitment_id is not null and (p.expires_at is null or p.expires_at > now())
@@ -532,6 +536,7 @@ function create(db: Db) {
       limit $1`,
         [limit, version, refreshMinutes]
       );
+      return omitCards(db, rows);
     },
 
     /**
@@ -1268,12 +1273,13 @@ function create(db: Db) {
 
     /** The blocks a commitment is part of (as task or blocker), with the other side. */
     async blocksOf(id: number | string) {
-      return db.rows(
-        `select b.blocker_id::text, b.task_id::text, b.verdict, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
+      const rows = await db.rows(
+        `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
          from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
         where (b.task_id = $1 or b.blocker_id = $1) and c.superseded_by is null`,
         [id]
       );
+      return omitVerdicts(db, rows);
     },
 
     /** What the chase task reads about an ask. */

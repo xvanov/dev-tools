@@ -283,6 +283,19 @@ module.exports = {
 
   // --- src/commitments/blocks.js
 
+  'blockTasks: an e2e card is not one of your tasks': async ({ repos, seed, assert }) => {
+    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const real = await seed.commitment({ direction: 'owed_by_me', summary: 'Ship the sync' });
+    const card = await seed.commitment({ direction: 'owed_by_me', summary: `Add a pa version verb that prints the served commit (${mark})` });
+    const askOnly = await seed.commitment({ direction: 'owed_by_me', summary: 'Ship the field list' });
+    await seed.run({ commitmentId: askOnly, task: `In personal-assistant, add a pa version CLI verb. (Automated golden-path run ${mark}.)` });
+    const titled = await seed.commitment({ direction: 'owed_by_me', summary: 'ordinary' });
+    await seed.commitmentSet(titled, { detail: `e2e: pa version verb (${mark})` });
+    const got = idsOf(await repos.commitments.blockTasks(ALL));
+    assert.ok(got.includes(real));
+    assert.ok(!got.includes(card) && !got.includes(askOnly) && !got.includes(titled));
+  },
+
   'blockTasks: your open tasks, not what others owe, not folded ones': async ({ repos, seed, assert }) => {
     const mine = await seed.commitment({ direction: 'owed_by_me' });
     const theirs = await seed.commitment({ direction: 'owed_to_me' });
@@ -292,6 +305,15 @@ module.exports = {
     assert.ok(got.includes(mine));
     assert.ok(!got.includes(theirs) && !got.includes(folded));
     assert.deepStrictEqual(idsOf(await repos.commitments.blockTasks('false')), []);
+  },
+
+  'blockCandidates: an e2e card is not judged': async ({ repos, seed, assert }) => {
+    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const real = await seed.commitment({ direction: 'owed_to_me', summary: 'Send the field list' });
+    const card = await seed.commitment({ direction: 'owed_to_me', summary: `Add a pa version verb (${mark})` });
+    const got = idsOf(await repos.commitments.blockCandidates(ALL));
+    assert.ok(got.includes(real));
+    assert.ok(!got.includes(card));
   },
 
   'blockCandidates: what others owe, with its verdict, who, and whether its task is gone': async ({ repos, seed, assert }) => {
@@ -359,6 +381,27 @@ module.exports = {
     const got = (await repos.commitments.blocksForBoard(3)).map((r) => Number(r.blocker_id));
     assert.ok(got.includes(open) && got.includes(closedFresh));
     assert.ok(!got.includes(closedOld));
+  },
+
+  'blocksForBoard: a verdict that cites an e2e card is not read': async ({ repos, seed, assert }) => {
+    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const dummy = await seed.commitment({ summary: `Add a pa version verb that prints the served commit (${mark})` });
+    const realTask = await seed.commitment({ summary: 'Build the HubSpot sync' });
+    const cited = await seed.commitment({ direction: 'owed_to_me', summary: 'ArgoCD sync' });
+    const linked = await seed.commitment({ direction: 'owed_to_me', summary: 'a review' });
+    const markedWhy = await seed.commitment({ direction: 'owed_to_me', summary: 'another' });
+    const clean = await seed.commitment({ direction: 'owed_to_me', summary: 'the field list' });
+    await repos.commitments.upsertBlockJudged(cited, null, 'blocks', 'Needs the ArgoCD sync to deploy the target service before adding the pa version verb.', 'Ada');
+    await repos.commitments.upsertBlockJudged(linked, dummy, 'blocks', 'needs the dummy task', 'Ada');
+    await repos.commitments.upsertBlockJudged(markedWhy, realTask, 'blocks', `needs it (${mark})`, 'Ada');
+    await repos.commitments.upsertBlockJudged(clean, realTask, 'blocks', 'Needs the field list to build the sync', 'Ada');
+    const got = (await repos.commitments.blocksForBoard(3)).map((r) => Number(r.blocker_id));
+    assert.ok(!got.includes(cited), 'the why names the e2e card');
+    assert.ok(!got.includes(linked), 'the task is the e2e card');
+    assert.ok(!got.includes(markedWhy), 'the why carries the marker');
+    assert.ok(got.includes(clean));
+    const ofTask = (await repos.commitments.blocksOf(realTask)).map((r) => Number(r.blocker_id));
+    assert.deepStrictEqual(ofTask, [clean], 'a verdict whose why carries the marker is not read on the task either');
   },
 
   // --- src/commitments/policyClose.js
@@ -455,6 +498,16 @@ module.exports = {
     assert.ok((await due()).includes(card), 'its item was fetched since');
     const limited = await repos.commitments.dueForContext(1, 'v1 model', 30, SELF);
     assert.strictEqual(limited.length, 1);
+  },
+
+  'dueForContext: an e2e card is not written up': async ({ repos, seed, assert }) => {
+    const SELF = `si.source = 'claude_session'`;
+    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const real = await seed.commitment({ summary: 'write the context' });
+    const card = await seed.commitment({ summary: `Add a pa version verb (${mark})` });
+    const due = idsOf(await repos.commitments.dueForContext(500, 'v1 model', 30, SELF));
+    assert.ok(due.includes(real));
+    assert.ok(!due.includes(card));
   },
 
   'contextCard: the card with project, counterparty and author': async ({ repos, seed, assert }) => {

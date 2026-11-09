@@ -14,6 +14,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { NOW, DAY, sinceMs, atLeastChars } = require('./_sql.ts');
+const { omitCards, omitVerdicts } = require('../../commitments/e2eMarker.ts');
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 
@@ -312,15 +313,16 @@ function create(db: Db) {
 
     // --- src/commitments/blocks.js
 
-    /** Your own open tasks (owed_by_me) from sources the policy allows. */
+    /** Your own open tasks (owed_by_me) from sources the policy allows. An e2e card is not one (8.4.53). */
     async blockTasks(srcSql: unknown) {
-      return db.rows(
+      const rows = await db.rows(
         `select c.id, c.summary, c.detail, c.extracted_at from commitment c join source_item si on si.id = c.source_item_id
       where ${LIVE} and c.direction = 'owed_by_me' and ${srcSql} order by c.id`
       );
+      return omitCards(db, rows);
     },
 
-    /** Open owed_to_me commitments with their block verdict, if any. */
+    /** Open owed_to_me commitments with their block verdict, if any. An e2e card is not one (8.4.53). */
     async blockCandidates(srcSql: unknown) {
       const rows = await db.rows(
         `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
@@ -335,7 +337,7 @@ function create(db: Db) {
       where ${LIVE} and c.direction = 'owed_to_me' and ${srcSql} order by c.id`
       );
       for (const r of rows) bools(r, 'task_gone');
-      return rows;
+      return omitCards(db, rows);
     },
 
     /** Cosine similarity of each (blocker, task) pair that has vectors on both. */
@@ -370,9 +372,9 @@ function create(db: Db) {
       );
     },
 
-    /** Every judged blocker that is open, or closed in the last `days` days while blocking an open task. */
+    /** Every judged blocker that is open, or closed in the last `days` days while blocking an open task. A verdict that cites an e2e card is left out (8.4.53). */
     async blocksForBoard(days: number) {
-      return db.rows(
+      const rows = await db.rows(
         `select cast(b.blocker_id as text) as blocker_id, cast(b.task_id as text) as task_id, b.verdict, b.why, b.manual,
             c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
        from commitment_block b
@@ -384,6 +386,7 @@ function create(db: Db) {
                  and c.closed_at > $1))`,
         [sinceMs(Number(days) * DAY)]
       );
+      return omitVerdicts(db, rows);
     },
 
     // --- src/commitments/policyClose.js
@@ -434,9 +437,9 @@ function create(db: Db) {
 
     // --- src/commitments/context.js
 
-    /** Commitments on a card whose context is missing or stale, most visible first. */
+    /** Commitments on a card whose context is missing or stale, most visible first. An e2e card is not one (8.4.53). */
     async dueForContext(limit: number, version: string, refreshMinutes: unknown, selfNoteSql: unknown) {
-      return db.rows(
+      const rows = await db.rows(
         `with card as (
        select p.commitment_id as id, 0 as prio from proposal p
         where p.status = 'pending' and p.commitment_id is not null and (p.expires_at is null or p.expires_at > ${NOW})
@@ -465,6 +468,7 @@ function create(db: Db) {
       limit $1`,
         [limit, version, sinceMs(Number(refreshMinutes) * 60_000)]
       );
+      return omitCards(db, rows);
     },
 
     /** What the context prompt needs for one commitment; null when it is gone. */
@@ -1102,15 +1106,16 @@ function create(db: Db) {
       );
     },
 
-    /** The blocks a commitment is part of (as task or blocker), with the other side. */
+    /** The blocks a commitment is part of (as task or blocker), with the other side. A verdict that cites an e2e card is left out (8.4.53). */
     async blocksOf(id: number | string) {
-      return db.rows(
-        `select cast(b.blocker_id as text) as blocker_id, cast(b.task_id as text) as task_id, b.verdict, c.summary, c.status,
+      const rows = await db.rows(
+        `select cast(b.blocker_id as text) as blocker_id, cast(b.task_id as text) as task_id, b.verdict, b.why, c.summary, c.status,
                 coalesce(p.display_name, b.who, '') as who
          from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
         where (b.task_id = $1 or b.blocker_id = $1) and c.superseded_by is null`,
         [id]
       );
+      return omitVerdicts(db, rows);
     },
 
     /** What the chase task reads about an ask. */

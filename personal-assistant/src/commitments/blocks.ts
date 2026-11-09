@@ -89,6 +89,7 @@ function parseVerdicts(value: any, blockerIds: any[], taskIds: any[]) {
 }
 
 async function load() {
+  // blockTasks and blockCandidates already leave out cards that carry an e2e marker (8.4.53).
   const src = policy.sourceSql('si.source');
   const tasks = await repo.commitments.blockTasks(src);
   const lastTask = tasks.reduce((m: any, c: any) => Math.max(m, new Date(c.extracted_at).getTime()), 0);
