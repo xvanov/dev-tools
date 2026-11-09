@@ -1,5 +1,144 @@
 # Acceptance review: `research` (plan 8.3)
 
+## Re-review, 2026-11-09
+
+**Verdict: FAIL, on latency only.** The report passes again. It answers the question in 262 words
+(300 asked), and the three citations I opened at `c61bad6` support their claims, as do the other
+file:line ranges I read while scoring. No PR was opened, and the job cost $0 metered against the
+$0.05 ceiling (D26; subscription-equivalent $0.481885, not billed). The 9 s post-write stall
+(8.4.45) and the 2 min Plan lag (8.4.46) are fixed live. Three hops still miss the Map's current
+`max_ms`. D27 says those targets will be reset from measurements; until then they are the score.
+The numbers for that reset:
+
+- **Tool call (`factory_start`, no model): 2057 ms against 1000 ms, 1.1 s over** (11355 ms in the
+  last review, 2312 ms in the first). Laps: route 33, prepare 19, brief 14, **serve 1662**,
+  submit 1704, follow 255. The job was written 296 ms before PA logged the answer. The time left
+  is the factory's serve handler, not a stall after the write.
+- **Approval to "started": 1416 ms against 1000 ms, 0.4 s over** (7021 ms last time, about 2.1 s
+  in the first review). The e2e reads it from `started_at`. Wake dispatch is in the same second
+  as the write. `started_at` is 1.7 s after `created_at`.
+- **State change to the board: 6929 ms against 200 ms.** Now measured. `in_progress` reached the
+  run row 6929 ms after the job-status stamp (the poll, not a push settle). `done` reached the
+  Plan card in **373 ms** (125.5 s last time). Both miss 200 ms. The non-terminal leg is the miss
+  that matters.
+
+The machine was quiet at the start (CPU 1%) and no other e2e ran during the job. A whats-on burst
+had ended four minutes earlier. A factory interval tick (about 14 s) overlapped the screenshots.
+D27 asks for an idle machine; this is close, not that.
+
+| | |
+|---|---|
+| Date | 2026-11-09, 02:03-02:06Z |
+| Stack | work (this Windows laptop): PA on :7300, factory serve on :7330, termhub on :7000 |
+| Commit served | PA: `9cd55676963b2e09580f8cb7cf45dcbfe0279f28` (GET /api/version). Factory serve restarted onto `9cd5567` at 01:55:26Z (log: checkout moved `77be77a` to `9cd5567`). That is the tree the fixes under review are in, including 5a5a161 (`ms.serve`) and 9ed9172 (a pushed end settles the run row). |
+| Job checkout | `c61bad6` (the job's `base_sha`: origin/main at submit, the docs commit on top of `9cd5567`). The cited scripts and tests are unchanged between the two. |
+| Job | `dev-tools:r0004` (card #6780, run 32, step 71), `claude_session`, Opus 5.5; marker `e2e-33c2926e-8754-42ea-926c-edf5193bd6ce` |
+| Reviewer | a fresh session that did not implement the workflow or its fixes (D10) |
+| Criteria | `architecture.json` → `examples[research].acceptance` (`cost.max_usd` 0.05, D26) |
+
+### How it was run
+
+1. `node bin\pa.js e2e research --dry-run` from the live checkout passed **10 of 10 checks**
+   (map 2, config 2, build 3, run 1, ask 1, policy 1). The policy check reports "call ask
+   (chat-actions-ask); e2e answer allow (approve-chat-actions)". The effective ceiling is $0.05.
+2. `node bin\pa.js e2e research --report <file>`, once, from 02:03:56Z to 02:06:27Z (153 s).
+   The question was the same as the earlier reviews. The run exits 1 on the three hops above
+   and on one session-link GET (below). Cleanup is the runner's own: it killed both sessions
+   and dropped the card. No second real run.
+3. Outputs inspected by hand:
+   - read report.md in full and opened the cited ranges at `c61bad6` (the worktree of that commit);
+   - read `job.yaml` (`created_at`, `started_at`, `ended_at`, `base_sha`, `delivery: none`);
+   - read serve's log and PA's supervisor log around the run;
+   - read the stream's final usage line for the subscription-equivalent cost;
+   - listed PRs on xvanov/dev-tools with `gh` (owner token, active account unchanged);
+   - read `/api/commitments/6780` after cleanup, and termhub's session list;
+   - read the audit tail;
+   - looked at the three screenshots and read their page text, and searched the Plan text for
+     the leaked blocker phrase (8.4.53).
+4. After the run, the published session URL (the one the link check GETs, hash stripped) answered
+   200 in 77 ms, and loopback answered 200 in 24 ms.
+
+### Rubric, last review → now
+
+| Criterion | Last | Now | Evidence |
+|---|---|---|---|
+| `cited` | pass | **pass** | Every step under "Flow" carries a file:line. The summary names the commit read. "Tests" names the two test files and says they were not run. "Uncertain" labels the lockfile inference as not run. I opened three cited spots in full (table) and the surrounding flow lines. |
+| `supported` | pass | **pass** | The opened claims hold. Nits that don't change the answer: several ranges run 1-2 lines long (`common.ps1:839-860` ends at 858, `863-877` at 875, `880-890` at 889; the comment block `820-832` is 821-833; `756-759` starts the dirty check and the `return` is at 762). The summary says that if the stash cannot be created, the changes stay in the stash. They stay in the working tree: `Save-LocalChanges` returns `$null` only when `refs/stash` did not move (common.ps1:853-855), and the update stops with nothing changed (update.ps1:139). The Flow bullet does not make that mistake. |
+| `answers` | pass | **pass** | It answers how `update.ps1` handles a dirty tree. It stashes tracked and untracked changes, pulls `--ff-only`, pops before deploying, and stops with the old front serving if the stash or the pop fails. **262 words**, excluding the `SELF_SUMMARY` line. |
+
+### Citations opened
+
+All at `c61bad6`. "update" is `termhub/windows/update.ps1` and "common" is `termhub/windows/common.ps1`.
+The three spot checks are first.
+
+| Claim in report.md | Source | Finding |
+|---|---|---|
+| `Save-LocalChanges` runs `git status --porcelain`, then `git stash push --include-untracked`, checks `refs/stash` moved, and returns `$null` if the stash fails (`common.ps1:839-860`) | common:839-858 (842, 849-855) | supported (ends at 858) |
+| The update stops when that returns `$null` (`update.ps1:138-140`) | update:138-139, Fail text "Nothing changed; blue still serving." | supported |
+| `repairHistory.test.ps1:158-200` covers a stash-heal-restore, a clean tree, and a pop that conflicts | test:158-178, 180-184, 186-200 (the conflicting pop keeps the stash, line 200) | supported |
+| `git pull --ff-only`, and `Repair-DivergedHistory` only continues when HEAD equals `@{u}` (`update.ps1:144-160`) | update:144, 148, 154-158 | supported |
+| `Repair-DivergedHistory` refuses a dirty tree (`common.ps1:756-759`) | common:756-762 | supported (the return is 762) |
+| A conflicting pop stops with "They are in the stash. Nothing was deployed; blue still serving." (`update.ps1:164-172`, `common.ps1:863-877`) | update:167-170; common:863-875 (pop at 866) | supported (function ends at 875; the quoted sentence is update:170) |
+| `Fail` pops a pending stash (`update.ps1:52-63`) | update:54-60 | supported (function starts at 54) |
+| `Reset-TreeTo` stashes, refuses the reset if the stash fails, restores after (`common.ps1:880-890`) | common:880-889 (883, 885, 886, 887) | supported (ends at 889) |
+| A dirty tree used to be a hard stop (`common.ps1:820-832`) | common:821-833 | supported (ends at 833) |
+| `-DryRun` does not check the tree (`update.ps1:98-113`) | update:98-112, exit before any stash | supported |
+| `update.test.js:127` only checks that the text `Save-LocalChanges` appears | update.test.js:127, `/Save-LocalChanges/.test(code)` | supported |
+| `update.ps1:186` checks out `package-lock.json` after the restore, and might discard a user's lockfile edits (labeled uncertain, not run) | update:176-186, checkout at 186, after the restore at 167 | supported as a labeled inference |
+| "Checked at commit `c61bad6`" | `job.yaml` `base_sha` | supported (the commit read) |
+
+### Other acceptance items, last review → now
+
+| Item | Last | Now | Evidence |
+|---|---|---|---|
+| Outcome: report.md answers the question, sources cited, research job, no PR | pass | **pass** | Job `done`, `delivery: none`. The chain's `prs` is empty. `gh pr list -R xvanov/dev-tools --state all`: the newest PR at the start of the run is #72 at 00:24:25Z. #75 was opened at 02:07:48Z, after this run ended, by a different e2e. |
+| Cost ≤ the ceiling | pass ($0 against $0.05) | **pass** ($0 against $0.05) | The e2e's `cost.usd` is 0. Build shows "$0.00 metered · $0.48 subscription-equivalent". The researcher's stream records `total_cost_usd` 0.481885, which is the subscription equivalent, not metered spend. A research job has no pm, sm or tech_writer step. |
+| View: plan | pass, with 8.4.46 | **pass** | The harness shot is ready after 10.0 s. The page text has card #6780, "run #32 (done)", and "job dev-tools:r0004 · done". It no longer shows the job `in_progress` (8.4.46). The same shot still says "step 71 researcher · running". A later read of the chain has that step `ok`. |
+| View: run | pass | **pass** | The researcher session is listed, linked to job `dev-tools:r0004` and step 71, and alive. The harness shot is ready after 10.2 s and shows the finished terminal ("262 words", "result: success"). The harness's "link opens" check failed: GET of the published session URL timed out at 5 s. The Run shot itself uses loopback and was ready. After the run the same published URL answered 200 in 77 ms. Not filed: it did not repeat. |
+| View: build | pass | **pass** | Harness shot, ready after 10.2 s: r0004 `done` under Delivered, with card #6780, run #32, "$0.00 metered · $0.48 subscription-equivalent". |
+| View: ask | pass (tool level; the `/talk` shot never got ready) | **pass** (tool check, 8.4.47) | `summary.json` `views.ask` is `method: tool`, `tool: factory_job`, with an excerpt of the done job and its report. There is no Ask screenshot and no 20 s wait. The harness check "factory_job tool → card and report" passed. |
+| Approvals: `factory_start` | pass | **pass** | `pa audit tail`: #5 02:04:00.276 `allow e2e/approve factory_start [e2e-33c2926e-…:factory_start]`, then #6 02:04:00.279 `ask chat/call factory_start [6780]`. The answer is the harness's, not the dashboard card's. |
+| Cleanup | pass | **pass** | The runner killed `smw8mbq8p2` and `smw8mb2ct1` and dropped card #6780. termhub lists neither session, and the card is `dropped`. |
+| Plan board, leaked e2e blocker (8.4.53) | (not in that review) | **pass** | The Plan page text does not contain the leaked blocker phrase. The only On-me card whose text carries an e2e marker is #6780, this run's own card. Past research runs show up under Agent runs as their own asks, not as a blocker on another card. |
+
+### Hops, last review → now
+
+Clock references: the audit rows, PA's dispatch log (`ms`), `job.yaml`, serve's log (1 s
+resolution), and PA's supervisor log.
+
+| Hop | Target | Last review | Now | Detail now | Result |
+|---|---|---|---|---|---|
+| jarvis: tool call (`factory_start`) excluding model time | 1000 ms | 11355 ms (submit 10864) | **2057 ms** | Audited call 02:04:00.279 → "dispatched" 02:04:02.334. `ms`: route 33, prepare 19, brief 14, serve 1662, submit 1704, follow 255. Job written at 02:04:02.039. | **fail, 1.1 s over** (better; D27) |
+| dispatcher: approval to "started" | 1000 ms | 7021 ms | **1416 ms** | Tool return 02:04:02.33 to `started_at` 02:04:03.751. Serve logged `dispatch (wake)` at 02:04:02, the same second as `created_at`. From the approval itself (02:04:00.276) it is 3.5 s. | **fail, 0.4 s over** (better; D27) |
+| runtime-claude: the research conversation writes report.md | unbounded (5400 s cap) | 88846 ms | **90338 ms** | `started_at` 02:04:03.751 → `updated_at` 02:05:34.089. The stream's model time is 42.4 s of that. | pass |
+| worker: state change to the board redraw | 200 ms | not measured; Plan lagged 125.5 s | **6929 ms** | `in_progress` non-terminal 6929 ms via the run row (job-status clock). Serve pushed `in_progress` at 02:04:03 and again at 02:04:08; PA logged "factory runs updated" at 02:04:11.116, not a push settle. `done` terminal **373 ms** via the Plan card. Serve pushed `done` at 02:05:34; PA logged "factory runs settled from a push" at 02:05:34.462, 375 ms after `ended_at` 02:05:34.087. | **fail** (measured; the in_progress leg is 6.9 s, the done leg is 373 ms; D27) |
+
+### Defects
+
+From the last review:
+
+- **8.4.8** (tool call): still open. 2057 ms, down from 11355. Routing is 66 ms. `ms.serve` is 1662 of the 1704 ms submit.
+- **8.4.9** (approval to started): still open. The measurement is confirmed again. 1416 ms, down from 7021.
+- **8.4.10** (worker hop): the measurement is now live, and the hop still misses 200 ms. The max is the `in_progress` leg, 6929 ms, which still arrives on the poll. The `done` leg is the Plan card at 373 ms (8.4.46).
+- **8.4.11** (screenshots): verified again for Plan, Build and Run.
+- **8.4.12** (approval): verified again. Two audit rows, in order.
+- **8.4.13** (cleanup): verified again. This run's own cleanup removed both sessions and the card.
+- **8.4.45** (submit stall): verified fixed live. 296 ms from the write to PA's log. Ticked.
+- **8.4.46** (Plan card): verified fixed live. The job line follows the push and the shot shows `done`. Ticked. The step line on that shot still said `running`; the chain later has the step `ok`.
+- **8.4.47** (Ask shot): verified live. Ask is the tool check. No screenshot, no 20 s wait.
+- **8.4.53** (leaked blocker): verified live. The leaked phrase is not on the Plan page.
+
+No new 8.4 item. The one failed link GET did not repeat (200 in 77 ms afterwards), and the step line that still said `running` on the shot is `ok` on a later read of the chain.
+
+### Evidence
+
+Under `%LOCALAPPDATA%\personal-assistant\e2e\`:
+
+- `20261109T020325Z-research-dry/summary.json`: the dry run (10/10).
+- `20261109T020356Z-research/`: `summary.json`, `report.md`, `transcripts/session-smw8mbq8p2.txt`, and `screenshots/{plan,build,run-smw8mbq8p2}.png` with the page text beside each. No Ask screenshot.
+
+The factory keeps the job folder (`state/jobs/r0004-…/`: `job.yaml`, `report.md`, `run/stream-1.jsonl`, `run/session.json`) under its data dir. Serve's log is `state/logs/serve.log`.
+
 ## Re-review, 2026-11-08
 
 **Verdict: FAIL, on latency only.** Every criterion passes again. report.md answers the question

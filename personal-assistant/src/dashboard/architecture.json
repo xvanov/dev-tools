@@ -2580,7 +2580,7 @@
         ],
         "verdict": {
           "result": "fail",
-          "date": "2026-11-08",
+          "date": "2026-11-09",
           "report": "docs/native/acceptance/research.md"
         }
       }
