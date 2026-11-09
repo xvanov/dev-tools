@@ -407,3 +407,37 @@ def test_story_runtime_column_is_migrated(tmp_path: Path) -> None:
         StoryRecord(direction_id="002", app="demo", title="t", slug="p", scope="backend"), db
     )
     assert get_story(plain.id, db).runtime == "api"
+
+
+def test_research_submit_answers_while_factory_db_is_locked(root: Path) -> None:
+    """A tick's open transaction on factory.db must not sit in front of a
+    research submit. The 8.7 s after ``created_at`` (8.4.45) is not this lock:
+    ``_submit_task`` does not open factory.db."""
+    import sqlite3
+    import time
+
+    from factory.jobs.submit import SubmitRequest, submit_job
+    from factory.state_dir import state_dir
+
+    db = state_dir(root) / "factory.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    holder = sqlite3.connect(db)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        t0 = time.perf_counter()
+        out = submit_job(
+            root,
+            SubmitRequest(
+                title="Why is the build slow",
+                ask="Find out why CI takes 20 minutes.",
+                done=["Which step dominates?"],
+                source="pa",
+                kind="research",
+            ),
+        )
+        elapsed = time.perf_counter() - t0
+    finally:
+        holder.rollback()
+        holder.close()
+    assert elapsed < 1.0, elapsed
+    assert out["created"] is True and out["job_id"]

@@ -31,7 +31,7 @@ function serve(handler) {
   });
   const url = `http://127.0.0.1:${ok.address().port}`;
   const r = await factory.viaServe(['job', 'list', '--json'], 5000, url);
-  assert.deepStrictEqual(r, { code: 0, stdout: '{"jobs": []}\n', stderr: '' });
+  assert.deepStrictEqual(r, { code: 0, stdout: '{"jobs": []}\n', stderr: '', ms: 40 });
   assert.deepStrictEqual(seen, { url: '/api/cli', guard: '1', body: { argv: ['job', 'list', '--json'] } });
 
   // A verb serve does not run (400): the caller spawns the CLI.

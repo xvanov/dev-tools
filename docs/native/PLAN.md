@@ -1589,6 +1589,12 @@ not in the Map is not done, and a new one gets added there first.
     write and ledger transition, and PA doesn't log the `ms` that serve's `/api/cli` reply
     carries. Log that `ms` with the lap, then profile whichever side holds the 8.7 s
     ([acceptance/research.md](acceptance/research.md)).
+    Partly (pending-8445): the submit lap now logs `ms.serve`, copied off the job
+    before the run-row write, so the lap still includes that write and the ledger
+    move. A research submit while `factory.db` is held exclusive answers in under
+    1 s (`test_research_submit_answers_while_factory_db_is_locked`): `_submit_task`
+    does not take the tick's db lock. The live 8.7 s was not reproduced; the next
+    run splits it between `ms.serve` and the rest of the lap.
   - [ ] **8.4.46 research: the Plan card shows a finished job as running for ~2 min.** The job
     ended at 23:35:58.56, and serve pushed `done` at 23:35:59. Build's shot at 23:36:27 showed it
     done. Plan's shot at 23:36:16 still read "job dev-tools:r0003 · in_progress / step 63

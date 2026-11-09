@@ -57,7 +57,7 @@ type Job = Json;
 /** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
 type Target = Json;
 type ExecOptions = { cwd?: string | null; timeoutMs?: number; maxOutputBytes?: number; stdin?: string | null; env?: Record<string, string> | null };
-type ExecResult = { code: number; stdout: string; stderr: string; timedOut?: boolean; signal?: string; truncated?: Json; error?: string };
+type ExecResult = { code: number; stdout: string; stderr: string; timedOut?: boolean; signal?: string; truncated?: Json; error?: string; ms?: number };
 type Runner = (machineName: string | null, argv: string[], opts: ExecOptions) => Promise<ExecResult>;
 type CallOptions = { timeoutMs?: number; maxOutputBytes?: number | undefined };
 type Staged = { paths: Record<string, string>; dir: string | null };
@@ -173,7 +173,13 @@ async function call(sub: string[], { timeoutMs = config.factory.timeoutMs, maxOu
   // over localhost (plan 2.1): ~50-200 ms instead of 5-10 s of `uv run`.
   if (!where && !runnerOverride) {
     const served = await viaServe(sub, timeoutMs);
-    if (served) return F.frontSessions(F.parseResult(served), front);
+    if (served) {
+      const parsed = F.frontSessions(F.parseResult(served), front);
+      // serve's own clock for this call (the reply's `ms`). start() copies it
+      // onto the submit lap and drops it so it is not stored on the job.
+      if (typeof served.ms === 'number' && parsed && typeof parsed === 'object') parsed.serve_ms = served.ms;
+      return parsed;
+    }
   }
   // A factory on this Windows machine runs in Python's UTF-8 mode, as on
   // Linux: without it every un-annotated read_text() decodes as cp1252.
@@ -221,6 +227,7 @@ async function viaServe(sub: string[], timeoutMs: number, url: string | null | u
   const body = (await res.json().catch(() => null)) as Json | null;
   if (!body || typeof body.code !== 'number') return null;
   const out: ExecResult = { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
+  if (typeof body.ms === 'number') out.ms = body.ms;
   // A success with no JSON on stdout is not a success (seen live: serve's output
   // capture lost a verb's stdout). A read-only verb is asked again through the
   // CLI; a state-changing one may have run, so it is reported, never re-run.
@@ -561,6 +568,12 @@ async function start({
     stagedDir = dir;
     sent = true;
     const submitted = await submit(argvFor(staged), { kind, runtime: rt });
+    // Before recordJob and the ledger move, so ms.serve is the factory's
+    // reply and ms.submit stays the whole lap (8.4.45).
+    if (typeof submitted.serve_ms === 'number') {
+      ms.serve = submitted.serve_ms;
+      delete submitted.serve_ms;
+    }
     job = submitted;
     if (!F.JOB_ID.test(String(submitted.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${submitted.job_id}"`);
     if (!(await recordJob(run, submitted, { delivery: chosen.delivery, pipe, briefPath, by }))) {
