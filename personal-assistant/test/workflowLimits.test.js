@@ -18,6 +18,7 @@ assert.strictEqual(defaults['deepseek-pr'], 2);
 {
   const e = wl.effective(arch, [{ workflow: 'deepseek-pr', max_usd: '0' }, { workflow: 'gone', max_usd: 9 }]);
   assert.deepStrictEqual(e['deepseek-pr'], { default: 2, override: 0, effective: 0, custom: true });
+  // D26: research's ceiling is $0.05 (planning steps are metered), not $0.
   assert.deepStrictEqual(e.research, { default: 0.05, override: null, effective: 0.05, custom: false });
   assert.ok(!('gone' in e) && !('phone' in e));
 }

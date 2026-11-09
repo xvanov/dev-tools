@@ -2,7 +2,7 @@
   "version": 1,
   "title": "System architecture",
   "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), sends work to the Factory (3), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them.",
-  "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.tson. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
+  "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.json. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
   "statuses": {
     "live": "Running today",
     "landing": "Code on main, contract or rollout still landing",
@@ -19,19 +19,19 @@
       "id": "dashboard",
       "n": 2,
       "name": "Plan (Dashboard)",
-      "summary": "The worker ingests mail, Teams, GitHub, Jira and meetings, distils asks into commitments, and serves the board. Everything is in Postgres."
+      "summary": "The worker ingests mail, Teams, GitHub, Jira and meetings, distils asks into commitments, and serves the board. Each stack's data is one encrypted SQLite file."
     },
     {
       "id": "factory",
       "n": 3,
       "name": "Build (Factory)",
-      "summary": "software-factory: jobs (code, research, report) on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
+      "summary": "software-factory: jobs (code, research, report) ticked by factory serve on each stack, on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
     },
     {
       "id": "sessions",
       "n": 4,
       "name": "Run (Sessions)",
-      "summary": "termhub: the terminal supervisor every agent runs in. sessiond owns the PTYs and survives updates; the front serves the UI, the APIs and the /pa/ proxy."
+      "summary": "termhub: the terminal supervisor every agent runs in. ptyd owns the PTYs (127.0.0.1:7020) so they survive a sessiond restart; sessiond owns the sessions; the front (jarvisd front, its own process) serves the UI, the APIs and the /pa/ proxy."
     },
     {
       "id": "outside",
@@ -44,13 +44,13 @@
     {
       "id": "work",
       "name": "Work stack",
-      "machine": "Windows work laptop (no WSL since 3.6, 2026-11-08)",
+      "machine": "Windows work laptop. WSL Ubuntu was unregistered on 2026-11-08 (D24); Rancher Desktop's distros are that app's and are stopped",
       "identity": "the work GitHub account",
       "runs": [
-        "PA worker + dashboard on 127.0.0.1:7300, Jarvis (/talk, PA chat), voice services",
-        "the store: one encrypted SQLite file (plan 3.5); the old Postgres in WSL Ubuntu is shut down with the distro, kept registered for the rollback",
-        "termhub on Windows (front :7000, sessiond :7010)",
-        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally (PA_FACTORY_MACHINE=local)",
+        "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker task runs windows\\pa-launch.ps1, which starts jarvisd supervise on 127.0.0.1:7300 and one generation. The dashboard, Jarvis (/talk, the PA chat) and the worker passes ride in the generation. The task's run level is Limited",
+        "the store: one encrypted SQLite file, %LOCALAPPDATA%\\personal-assistant\\pa.sqlite (PA_DB=sqlite, plan 3.5). Postgres is retired (D24): the old WSL database's last state is an encrypted .pabak under that data dir's retired\\",
+        "termhub: the front is its own process, jarvisd front on Bun 1.4.4 (TERMHUB_FRONT=jarvisd) at 127.0.0.1:7000, published by Tailscale Serve; sessiond :7010; terminals in ptyd :7020 (the termhub-ptyd task). The in-process front (one jarvisd owning 7000 and 7300) is deferred (D25)",
+        "the work factory natively (plan 2.3): factory serve in the factory-serve logon task, state outside the repo since 2.5 (%LOCALAPPDATA%\\software-factory\\state); claude_session runs open in this termhub; the PA calls it locally (PA_FACTORY_MACHINE=local, POST 127.0.0.1:7330/api/cli)",
         "installed and reinstalled by one command, install.ps1 at the repo root (plan 7.7, landing: the reinstall proof on this laptop is pending): prerequisites, npm/Bun/uv dependencies, the new-system .env defaults, the SQLite store and its vault keys on a fresh machine, each tool's own task installer, then start and verify"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
@@ -61,13 +61,13 @@
       "machine": "Linux box k-911-x17",
       "identity": "the personal GitHub account (xvanov)",
       "runs": [
-        "termhub (front :7000, published by Tailscale Serve on https :7443; sessiond :7010)",
-        "the personal factory at /home/k/dev-tools/software-factory, which also builds dev-tools itself",
-        "PA worker + dashboard on 127.0.0.1:7300 (systemd user unit pa-worker, linger), reached in a browser through termhub's /pa/ proxy",
-        "pa-voice on 127.0.0.1:47830 (Kokoro on the CPU, systemd user unit pa-voice)",
-        "Postgres 16 + pgvector: the system cluster on :5432, role pa, database pa_personal"
+        "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker unit runs linux/pa-launch.sh, which execs jarvisd supervise on 127.0.0.1:7300; the dashboard is reached through termhub's /pa/ proxy",
+        "the store: one encrypted SQLite file, ~/.local/share/personal-assistant/pa.sqlite (PA_DB=sqlite). The pa_personal database was dropped (D24) after an encrypted .pabak in that data dir's retired/; the system Postgres server stays for other software and is not this stack's store",
+        "termhub: the front is its own process, jarvisd front on Bun 1.4.4, a child of server.js, on :7000, published by Tailscale Serve on https :7443; sessiond :7010; terminals in ptyd :7020 (termhub-ptyd.service). The in-process front is deferred (D25)",
+        "the personal factory at /home/k/dev-tools/software-factory, factory serve (factory-serve.service), state outside the repo since 2.5 (~/.local/share/software-factory/state), which also builds dev-tools itself",
+        "pa-voice on 127.0.0.1:47830 (Kokoro on the CPU, systemd user unit pa-voice)"
       ],
-      "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0); model credentials not yet chosen"
+      "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0). Factory and chat use this machine's own model logins (an E6 run on 2026-11-08); the fast lane, Ollama and the transcriber are not installed"
     }
   ],
   "components": [
@@ -269,7 +269,7 @@
       },
       "where": {
         "work": "127.0.0.1:47821, a raw TCP protocol (a WAV path in, text out)",
-        "personal": "Planned with the PA"
+        "personal": "Not installed on the personal machine"
       },
       "health": "whisper",
       "details": {
@@ -296,14 +296,14 @@
       "id": "jarvis",
       "layer": "talk",
       "name": "Jarvis: the PA chat (System 2)",
-      "role": "One long-lived Claude Code session in termhub that reads through MCP tools and acts only behind permission prompts.",
+      "role": "The PA chat. The default engine is the Claude Agent SDK inside the worker; a read-only termhub session is its Run view. It reads through MCP tools and acts only behind permission prompts.",
       "stacks": {
         "work": "live",
-        "personal": "landing"
+        "personal": "live"
       },
       "where": {
         "work": "The Claude Agent SDK inside the PA worker on the laptop (PA_CHAT_ENGINE=sdk, the default), home <dataDir>/pa-home; its Run view is a read-only termhub session",
-        "personal": "A termhub session on k-911-x17, once its claude login is a personal one"
+        "personal": "The same engine on the personal machine (PA_CHAT_ENGINE=sdk, the default), home <dataDir>/pa-home; its Run view is a read-only termhub session"
       },
       "details": {
         "Model": "PA_CHAT_MODEL (no default in code: the Claude Code CLI's own default); PA_CHAT_AGENT picks claude or opencode",
@@ -323,7 +323,7 @@
         ],
         "How you reach it": [
           "typing in its termhub tab",
-          "Ask (/talk), by voice or in its Text mode (feed.js types into the session through termhub's input API and tails its transcript)"
+          "Ask (/talk), by voice or in its Text mode (src/chat/feed.ts types into the session through termhub's input API and tails its transcript)"
         ],
         "Transcript": "~/.claude/projects/<encoded pa-home>/<uuid>.jsonl, tailed by byte offset (first read: last 4 MB)",
         "Billing": "the machine's Claude Code login: a claude.ai subscription login is not metered per call",
@@ -453,11 +453,11 @@
       "role": "The store over MCP (stdio). Read-only for every session; the PA chat alone also gets the `pa` verbs, task_add and the per-layer chat tools.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "A stdio child of each Claude Code session that registers it: user scope as `personal-assistant`, the PA chat as `pa-chat` with PA_MCP_CHAT_TOOLS=1",
-        "personal": "Planned with the PA"
+        "personal": "The same stdio server, on the personal machine"
       },
       "details": {
         "Shared surface": "recall and memory reads, open_commitments, who_is, repo_state; remember only proposes (a pending_review claim); request_secret / secret_status never return a value",
@@ -508,8 +508,8 @@
       "name": "Policy engine and audit log",
       "role": "Plan 4.3: one function answers allow, deny or ask for every tool call, chat approval and factory approval, from a declarative policy file, and writes each answer to a hash-chained audit log.",
       "stacks": {
-        "work": "landing",
-        "personal": "landing"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
         "work": "In-process wherever the call is made: the MCP server (every tool), the dashboard (chat permission answers, factory approve), the CLI; the log is the audit_log table",
@@ -519,9 +519,10 @@
         "Policy": "src/policy/default.policy.json (tracked) plus an untracked per-stack override (PA_POLICY_FILE, default <data dir>/policy.json): override rules first, then the defaults, first match wins, else `default` (ask). The defaults are the old allow/ask split with no behaviour change: the chat's read tools and the shared MCP surface allow, its six action tools ask (Claude Code still owns that prompt), answering the prompt is allowed from the dashboard, termhub, voice and the CLI, and on channel e2e, where `pa e2e` answers for its own dummy call (approvals only; an e2e call still asks)",
         "Voice": "a locked rule (nothing in an override loosens it) denies the voice channel any call or approval tagged merge, push_main or secret_reveal; tags come from the tool name and its delivery level or pa verb. A voice approval of a factory job (factory_approve, factory_resume) looks up the job's delivery now and is denied for auto_merge or push_to_main; a job that cannot be looked up is denied for voice (fail closed). With PA_PASSKEYS=on (7.1) an approval of one of those kinds from another channel becomes `ask` (rule stepup-required) and is refused until the dashboard has recorded a passkey tap for that exact approval id (the chat tool_use id, or the job id); the grant is looked at by the policy and used up by the code that runs the action",
         "Audit": "every decision is a row of audit_log with the hash of the row before it (prev_hash) and its own hash; arguments are stored only as a digest. `pa audit verify` recomputes the chain and names the first edited or removed row and prints the head hash; `pa audit tail` lists rows; `pa audit check <tool>` shows what the policy would say. An unreachable database is logged, not an error: a deny is still a deny",
-        "Not yet": "the policy runs where calls are made, not yet in a single jarvisd process (4.1); only voice and dashboard approvals look up a job's delivery, other channels are audited with what the request names"
+        "Where it runs": "inside the jarvisd generation: the MCP server, chat permission answers, factory approve and the CLI. The termhub front is still its own process (D25). Only voice and dashboard approvals look up a job's delivery; other channels are audited with what the request names. Passkey step-up stays off until PA_PASSKEYS=on"
       },
       "code": [
+        "personal-assistant/src/policy/policy.ts",
         "personal-assistant/src/policy/index.js",
         "personal-assistant/src/policy/default.policy.json",
         "personal-assistant/src/repo/audit.ts",
@@ -533,7 +534,7 @@
       "id": "jarvisd",
       "layer": "dashboard",
       "name": "jarvisd (TypeScript/Bun core)",
-      "role": "Plan 4.1: the core moving to strict TypeScript on Bun. Today it boots the PA worker's CommonJS unchanged under Bun, as one compiled executable per OS; modules become .ts one at a time, leaves first (docs/native/JARVISD.md).",
+      "role": "Plan 4.1: the TypeScript/Bun core. Both stacks run the compiled executable (PA_RUNTIME=jarvisd): jarvisd supervise plus one generation for the PA, and termhub's front as jarvisd front on Bun 1.4.4, still its own process (the in-process front is deferred, D25). Design: docs/native/JARVISD.md.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -543,7 +544,7 @@
         "personal": "Since 2026-11-08 (D20): PA_RUNTIME=jarvisd; the pa-worker unit runs linux/pa-launch.sh, which execs jarvisd/dist/jarvisd-<commit> supervise; termhub's front runs as `jarvisd front` on Bun 1.4.4, a child of server.js (TERMHUB_FRONT=jarvisd in termhub/.env)"
       },
       "details": {
-        "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.ts statically, so bun build --compile bundles the whole worker graph",
+        "Stage": "Server modules and the termhub front are strict TypeScript (browser files and entry shims stay JS). Both stacks run the compiled binary. Left: the in-process front (Exit 4, deferred by D25), ES exports, and pa as a thin client. jarvisd/src/main.ts requires personal-assistant/src/worker.ts statically, so bun build --compile bundles the worker graph",
         "Parity": "jarvisd/scripts/parity.js runs the PA's schemas, events, dashboard, repository boundary/calls, the contract on SQLite (and Postgres where reachable), the SQLite backend's notify/backup/durable tests, migrations, architecture and lease tests under Bun",
         "SQLite": "PA_DB=sqlite runs under Bun 1.4.4 from source and in the compiled binary: better-sqlite3-multiple-ciphers and sqlite-vec load as Node addons (1.3.13 aborted on them). The binary bundles the driver's JS and finds its addon, sqlite-vec's extension and the snapshot thread's copy of src/db/sqlite.ts in the checkout by path (test/jarvisdSqlite.test.js)",
         "Build": "node scripts/build.js --only jarvisd (Bun from jarvisd/package.json); jarvisd --check loads the graph and exits"
@@ -577,19 +578,19 @@
         "Failed roll": "a generation that exits or is not ready in time is killed; N keeps serving and the roll answers ok: false",
         "Crash": "the serving generation exiting on its own is replaced by the standby if one is held, else by a new one, backing off 1 s to 60 s",
         "Control": "one JSON line on a local socket: \\\\.\\pipe\\pa-supervisor-<port> on Windows, $XDG_RUNTIME_DIR/pa-supervisor-<port>.sock elsewhere; {\"cmd\":\"roll\"|\"rollback\", \"owner\"?}, {\"cmd\":\"lock\"|\"unlock\", \"owner\"} or {\"cmd\":\"status\"} (status carries source, a hash of the running supervisor file); `node src/supervisor roll|rollback|status`; SIGHUP rolls on Linux",
-        "Background passes": "single owner (Z2, src/util/lease.ts): every timer, watcher and the durable worker is declared on the scheduler (src/util/scheduler.ts) and runs only while its generation holds the lease, pg_advisory_lock(7300) on a dedicated connection. On drain the old generation stops its schedulers and releases the lease at once; the new one polls every 500 ms and takes over within a second. Each pass run also holds pg_advisory_lock(7301, hashtext(name)), so a pass the old generation is still finishing is skipped by the new one until it ends; every other pass moves over at once. Undrain (rollback) takes the lease and the passes back",
+        "Background passes": "single owner (Z2, src/util/lease.ts): every timer, watcher and the durable worker is declared on the scheduler (src/util/scheduler.ts) and runs only while its generation holds the lease (a row of the lease table on SQLite; pg_advisory_lock(7300) on the Postgres backend) on a dedicated connection. On drain the old generation stops its schedulers and releases the lease at once; the new one polls every 500 ms and takes over within a second. Each pass run also holds its own lock (another lease row on SQLite; pg_advisory_lock(7301, hashtext(name)) on Postgres), so a pass the old generation is still finishing is skipped by the new one until it ends; every other pass moves over at once. Undrain (rollback) takes the lease and the passes back",
         "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it",
         "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (150 s after a roll)",
         "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.ts: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
-        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.ts, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.ts changed), or when they just rewrote a task/unit that still named src/worker.ts",
+        "Restart fallback": "the scripts restart the task/unit (stop, end the supervisor and its generations (node, bun, or the compiled jarvisd), start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.ts changed), or when they just rewrote a task/unit that still named src/worker.ts",
         "Bootstrap": "node src/worker.ts not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
         "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
         "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip",
-        "Deploy test (Z6)": "node src/e2e/deployTest.ts: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through pg_notify and pa_event_seq)",
+        "Deploy test (Z6)": "node src/e2e/deployTest.ts: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through the store's wake-up (the SQLite outbox poll on these stacks, pg_notify on Postgres) and pa_event_seq)",
         "Priority": "the worker runs at Normal; everything it starts is lowered to Below Normal as it spawns (src/util/childPriority.ts). A below-normal worker got no CPU while other work filled every core and stalled up to 173 s",
         "Keep-alive": "the worker dashboard keeps idle sockets 65 s; the supervisor resends a GET that meets ECONNRESET on a reused socket. status and a timed-out drain list what is in flight (method, path, age)",
         "Deploy lock": "one deploy at a time: deploy.js holds <state dir>/deploy.lock (owner pid) and the supervisor's lock ({\"cmd\":\"lock\",\"owner\",\"ttlMs\"}, 15 min, released by {\"cmd\":\"unlock\"}) through the roll and the health watch; meanwhile any other roll, rollback or lock is refused naming the holder (deploy.js exit 5), and a roll during a roll is refused, not merged. The supervisor's crash respawn is not a deploy and ignores it",
-        "jarvisd (4.4)": "strict TypeScript (src/supervisor/index.ts; index.js a shim). The compiled jarvisd runs it: `jarvisd supervise` owns the port, its generations are `jarvisd generation`; the executable for each new generation is PA_JARVISD_EXE, else `current` beside the binary (written by a deploy that built jarvisd-<commit> next to it), else itself. status.runtime says node, bun or jarvisd; status.source is embedded at build. Tested with the compiled binary on Windows and Linux CI (test/supervisorBinary.test.js, deployTest --binary). Live stacks still run node src/supervisor until switched",
+        "jarvisd (4.4)": "strict TypeScript (src/supervisor/index.ts; index.js a shim). The compiled jarvisd runs it: `jarvisd supervise` owns the port, its generations are `jarvisd generation`; the executable for each new generation is PA_JARVISD_EXE, else `current` beside the binary (written by a deploy that built jarvisd-<commit> next to it), else itself. status.runtime says node, bun or jarvisd; status.source is embedded at build. Tested with the compiled binary on Windows and Linux CI (test/supervisorBinary.test.js, deployTest --binary). Both stacks run jarvisd supervise (status.runtime jarvisd) since 2026-11-08",
         "Launcher (4.4)": "the pa-worker task runs windows/pa-launch.ps1 and the unit linux/pa-launch.sh; on every start they read PA_RUNTIME: node (default) or bun start node src/supervisor, jarvisd starts the executable jarvisd/dist/current names as `supervise` (no Node), falling back to Node when none is built. deploy.js treats PA_RUNTIME differing from the running supervisor as a switch (restart); for jarvisd every roll and restart builds jarvisd-<commit> first. Switch or roll back: one setting, then redeploy (JARVISD.md runbook)"
       },
       "code": [
@@ -650,7 +651,7 @@
         "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
         "Health": "GET /healthz: 200 {ready: true} once its process has finished starting, 503 while starting or draining (what the supervisor switches on)",
         "Waiting for your yes": "a card at the top of the board, on Build and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.ts reads the session's screen before one keystroke (Enter on Yes, or Esc). A factory job parked on an approval (needs_human) says \"waiting for your approval\" on Build and in Plan's Agent runs, each with Approve (POST /api/factory/jobs/<id>/approve); by voice, Jarvis's factory_approve",
-        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. Postgres triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Outbox (plan 1.4, sql/036): the same trigger writes each event to event_outbox under its global number in the writer's transaction (3 days kept, pruned by the trigger every 1000th event), so a g<seq> Last-Event-ID the ring does not hold (a restart, another generation) is replayed from the table, and a LISTEN that reconnects backfills from it instead of resyncing; only a client more than 1000 events or 3 days behind, or a process-local id from another process, still gets a resync. SQL in src/repo/events.ts. Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. On SQLite (8.4.33) an event another process committed is read from the outbox within 100 ms, and /api/state builds in about 45 ms after such a write (it skips the reviews the page does not draw; sql-sqlite/010 indexes each source's newest fetched_at): was about 170 ms on a copy of the store. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.ts), because a generation starts listening before it says ready",
+        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. On SQLite (both stacks) there is no NOTIFY: after a commit the worker reads new event_outbox rows onto the bus (another process's event arrives within 100 ms). On the optional Postgres backend, triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Outbox (plan 1.4, sql/036): the same trigger writes each event to event_outbox under its global number in the writer's transaction (3 days kept, pruned by the trigger every 1000th event), so a g<seq> Last-Event-ID the ring does not hold (a restart, another generation) is replayed from the table, and a LISTEN that reconnects backfills from it instead of resyncing; only a client more than 1000 events or 3 days behind, or a process-local id from another process, still gets a resync. SQL in src/repo/events.ts. Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. On SQLite (8.4.33) an event another process committed is read from the outbox within 100 ms, and /api/state builds in about 45 ms after such a write (it skips the reviews the page does not draw; sql-sqlite/010 indexes each source's newest fetched_at): was about 170 ms on a copy of the store. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.ts), because a generation starts listening before it says ready",
         "Factory push": "POST /api/factory/events (X-PA): a factory on this machine pushes {job_id, state, why?, updated_at?} or {jobs: [...]}; merged into factory_board at once (Build shows it in about 25 ms) and the full `job list` follows within PA_FACTORY_ACTIVE_POLL_SECONDS. A done, failed or cancelled job also settles the run that holds it right after the answer, through the factory pass's own apply on the stored job under the pushed state: run row ended, card moved and its context cleared, \"Factory run #N\" raised (17 ms in test/factoryPushSettle.test.js); a poll that read the run before the push writes nothing (the write is guarded on the status it read). The factory side is `factory serve` (E3): within 0.2-0.4 s of a story transition",
         "Passkey sessions (plan 7.1, PA_PASSKEYS=off|on, default off)": "Off: nothing changes (loopback Host, X-PA on POST, page tokens). On: once a passkey is registered, every request except /api/auth/*, /login, the theme, /healthz and /api/version needs the pa_session cookie (HttpOnly, SameSite=Strict, opaque, stored only as a SHA-256 in passkey_session; idle 30 min and sliding, 12 h hard ceiling). WebAuthn runs on @simplewebauthn/server (src/auth/ceremony.ts): single-use two-minute challenges, user verification required, 10 failed assertions a minute rate-limited. Step-up for high-risk approvals (merge, push to main, secret reveal; src/auth/stepup.ts): POST /api/auth/stepup/verify records a one-use, two-minute grant for exactly one approval id, whose challenge commits to that id; the dashboard demands it where auto_merge and push_to_main are accepted today (a dispatch card, a factory job, ids derived server-side), and the policy engine (4.3) calls hasStepUp() for the same kinds. Voice and MCP can never write a grant. The Plan card's approval prompt (permission.client.js) and Build's Approve (factory.client.js) show an 'Approve with passkey' button only after the server answers an approval with needsStepUp and an approvalId. Never locked out: the gate is open while no passkey exists, an unreadable store fails open, `pa passkeys reset` (interactive local terminal, type RESET) forgets every passkey and session, and PA_PASSKEYS=off is the other exit. Enabling it on the live stacks is pending the owner."
       },
@@ -695,14 +696,14 @@
       "id": "worker",
       "layer": "dashboard",
       "name": "Worker",
-      "role": "A scheduler of periodic passes (no job queue: work to do is a query). One owner of the passes per machine: a Postgres advisory-lock lease (src/util/lease.ts), handed between generations on a roll.",
+      "role": "A scheduler of periodic passes (no job queue: work to do is a query). One owner of the passes per machine: a lease handed between generations on a roll (the lease table on SQLite, a Postgres advisory lock on that backend; src/util/lease.ts).",
       "stacks": {
         "work": "live",
         "personal": "live"
       },
       "where": {
-        "work": "a generation of the supervisor (pa-worker task → node src/supervisor → src/worker.ts); also hosts the dashboard",
-        "personal": "systemd user unit pa-worker (node src/supervisor once redeployed) on k-911-x17 (also hosts the dashboard)"
+        "work": "a jarvisd generation (pa-worker task → jarvisd supervise → jarvisd generation), which also hosts the dashboard",
+        "personal": "systemd user unit pa-worker runs jarvisd supervise on k-911-x17; the generation hosts the dashboard"
       },
       "health": "dashboard",
       "details": {
@@ -804,11 +805,11 @@
       "role": "Captures mail, Teams, calendar, GitHub, Jira, Claude/Cursor sessions and meeting audio as append-only source items.",
       "stacks": {
         "work": "live",
-        "personal": "landing"
+        "personal": "live"
       },
       "where": {
         "work": "Worker passes on the laptop",
-        "personal": "Worker passes on k-911-x17, every source off until the personal sources are chosen"
+        "personal": "Worker passes on k-911-x17; every source is off (the stack's ingest flags are 0) until personal sources are chosen"
       },
       "details": {
         "Microsoft 365": "a headless `claude -p` relays the claude.ai connector calls; items are built from the tool_result blocks, never from model text",
@@ -906,8 +907,8 @@
       "name": "Meter: telemetry and credit pool",
       "role": "OpenTelemetry spans of the main hops into the PA database, p50/p95 latency per hop, model spend per day/model/purpose, and the Claude subscription credit pool with its API fallback (plan 7.5).",
       "stacks": {
-        "work": "landing",
-        "personal": "landing"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
         "work": "src/telemetry in every PA process; the Meter page (termhub /meter) reads GET /pa/api/meter",
@@ -965,22 +966,22 @@
       "role": "Starts work: a Claude Code session in termhub (own worktree), or a factory job through the JOBS-API. Enforces delivery levels and modes.",
       "stacks": {
         "work": "live",
-        "personal": "landing"
+        "personal": "live"
       },
       "where": {
         "work": "In-process (pa do, the dashboard's Do, the chat's action tools)",
-        "personal": "In-process on k-911-x17; the factory is this machine’s own, chat and Claude runs wait on a personal claude login"
+        "personal": "In-process on k-911-x17. The factory is this machine's factory serve. The chat uses the same SDK engine as the work stack"
       },
       "details": {
         "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
         "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
-        "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin, or here through child_process when PA_FACTORY_MACHINE is empty, `local` or this host (the work stack, with PYTHONUTF8=1 on Windows); idempotent on --source pa --external-id",
+        "Factory job": "factory serve first (POST 127.0.0.1:7330/api/cli, header X-Factory: 1) when PA_FACTORY_SERVE_URL answers; otherwise `uv run factory job submit --json ...` on PA_FACTORY_MACHINE through termhub's POST /api/exec, or child_process when the machine is empty, local or this host (PYTHONUTF8=1 on Windows). Idempotent on --source pa --external-id",
         "Start path (8.2.2)": "the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow)",
         "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback. A continuation (factory_continue) gets no delivery instructions: it commits onto the PR or branch and opens no PR, and the PR's review threads are left to the factory, which appends them at submit",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
         "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
-        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass is a `uv run factory` call: about 5 s of Python start-up on the work laptop, which is why the sub-second path is the factory's push (POST /api/factory/events)"
+        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass goes through factory serve when it is up (warm, well under a second) and falls back to `uv run factory` (about 5 s of Python start-up) when nothing is listening. The sub-second path for a transition is the factory's push (POST /api/factory/events)"
       },
       "env": [
         {
@@ -1037,8 +1038,8 @@
       "name": "Golden-path check (pa e2e)",
       "role": "Plan E4: one command runs the golden path headless against the live stack (a dummy card to a draft PR on xvanov/dev-tools), times each hop, checks that every view links the same card, run, job, steps, sessions and PR, and cleans up.",
       "stacks": {
-        "work": "landing",
-        "personal": "landing"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
         "work": "`pa e2e [<workflow>]` in-process on the machine it runs on; `--on <machine>` runs it on another PA_MACHINES machine through its termhub (exec for --dry-run/--sweep, a session for a real run)",
@@ -1074,20 +1075,19 @@
     {
       "id": "postgres",
       "layer": "dashboard",
-      "name": "Postgres store",
-      "role": "Postgres 16 + pgvector: every item, commitment, claim, run, proposal and the factory board snapshot.",
+      "name": "Postgres (optional backend)",
+      "role": "Optional Postgres 16 + pgvector backend. Retired on both stacks (D24); the running store is sqlite-store. The code still selects it when PA_DB=postgres (the default in config.ts), and CI's contract job still runs on a throwaway Postgres.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
-        "work": "Retired 2026-11-08 (D24): it lived in WSL Ubuntu on :5433, which is unregistered. Its last state is an encrypted .pabak and the whole distro an encrypted export in %LOCALAPPDATA%\\personal-assistant\\retired (README.txt there says how to read them). The code still runs on Postgres (PA_DB=postgres; CI's contract job), so a stack could move back",
+        "work": "Retired 2026-11-08 (D24): it lived in WSL Ubuntu on :5433, which is unregistered. Its last state is an encrypted .pabak and the whole distro an encrypted export in %LOCALAPPDATA%\\personal-assistant\\retired (README.txt there says how to read them). The code still runs on Postgres (PA_DB=postgres; CI's contract job). These stacks do not move back onto it: those databases are gone, so unsetting PA_DB is not a rollback. A Postgres store would be a new database, which is what CI's contract job already uses",
         "personal": "Retired 2026-11-08 (D24): the pa_personal database is dropped after an encrypted .pabak of it in ~/.local/share/personal-assistant/retired; the system Postgres 16 server stays for other software"
       },
-      "health": "postgres",
       "details": {
         "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.ts at worker start",
-        "Repository layer (plan 1.2, 1.3)": "live: every SQL statement is in src/repo/<aggregate>.js behind a named method (src/repo/sqlite/ holds the SQLite twins, PA_DB); code elsewhere calls repo.<aggregate>.<method>() and repo.withTx(). test/repoBoundary.test.js fails on SQL or a db/pg require anywhere else (POOL_ONLY names the few that hold a connection), test/repoCalls.test.js on a call to a method that does not exist. test/repoContract.test.js runs every method's contract (test/contract/*.contract.js) on a throwaway pa_test_* Postgres database and on SQLite",
+        "Repository layer (plan 1.2, 1.3)": "live: every SQL statement is in src/repo/<aggregate>.ts behind a named method (src/repo/sqlite/ holds the SQLite twins, PA_DB); code elsewhere calls repo.<aggregate>.<method>() and repo.withTx(). test/repoBoundary.test.js fails on SQL or a db/pg require anywhere else (POOL_ONLY names the few that hold a connection), test/repoCalls.test.js on a call to a method that does not exist. test/repoContract.test.js runs every method's contract (test/contract/*.contract.js) on a throwaway pa_test_* Postgres database and on SQLite",
         "Expand/contract (Z3)": "a roll runs the previous generation on the new schema, so after 032 every migration is additive; drops, renames, retypes and tightened constraints ship later as a contract migration marked `-- contract: <expand file>`. test/migrations.test.js (src/db/migrationRules.ts) enforces it, refuses edits to applied migrations and checks the previous commit's INSERTs against the new schema without Postgres",
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
         "Embeddings (audit 2026-11-07)": "text-embedding-3-small, 1536 dims, embed once and never re-embed (plan D5). Embedded: message and document chunks (chunk), memory claims (claim), memory pages (memory_page), commitment text for semantic dedupe (commitment_vector). Never embedded: identifiers, statuses, board state, numbers, dates; PR and ticket refs dedupe by key (commitment anchors), not by vector. No call site embeds changing data or exact keys; stored vectors are 41.5k (31.1k chunks, 10.0k claims, 105 pages, 242 commitments) and re-embed only when their own text changes (a changed item body, a regenerated page) or when CONTEXT_VERSION is bumped, which is a decision, not a cleanup",
@@ -1095,7 +1095,6 @@
         "Secrets": "never here: the OS keychain (Windows Credential Manager resource dev-tools/<stack>, Linux Secret Service service=dev-tools stack=<stack>; stack work on Windows, personal on Linux, PA_STACK overrides; entries from before the label under personal-assistant are still read) or the gitignored .env. `pa secrets migrate --from-env` (dry run by default, names only) moves the values the code reads back (config.secret(); the Anthropic and Azure keys through lazy config getters) and empties their .env lines. The software-factory reads its provider keys from the same keychain when .env leaves them unset (factory/keychain.py)",
         "Backups": "every 24 h, 14 kept (PA_BACKUP_DIR): pg_dump plus the factory state dir (logs and locks left out) plus a manifest of table row counts, in one tar encrypted with AES-256-GCM (src/backupCrypto.ts, pa-<stamp>.pabak). The key is the PA_BACKUP_KEY secret, generated into the OS keychain on the first backup (pa backup key init / export --to <file>); never beside the backups. A machine with no keychain still writes a plain .dump and says so. Restore drill: `pa backup restore --to <scratch db>` restores into a throwaway database, compares row counts with the manifest and drops it (needs CREATEDB and the vector/pg_trgm extensions). Since the 3.5 cutover both stacks back up their SQLite file instead (sqlite-store); its drill passed on both on 2026-11-08",
         "Signed self-update": "deploy.js --pull fetches, checks `git log %G?` on the fetched range against a trusted-signers file outside the repo (PA_ALLOWED_SIGNERS, default <data dir>/allowed_signers), then merges; with --from the same check refuses the roll. Until that file exists an unsigned commit only warns (--require-signed / PA_REQUIRE_SIGNED=1 refuse regardless). docs/native/SIGNED-UPDATES.md says how to enable signing",
-        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task held it open while it was the work store (disabled since 3.6)",
         "Id chain": "plan E1: card -> run -> job -> step -> session -> PR as stored ids. run (commitment_id, factory_job_id, termhub_session_id, mr_url, external_id) plus run_pr (every PR of a run: number, state, CI) and run_step (every factory step: job, story, persona, termhub session id, machine, URL), written by the worker factory pass from job status (sql/033); read by the board (card.chain), the card detail, Build and the card / factory_job / sessions MCP tools"
       },
       "tables": [
@@ -1184,19 +1183,21 @@
         "work": "The store since the 3.5 cutover (2026-11-08): %LOCALAPPDATA%\\personal-assistant\\pa.sqlite, encrypted, PA_DB=sqlite in personal-assistant\\.env, PA_SQLITE_KEY and PA_BACKUP_KEY in Windows Credential Manager",
         "personal": "The store since the 3.5 cutover (2026-11-08): ~/.local/share/personal-assistant/pa.sqlite, encrypted, PA_DB=sqlite, PA_SQLITE_KEY and PA_BACKUP_KEY in personal-assistant/.env (the Secret Service keyring is locked for headless processes there)"
       },
+      "health": "store",
       "details": {
         "Backend (plan 3.1)": "src/db/sqlite.ts: better-sqlite3-multiple-ciphers (optional dependency; N-API prebuilds for Windows and Linux) with src/db's interface. $n placeholders, Date/JSON/boolean encoding, and rows decoded by declared column type (timestamptz -> Date, jsonb and arrays -> JSON, boolean, vector -> Float32Array), so the SQLite repositories return what pg does. Writes and transactions take an in-process lock and BEGIN IMMEDIATE; plain reads use a second, read-only connection",
         "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.ts migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
-        "Repositories": "src/repo/sqlite/<aggregate>.js, the twin of each src/repo/<aggregate>.js; createRepos() loads them when the backend says dialect sqlite. Every aggregate phase 1.2 has converted has its twin; each states where SQLite cannot say what Postgres says (FTS5 bm25 ranks, ASCII-only lower()/like, regexes tested in JS, millisecond timestamps), for the 3.4 shadow comparison",
+        "Repositories": "src/repo/sqlite/<aggregate>.ts, the twin of each src/repo/<aggregate>.ts; createRepos() loads them when the backend says dialect sqlite. Every aggregate phase 1.2 has converted has its twin; each states where SQLite cannot say what Postgres says (FTS5 bm25 ranks, ASCII-only lower()/like, regexes tested in JS, millisecond timestamps), for the 3.4 shadow comparison",
         "Contract (plan 3.2)": "test/repoContract.test.js runs every case on postgres and sqlite (a throwaway encrypted pa_test_* file, no server; CI runs it on Linux and Windows and fails if SQLite is skipped). Strict: a repository method without its SQLite twin fails (PA_CONTRACT_STRICT=0 reports todo for work in progress). Green on every aggregate of 1.2",
         "Encryption": "PA_SQLITE_KEY set: SQLCipher v4 (PRAGMA cipher=sqlcipher, legacy=4, key); the key lives in the OS vault or the gitignored .env",
+        "Health": "The page's store dot is repo.system.ping() (the check's kind is postgres, which is that probe's name). It answers for whichever store PA_DB selects; on both stacks that is this file",
         "Vectors": "1536 float32 per BLOB, copied from Postgres (D5: never re-embedded); exact scan with vec_distance_cosine (sqlite-vec, optional dependency; a JS fallback otherwise)",
         "LISTEN/NOTIFY": "no NOTIFY: after a commit the backend reads the new event_outbox rows and hands them to sessions (pool.connect()) that LISTENed, in-process only; other processes read event_outbox",
         "Shadow comparison (plan 3.4)": "pa db compare --sqlite <file> (src/db/shadow.ts): eval questions and recorded searches through the same repository methods on Postgres (read only) and an export. Work stack 2026-11-08: board reads identical; vectors 0.98-1.0 overlap; SQLite hit@10 0.771 vs 0.625 and MRR 0.519 vs 0.413 on the eval gold items; nothing to recalibrate (rank fusion, reranker-scale abstain)",
         "Vector search": "two stages (sql-sqlite/007): sign bits per vector in chunk_bits / claim_bits ranked by Hamming distance, the best 400 re-ranked by exact cosine; 40-80 ms p50 over 31k chunks (an exact scan was ~530 ms; Postgres's approximate HNSW ~20 ms)",
         "Pass reads (sql-sqlite/008)": "statements run on the event loop, and a chunk or claim row carries its 6 KB vector, an item its body and raw JSON, so a scan that tests one column reads the whole store. The passes' reads therefore go through narrow indexes (stale and unembedded chunks, unembedded claims, review counts, the reconciler's window, member-listing items), select ids before wide columns, and test text length from the record header (atLeastChars). A run of statements gives the loop a turn every 50 ms outside transactions (src/db/sqlite.ts). On the work store: 0.2-0.9 s per read before, 0-170 ms after; a worker rehearsal's /healthz stayed under 0.6 s. The spend per local day (sql-sqlite/009) reads a covering index and calls pa_local_day once per UTC quarter hour, not per row: 100-130 ms -> 45-60 ms over a week's 60k calls",
         "Keyword search": "FTS5 (porter and exact indexes), Postgres's English stop words; items ranked on narrow columns, text read for the top rows only, each index's best 2,000 chunks when no filter applies. 61 ms p50 on the work stack (Postgres 0.9 s)",
-        "Cutover (3.5)": "docs/native/CUTOVER-SQLITE.md: rehearse (export + compare while running), stop writers, export, compare, PA_DB=sqlite in .env, start, verify (doctor, live feed, e2e, backup drill); rollback is unsetting PA_DB (Postgres is never written). Done on both stacks 2026-11-08: personal (a near-empty store, seconds), then work (export 90 s, board reads identical, about 5 min down, restore drill PASS: 79 tables in 18 s)",
+        "Cutover (3.5)": "docs/native/CUTOVER-SQLITE.md: rehearse (export + compare while running), stop writers, export, compare, PA_DB=sqlite in .env, start, verify (doctor, live feed, e2e, backup drill); the cutover's rollback was unsetting PA_DB while that Postgres still held the data. D24 retired those databases, so these stacks stay on the SQLite file. Done on both stacks 2026-11-08: personal (a near-empty store, seconds), then work (export 90 s, board reads identical, about 5 min down, restore drill PASS: 79 tables in 18 s)",
         "Backups (3.5 prep)":"src/backupSqlite.ts, behind the same pa backup / pa backup restore --to / pa restore: VACUUM INTO snapshots on a read-only connection, on a worker thread like the bundle's encryption (consistent, compacted, still encrypted with PA_SQLITE_KEY): pa-latest.sqlite refreshed by the hourly backup pass when older than PA_SQLITE_SNAPSHOT_MINUTES (RPO), the nightly encrypted .pabak bundle with pa.sqlite and a manifest; the drill restores into a new scratch file and runs integrity_check, the FTS integrity checks, foreign_key_check, row counts and a search. Not Litestream: it cannot open a SQLCipher file and has no supported Windows build. Work stack size: 453 MB snapshot in 6 s, bundle 10 s, drill 10-12 s",
         "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.ts): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
         "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.ts: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
@@ -1239,10 +1240,10 @@
         "personal": "live"
       },
       "where": {
-        "work": "The work factory, natively on Windows: software-factory in the dev-tools checkout (the PA reaches it with PA_FACTORY_MACHINE=local; switch pending)",
+        "work": "The work factory, natively on Windows: software-factory in the dev-tools checkout. The PA calls it locally (PA_FACTORY_MACHINE=local) through factory serve on 127.0.0.1:7330",
         "personal": "k-911-x17, /home/k/dev-tools/software-factory"
       },
-      "health": "factory-machine",
+      "health": "factory-serve",
       "details": {
         "Contract": "software-factory/docs/JOBS-API.md, v1.2 (kinds, runtimes, runs, reports)",
         "Commands": [
@@ -1255,7 +1256,7 @@
           "app add | set | list"
         ],
         "Kinds": "code (direction to stories to PRs), research and report (one agent writes report.md; delivery none)",
-        "Continue and resume": "landing: the PA sends job submit --branch / --pr and job resume <id>; a factory without them refuses in its parser and the PA says the factory must be updated (not yet in JOBS-API.md on main)",
+        "Continue and resume": "job submit --branch / --pr and job resume <id> are in JOBS-API.md, and the PA sends them. A factory that does not know them refuses in its parser and the PA says the factory must be updated",
         "Never": "the PA never imports factory code or reads its store",
         "Transport": "plan 2.1: a factory on the PA's machine answers through `factory serve`'s localhost API, POST 127.0.0.1:7330/api/cli {argv} (header X-Factory: 1). It runs the same CLI command in-process, so the JSON is byte-identical, and returns {code, stdout, stderr}; read-only verbs run concurrently (per-thread output capture), state-changing ones one at a time; warm calls take 40-200 ms instead of 5-10 s of `uv run`. The PA (PA_FACTORY_SERVE_URL) tries it first and spawns `uv run factory ...` only when nothing ran (nothing listening, or a verb serve does not serve: job follow). A remote factory is still reached through termhub's /api/exec",
         "Push": "E3: `factory serve` POSTs job state changes (a new state or why; {jobs: [{job_id, state, why, updated_at}]}) to the PA's /api/factory/events from its own thread, 0.2-0.4 s after a tick commits a story transition to factory.db (statted every 0.1 s); done, failed and cancelled jobs are re-read by a full check every 5 s and right after an API submit, cancel or resume. A job whose last story delivers is pushed done with that transition, then corrected to what `job status` reads on GitHub (about 3 s, on serve's confirm thread, so other jobs' pushes never wait for it) if that differs, re-asked every 30 s while GitHub says in_progress (FACTORY_PA_EVENTS_URL, default the local PA)",
@@ -1284,7 +1285,7 @@
       },
       "where": {
         "work": "Native Windows factory; the factory-serve logon task (`factory serve`) drives it",
-        "personal": "k-911-x17; factory-tick@<app> systemd timers drive it"
+        "personal": "k-911-x17; factory-serve.service runs factory serve (it replaced the factory-tick@<app> timers)"
       },
       "details": {
         "Scheduler": "`factory serve` on both stacks (Windows: the factory-serve logon task, scripts/windows/install-serve.ps1, running `--supervise`; Linux: factory-serve.service, replacing the factory-tick@<app> timers; `factory on/off` manage it): ticks only apps whose config sets serve_tick: true, every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d and it dispatches research/report jobs and ticks the app within 1 s; one serve per factory root (state/locks/serve.lock plus a SQLite lease, state/scheduler/leases.db, 30 s TTL); exits 75 for a restart when the checkout's HEAD moves; `factory serve --status`. A code job for an app nothing ticks (no serve_tick, no factory-tick@ timer) is accepted with a `ticker:` warning, and submit, job status/list and app list carry `ticked: false` (status why: `waiting: app X is not ticked`; JOBS-API v1.6, factory/scheduler/coverage.py)",
@@ -1336,7 +1337,7 @@
         "personal": "k-911-x17"
       },
       "details": {
-        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro; planning personas pm / analyst / sm DeepSeek-V4-Flash since D21; contract deepseek-v4-pro; reviewer Kimi-K2.7-Code, ...); direct routes: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4",
+        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro; planning personas pm / analyst / sm DeepSeek-V4-Flash since D21; contract deepseek-v4-pro; reviewer Kimi-K2.7-Code, ...); the direct block, only when FACTORY_PROVIDER=direct: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4. tech_writer on the azure default is Kimi-K2.7-Code",
         "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
         "Missing key": "degrades to the routes.yaml fallback with a warning",
         "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
@@ -1413,7 +1414,7 @@
       "id": "agent-sandbox",
       "layer": "factory",
       "name": "Agent sandbox, egress proxy and credential broker",
-      "role": "Native plan 5.2/5.3, behind flags (default off): an agent process runs in an OS sandbox with no GitHub token, SSH key or gh login; egress goes through an allowlist proxy; pushes and draft PRs go through a broker outside the sandbox that holds the credentials and checks the run's ceiling.",
+      "role": "Optional OS sandbox and credential broker (plan 5.2/5.3). Off on both stacks: D22 dropped the rollout, so agents keep full access to the machine they run on. The code stays behind FACTORY_SANDBOX and PA_SANDBOX (default off): an agent can run with no GitHub token, SSH key or gh login, egress through an allowlist proxy, and pushes and draft PRs through a broker that checks the run's ceiling.",
       "stacks": {
         "work": "landing",
         "personal": "landing"
@@ -1487,8 +1488,8 @@
         "personal": "live"
       },
       "where": {
-        "work": "%LOCALAPPDATA%\\software-factory\\state once `factory state migrate` has run there (until then software-factory/state in the Windows dev-tools checkout)",
-        "personal": "~/.local/share/software-factory/state once `factory state migrate` has run there (until then /home/k/dev-tools/software-factory/state)"
+        "work": "%LOCALAPPDATA%\\software-factory\\state since factory state migrate on 2026-11-08 (plan 2.5). software-factory/state in the checkout holds only .gitignore; .state-dir points here",
+        "personal": "~/.local/share/software-factory/state since factory state migrate on 2026-11-08 (plan 2.5). software-factory/state in the checkout holds only .gitignore; .state-dir points here"
       },
       "details": {
         "Location": "outside the repo, so no story worktree or agent working directory sits inside the live checkout: factory/state_dir.py resolves the gitignored software-factory/.state-dir pointer, else software-factory/state (no environment override, so a worktree copy of the factory never inherits the live state); `factory state migrate` (an operator step, serve stopped) moves it and writes the pointer, `factory state where` prints it; the PA reads the same pointer (resolveStateDir in src/dispatch/factoryPace.ts) for the pacer's watch and the backup bundle",
@@ -1527,7 +1528,7 @@
         }
       ],
       "details": {
-        "Runtime": "TERMHUB_FRONT=node|jarvisd (environment, else termhub/.env or the repo's .env; termhub/lib/launch.ts). jarvisd runs the same front as `bun jarvisd/src/main.ts front` on the pinned Bun from jarvisd/.bun/<pin>/ (the update scripts install it): in place of `node front.js` on Windows (Start-TermhubFront), as a respawned child of server.js on Linux. Without its Bun the Node front serves. Both stacks still run node; the switch is a runbook in docs/native/JARVISD.md",
+        "Runtime": "TERMHUB_FRONT=node|jarvisd (environment, else termhub/.env or the repo's .env; termhub/lib/launch.ts). jarvisd runs the same front as `bun jarvisd/src/main.ts front` on the pinned Bun from jarvisd/.bun/<pin>/ (the update scripts install it): in place of `node front.js` on Windows (Start-TermhubFront), as a respawned child of server.js on Linux. Without its Bun the Node front serves. Both stacks run jarvisd (TERMHUB_FRONT=jarvisd) since 2026-11-08, as its own process on Bun 1.4.4. The in-process front (one jarvisd owning 7000 and 7300) is deferred (D25). node remains the code default and the rollback",
         "APIs": [
           "POST /api/sessions {cwd, command, title} (X-Termhub: 1)",
           "POST /api/sessions/:id/input (type into a session)",
@@ -1560,7 +1561,7 @@
       "id": "sessiond",
       "layer": "sessions",
       "name": "sessiond",
-      "role": "Owns the PTYs (node-pty), so sessions survive front updates; mirrors metadata to sessions.json for restore after a reboot.",
+      "role": "Owns the sessions. The PTYs live in ptyd, so a front update and a sessiond restart do not end them; sessiond mirrors metadata to sessions.json for restore after a reboot.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1577,7 +1578,7 @@
           "on the factory machine: claude_session runs"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
-        "Restart": "restarting sessiond kills every live terminal: only on purpose. Opt-in TERMHUB_PTYD=1 (termhub/.env; not deployed yet) moves the PTYs into ptyd and a restarted sessiond adopts them",
+        "Restart": "With TERMHUB_PTYD=1 (both stacks since 2026-11-08) the PTYs live in ptyd and a restarted sessiond adopts them. node-pty is the host only when that flag is unset, and it is the rollback (TERMHUB_PTYD=0); a sessiond restart then ends the terminals",
         "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
@@ -1618,7 +1619,7 @@
       "id": "ptyd",
       "layer": "sessions",
       "name": "ptyd",
-      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. Opt-in: with TERMHUB_PTYD=1 sessiond keeps its PTYs in ptyd, so a sessiond restart no longer ends the terminals. Not deployed on either stack yet.",
+      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. With TERMHUB_PTYD=1 (both stacks since 2026-11-08) sessiond keeps its PTYs here, so a sessiond restart no longer ends the terminals. Exit 5, retiring the node-pty host from the code path, is still open.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1653,7 +1654,7 @@
         "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
         "Build": "node scripts/build.js --only ptyd (rustup, MSVC build tools on Windows); the update scripts build it when its sources are newer than the build",
         "Installed copy": "<dataDir>/bin/ptyd-<hash>, named by <dataDir>/bin/ptyd-current (node termhub/lib/ptyHost.js install): ptyd runs this, so a build never writes over the running binary; a new one is used from ptyd's next start (ptyd.ps1 -Restart, ptyd-unit.sh --restart, both end its terminals)",
-        "Cutover (Exit 5)": "TERMHUB_PTYD=1|0 (environment, else termhub/.env or the repo's .env) wins over ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty (default, and the rollback), ptyd (always explicit), or opt-in auto. ptyd runs as its own long-lived process (logon task on Windows, user unit on Linux) that the update scripts keep in place and never restart. Neither stack has switched: both are on the node-pty default; the runbook is in docs/native/JARVISD.md"
+        "Cutover (Exit 5)": "TERMHUB_PTYD=1|0 (environment, else termhub/.env or the repo's .env) wins over ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty when TERMHUB_PTYD is unset (that is the rollback), ptyd when it is 1, or opt-in auto. ptyd runs as its own long-lived process (logon task on Windows, user unit on Linux) that the update scripts keep in place and never restart. Both stacks switched on 2026-11-08 (TERMHUB_PTYD=1): ptyd is the host, node-pty is the unset flag and the rollback. The runbook is in docs/native/JARVISD.md"
       },
       "code": [
         "ptyd/src/main.rs",
@@ -1761,7 +1762,7 @@
         "personal": "live"
       },
       "details": {
-        "Factory": "dev deepseek/deepseek-coder, pm / analyst / tech_writer deepseek/deepseek-chat (direct routes)",
+        "Factory": "the direct-provider block only, not what jobs use (default_provider is azure): dev deepseek/deepseek-coder, pm / analyst / tech_writer deepseek/deepseek-chat. On the azure default, planning personas are DeepSeek-V4-Flash (D21) and tech_writer is Kimi-K2.7-Code",
         "Billing": "metered"
       },
       "code": [
@@ -1779,7 +1780,7 @@
       },
       "where": {
         "work": "http://127.0.0.1:11434 (PA_LOCAL_LLM_URL is its /v1)",
-        "personal": "Planned with the PA"
+        "personal": "Not installed on the personal machine; the fast lane stays off"
       },
       "health": "ollama",
       "details": {
@@ -1941,8 +1942,8 @@
     },
     {
       "from": "mcp",
-      "to": "postgres",
-      "label": "SQL reads"
+      "to": "sqlite-store",
+      "label": "repository reads"
     },
     {
       "from": "mcp",
@@ -1971,7 +1972,7 @@
     },
     {
       "from": "ingest",
-      "to": "postgres",
+      "to": "sqlite-store",
       "label": "source_item (append-only)"
     },
     {
@@ -1981,7 +1982,7 @@
     },
     {
       "from": "commitments",
-      "to": "postgres",
+      "to": "sqlite-store",
       "label": "commitment, ledger_transition"
     },
     {
@@ -2006,7 +2007,7 @@
     },
     {
       "from": "dashboard",
-      "to": "postgres",
+      "to": "sqlite-store",
       "label": "/api/state"
     },
     {
@@ -2025,9 +2026,9 @@
       "label": "job list to factory_board (every 5 s while a job moves, at once on a local factory's state write, else every 120 s); job status to run_pr / run_step (id chain)"
     },
     {
-      "from": "postgres",
+      "from": "sqlite-store",
       "to": "dashboard",
-      "label": "NOTIFY pa_events (row triggers) to GET /api/events (SSE)"
+      "label": "event_outbox poll to GET /api/events (SSE); NOTIFY is only the optional Postgres backend"
     },
     {
       "from": "factory-api",
@@ -2096,7 +2097,7 @@
     },
     {
       "from": "meter",
-      "to": "postgres",
+      "to": "sqlite-store",
       "label": "trace_span, llm_spend"
     },
     {
@@ -2212,7 +2213,7 @@
         },
         {
           "c": "factory-api",
-          "t": "On the work stack the factory is on the same Windows machine: the command runs locally through child_process (argv, no shell; content on stdin)."
+          "t": "On the work stack the factory is on the same machine: the command goes to factory serve (POST 127.0.0.1:7330/api/cli). The PA spawns uv run factory only when nothing is listening."
         },
         {
           "c": "factory-api",
@@ -2321,7 +2322,7 @@
         },
         {
           "c": "dispatcher",
-          "t": "The brief says \"commit onto PR #12's branch, open no new pull request\" and leaves the review comments to the factory. `job submit --pr 12 --runtime claude_session` reads the PR and its unresolved review threads in one GraphQL call, with `claude auth status` alongside, and appends the threads to the brief. Landing: a factory without --pr refuses in its parser and the job fails saying so, never resent as fresh work."
+          "t": "The brief says \"commit onto PR #12's branch, open no new pull request\" and leaves the review comments to the factory. `job submit --pr 12 --runtime claude_session` reads the PR and its unresolved review threads in one GraphQL call, with `claude auth status` alongside, and appends the threads to the brief. job submit --pr is in the contract; a factory that does not know --pr refuses in its parser and the job fails saying so, never resent as fresh work."
         },
         {
           "c": "runtime-claude",
@@ -2424,8 +2425,8 @@
           "t": "The distill pass (sourcePolicy first) extracts an owed_by_me commitment with an absolute due date; blocks and dedupe link it to related work."
         },
         {
-          "c": "postgres",
-          "t": "commitment row, with extracted_by and the raw payload kept."
+          "c": "sqlite-store",
+          "t": "commitment row in the stack's SQLite file, with extracted_by and the raw payload kept."
         },
         {
           "c": "dashboard",
@@ -2509,7 +2510,7 @@
         },
         {
           "c": "factory-chain",
-          "t": "The next factory tick starts a detached worker (at most 2 at a time)."
+          "t": "factory serve starts a detached worker (a wake within 1 s of submit; at most 2 at a time)."
         },
         {
           "c": "runtime-claude",
@@ -2613,9 +2614,9 @@
       "kind": "self",
       "label": "Dashboard (this process)"
     },
-    "postgres": {
+    "store": {
       "kind": "postgres",
-      "label": "Postgres"
+      "label": "SQLite store"
     },
     "voice": {
       "kind": "http",
@@ -2642,9 +2643,12 @@
       "path": "/api/health",
       "label": "termhub (local)"
     },
-    "factory-machine": {
-      "kind": "machine",
-      "label": "Factory machine's termhub"
+    "factory-serve": {
+      "kind": "http",
+      "config": "factory.serveUrl",
+      "path": "/api/health",
+      "headers": { "X-Factory": "1" },
+      "label": "factory serve"
     }
   }
 }

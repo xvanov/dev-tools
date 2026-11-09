@@ -25,9 +25,9 @@ type Res = import('http').ServerResponse;
 type Ctx = import('./types.ts').Ctx;
 
 /** A health check from architecture.json. */
-type Check = { kind?: string; hostConfig?: string; portConfig?: string; url?: string; config?: string; origin?: boolean; path?: string; label?: string };
+type Check = { kind?: string; hostConfig?: string; portConfig?: string; url?: string; config?: string; origin?: boolean; path?: string; label?: string; headers?: Record<string, string> };
 /** What resolveCheck() makes of one. */
-type Target = { error: string } | { kind: 'self' } | { kind: 'postgres' } | { kind: 'tcp'; host: unknown; port: number } | { kind: 'http'; url: string; remote?: boolean };
+type Target = { error: string } | { kind: 'self' } | { kind: 'postgres' } | { kind: 'tcp'; host: unknown; port: number } | { kind: 'http'; url: string; remote?: boolean; headers?: Record<string, string> };
 type Probe = { state: string; detail: string };
 type NetError = Error & { code?: string };
 
@@ -79,11 +79,13 @@ function resolveCheck(check: Check | null | undefined, cfg: unknown = config): T
     if (check.origin) base = new URL(base as string).origin;
     const url = String(base).replace(/\/+$/, '') + (check.path || '');
     if (!isLoopback(url)) return { error: 'not loopback' };
-    return { kind: 'http', url };
+    // headers: factory serve's /api/health refuses a GET without X-Factory.
+    return check.headers ? { kind: 'http', url, headers: check.headers } : { kind: 'http', url };
   }
   if (check.kind === 'machine') {
     const name = pick(cfg, 'factory.machine');
-    if (!name) return pick(cfg, 'factory.path') ? { kind: 'self' } : { error: 'no factory configured' };
+    // Empty or "local" is this machine's factory (PA_FACTORY_MACHINE=local), not a PA_MACHINES entry.
+    if (!name || String(name).toLowerCase() === 'local') return pick(cfg, 'factory.path') ? { kind: 'self' } : { error: 'no factory configured' };
     const m = ((pick(cfg, 'dispatch.machines') || {}) as Record<string, { url?: string; termhub?: string } | undefined>)[String(name)];
     const base = m && (m.url || m.termhub);
     if (!base) return { error: `machine ${name} not in PA_MACHINES` };
@@ -92,10 +94,12 @@ function resolveCheck(check: Check | null | undefined, cfg: unknown = config): T
   return { error: `unknown check kind ${check.kind}` };
 }
 
-function probeHttp(url: string, timeoutMs: number) {
+function probeHttp(url: string, timeoutMs: number, headers?: Record<string, string>) {
   return new Promise<Probe>((resolve) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.get(url, { timeout: timeoutMs }, (res: import('http').IncomingMessage) => {
+    const opts: { timeout: number; headers?: Record<string, string> } = { timeout: timeoutMs };
+    if (headers) opts.headers = headers;
+    const req = lib.get(url, opts, (res: import('http').IncomingMessage) => {
       res.resume();
       resolve((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300 ? { state: 'ok', detail: `HTTP ${res.statusCode}` } : { state: 'down', detail: `HTTP ${res.statusCode}` });
     });
@@ -134,7 +138,7 @@ async function runCheck(check: Check | null | undefined, { cfg = config, timeout
   else if (t.kind === 'self') r = { state: 'ok', detail: 'answering' };
   else if (t.kind === 'postgres') r = await probePostgres(timeoutMs);
   else if (t.kind === 'tcp') r = await probeTcp(t.host, t.port, timeoutMs);
-  else r = await probeHttp(t.url, t.remote ? timeoutMs * 2 : timeoutMs);
+  else r = await probeHttp(t.url, t.remote ? timeoutMs * 2 : timeoutMs, t.headers);
   return { ...r, ms: Date.now() - started };
 }
 

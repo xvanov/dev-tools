@@ -67,7 +67,7 @@
     var L = data.live || {};
     var shown = [['machine', L.machine], ['chat', L.chatAgent + ' · ' + L.chatModel], ['fast lane', L.fastModel + ' → ' + L.fastFallback],
       ['dispatch', L.dispatchVia], ['factory', L.factoryMachine ? L.factoryMachine + (L.factoryPath ? ':' + L.factoryPath : '') : 'not configured'],
-      ['factory runtime', L.factoryRuntime + ' / ' + L.factoryPipeline], ['termhub', L.termhub], ['postgres', L.database], ['dashboard', L.dashboard]];
+      ['factory runtime', L.factoryRuntime + ' / ' + L.factoryPipeline], ['termhub', L.termhub], ['store', L.database], ['dashboard', L.dashboard]];
     var cap = el('span', 'chip');
     cap.textContent = 'Configured here:';
     live.appendChild(cap);

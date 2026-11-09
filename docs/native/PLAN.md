@@ -1483,9 +1483,13 @@ not in the Map is not done, and a new one gets added there first.
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
   supervisor, no WSL); nothing left `planned`/`landing` that has shipped, nothing describing
-  removed parts. Checked on the live page of both stacks. Known so far: the `postgres`
-  component is retired (D24) but still the end of many edges and workflow hops, which should
-  point at `sqlite-store`.
+  removed parts. Checked on the live page of both stacks.
+  Map updated 2026-11-08 (not ticked: the lead checks the live page on both stacks after the
+  next deploy). The worktree render of `/architecture` went through `dashboard/architecture.ts`
+  and the page script. Postgres stays as the optional backend (`PA_DB` still defaults to
+  postgres; CI's contract job still runs it) and is not the store on either stack. Edges and
+  the teams-ask step point at `sqlite-store`. The store dot pings whichever store `PA_DB`
+  selects; factory-api's dot probes local `factory serve`.
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
   stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
   `research` and `whats-on` run live.
