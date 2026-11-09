@@ -777,7 +777,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
   broker, checked against the run's delivery ceiling. (2031b73, 421e621) Ceilings `none` /
   `push_branch` / `draft_pr` from the delivery level or PA mode; per-owner token via
   `gh_auth`; never runs git in the agent's checkout.
-- [ ] **Exit 5:** termhub's node-pty host retired (the sandbox half dropped: D22).
+- [x] **Exit 5:** termhub's node-pty host retired (the sandbox half dropped: D22). (b2dda4c)
+  Deployed on both stacks at 77be77a, 2026-11-09 00:45-00:50Z: on the work stack a terminal
+  opened before the update outlived the front swap and a sessiond restart onto the new code
+  (sessiond 41140 -> 38740, on the system Node); on the personal stack one outlived the full
+  `termhub.service` restart. Both report `running: ptyd`.
   Code is in the tree, not ticked: the lead deploys and verifies on both stacks first
   (JARVISD.md, *Runbook: jarvisd front, and ptyd*). ptyd is the only PTY host and the
   default when nothing is set. The in-process node-pty backend, the `node-pty` setting
@@ -1603,7 +1607,9 @@ not in the Map is not done, and a new one gets added there first.
     `task_id: null`) whose reason names the e2e's dummy task, so the blocker pass counted an open
     e2e card among the owner's tasks. Leave cards that carry an e2e marker out of the blocker and
     context passes, and drop verdicts that cite one.
-- [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
+- [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
+  checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
+  backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
   supervisor, no WSL); nothing left `planned`/`landing` that has shipped, nothing describing
