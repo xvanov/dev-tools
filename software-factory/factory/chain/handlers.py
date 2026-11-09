@@ -5101,6 +5101,31 @@ def handle_review(
 _MAX_TECH_WRITER_PARSE_RETRIES = 2
 
 
+def _commit_context_updates(story: StoryRecord, repo: Path, paths: list[str]) -> None:
+    """Commit the tech-writer's files onto the story branch.
+
+    ``apply_context_updates`` runs after the dev commit the PR is cut from.
+    A write that stays in the worktree never reaches the PR (the docs step's
+    output went nowhere). No-op when the paths already match HEAD. Raises
+    when git cannot commit, so the caller does not advance past the write.
+    """
+    if not paths:
+        return
+    from factory.chain.branch import _run_git
+
+    _run_git(repo, "add", "--", *paths)
+    if not _run_git(repo, "status", "--porcelain", "--", *paths).stdout.strip():
+        return
+    _run_git(
+        repo,
+        "commit",
+        "-m",
+        f"docs(context): refresh context for story {story.id} ({story.slug})\n\n"
+        "The tech-writer's context update, committed on the story branch "
+        "so the PR includes it.",
+    )
+
+
 def _dry_run_tech_writer(story: StoryRecord, context_dir: str | None = None) -> dict[str, Any]:
     """Deterministic tech_writer result for dry-run mode."""
     return {
@@ -5299,11 +5324,14 @@ def handle_tech_writer(
         repo_path = _writing_worktree(app_config, software_factory_root, story)
         try:
             apply_context_updates(updates, repo_path, app_config.context_dir)
+            # The dev commit is already on the branch. Commit the docs onto
+            # that same branch before the PR is opened, or the write is lost.
+            _commit_context_updates(story, repo_path, [u.path for u in updates])
         except Exception as exc:
             # Bounce back through reviewer_requested_changes: tech_writer
-            # produced an invalid context update; either the writer is
-            # confused (rare) or it tried to write to a forbidden path. The
-            # next dev cycle gets a clean shot.
+            # produced an invalid context update, or the commit of that
+            # update failed. Either way the docs are not on the branch, so
+            # the chain must not pretend they shipped.
             story.state = advance(story, EVENT_REVIEWER_REQUEST_CHANGES).value
             story.error = f"context update failed: {exc}"
             persist_story(story, db)

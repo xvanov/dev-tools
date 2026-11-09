@@ -114,6 +114,98 @@ def test_real_run_writes_to_canonical_path(temp_root: Path, app_config: AppConfi
     assert "SQLite" in written
 
 
+def _git(cwd: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+    )
+    return proc.stdout
+
+
+def test_context_update_is_committed_on_the_story_branch(
+    temp_root: Path, app_config: AppConfig
+) -> None:
+    """The docs write must be a commit on the story branch, not an uncommitted
+    file the PR never sees (PLAN 8.4.52)."""
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    (worktree / "src").mkdir()
+    (worktree / "src" / "version.ts").write_text("export const v = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/version.ts"], cwd=str(worktree), check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "feat: version"], cwd=str(worktree), check=True
+    )
+    code_sha = _git(worktree, "rev-parse", "HEAD").strip()
+
+    fixture = {
+        "context_updates": [
+            {
+                "path": "context/navigation.md",
+                "action": "rewrite",
+                "content": "# Navigation\n\n- src/cli/version.ts\nMAGIC-NAV-852\n",
+            }
+        ],
+        "rationale": "name the new verb",
+    }
+    result = handle_tech_writer(
+        s, app_config, temp_root, dry_run=False, db_path=db, fixture=fixture
+    )
+    assert result.next_state == StoryState.TECH_WRITER_DONE
+    head = _git(worktree, "rev-parse", "HEAD").strip()
+    assert head != code_sha
+    assert _git(worktree, "rev-parse", "HEAD^").strip() == code_sha
+    assert "MAGIC-NAV-852" in _git(worktree, "show", "HEAD:context/navigation.md")
+    names = _git(worktree, "diff", "--name-only", "main...HEAD")
+    assert "context/navigation.md" in names.split()
+    assert "src/version.ts" in names.split()
+    # On the story branch, and not only as an uncommitted write.
+    assert _git(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip() != "main"
+    assert "context/navigation.md" not in _git(worktree, "status", "--porcelain")
+    missing = subprocess.run(
+        ["git", "cat-file", "-e", "main:context/navigation.md"],
+        cwd=str(worktree),
+        capture_output=True,
+    )
+    assert missing.returncode != 0
+
+
+def test_context_commit_failure_does_not_advance(
+    temp_root: Path, app_config: AppConfig
+) -> None:
+    """A docs write that cannot be committed must not advance as if it shipped."""
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    common = _git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    hook = Path(common) / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    before = _git(worktree, "rev-parse", "HEAD").strip()
+
+    fixture = {
+        "context_updates": [
+            {
+                "path": "context/navigation.md",
+                "action": "rewrite",
+                "content": "should not be committed\n",
+            }
+        ],
+        "rationale": "hook will refuse",
+    }
+    result = handle_tech_writer(
+        s, app_config, temp_root, dry_run=False, db_path=db, fixture=fixture
+    )
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert result.error and "context update failed" in result.error
+    assert _git(worktree, "rev-parse", "HEAD").strip() == before
+    listed = subprocess.run(
+        ["git", "cat-file", "-e", "HEAD:context/navigation.md"],
+        cwd=str(worktree),
+        capture_output=True,
+    )
+    assert listed.returncode != 0
+
+
 def test_forbidden_path_raises_error_and_does_not_write(
     temp_root: Path, app_config: AppConfig
 ) -> None:

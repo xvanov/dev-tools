@@ -119,8 +119,11 @@ of `is_terminal()` (see "Dependency-deferral cap" below).
   `BLOCKED_REVIEW_NONCONVERGENT` edge.
 * **`TECH_WRITER_IN_PROGRESS` → `REVIEWER_REQUESTED_CHANGES`** — if
   `apply_context_updates` fails (e.g. tech_writer wrote outside
-  `CANONICAL_CONTEXT_PATHS`), the story bounces back through the dev-rework
-  path rather than sticking mid-write.
+  `CANONICAL_CONTEXT_PATHS`), or the commit of that update fails, the story
+  bounces back through the dev-rework path rather than sticking mid-write.
+  A successful update is committed on the story branch before the state
+  advances (`_commit_context_updates`). The dev commit is already there;
+  an uncommitted docs write never reaches the PR.
 * **`DOCS_ENFORCER_CHECK` fail** — `EVENT_DOCS_ENFORCER_FAIL` also routes to
   `REVIEWER_REQUESTED_CHANGES`, reusing the same rework edge for both chains.
 * **CI-failure recovery is NOT a `StoryState` transition** — `auto_merge.py`'s
