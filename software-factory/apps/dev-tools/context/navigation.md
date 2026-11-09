@@ -44,8 +44,11 @@
 - `personal-assistant/PLAN.md` — phased build plan
 - `personal-assistant/package.json` — dependencies
 - `personal-assistant/src/` — main source (ingest, distill, dispatch, draft, ...)
+- `personal-assistant/src/cli/index.ts` — verb dispatch and HELP
+- `personal-assistant/src/cli/version.ts` — `pa version` implementation: dashboard `GET /api/version`, then git fallback
 - `personal-assistant/bin/pa.js` — CLI entry point
 - `personal-assistant/test/` — test files
+- `personal-assistant/test/version.test.js` — unit tests for `pa version` pure formatting logic
 - `personal-assistant/sql/` — Postgres migrations
 - `personal-assistant/sql-sqlite/` — SQLite schema twin
 - `personal-assistant/windows/` — Windows installers
