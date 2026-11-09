@@ -1589,7 +1589,7 @@ not in the Map is not done, and a new one gets added there first.
     write and ledger transition, and PA doesn't log the `ms` that serve's `/api/cli` reply
     carries. Log that `ms` with the lap, then profile whichever side holds the 8.7 s
     ([acceptance/research.md](acceptance/research.md)).
-    Partly (pending-8445): the submit lap now logs `ms.serve`, copied off the job
+    Partly (5a5a161): the submit lap now logs `ms.serve`, copied off the job
     before the run-row write, so the lap still includes that write and the ledger
     move. A research submit while `factory.db` is held exclusive answers in under
     1 s (`test_research_submit_answers_while_factory_db_is_locked`): `_submit_task`
