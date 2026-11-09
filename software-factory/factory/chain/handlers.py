@@ -130,6 +130,13 @@ def _writing_worktree(
         if pickup
         else stack_parent(story, state_dir(Path(software_factory_root)) / "factory.db")
     )
+    # Will this call cut a NEW branch from the base it fetches? Only then is the
+    # refresh below redundant (8.4.51). Decided from facts before the call, not
+    # from the directory's age: st_ctime moves whenever a file is written into
+    # the worktree on POSIX, so an age check skipped the refresh on reuse too.
+    just_cut = (
+        not pickup and parent is None and _will_cut_new_branch(source_repo, software_factory_root, story)
+    )
     wt = ensure_worktree_for_story(
         source_repo,
         software_factory_root=software_factory_root,
@@ -161,17 +168,9 @@ def _writing_worktree(
     refresh = [str(story.pickup_branch), base] if pickup else [base]
     # ensure_worktree_for_story just fetched the base to cut this directory.
     # Fetching and merging it again is the minute before solo_checks on a dev
-    # step that has not written a diff yet (8.4.51). A pickup, or a worktree
-    # left from an earlier attempt, still refreshes.
-    import time
-
-    fresh = False
-    if not pickup:
-        try:
-            fresh = (time.time() - wt.stat().st_ctime) < 60
-        except OSError:
-            fresh = False
-    if fresh:
+    # step that has not written a diff yet (8.4.51). A pickup, a stacked
+    # branch, or a worktree or branch left from an earlier attempt still refreshes.
+    if just_cut:
         return wt
     try:
         for ref in refresh:
@@ -209,6 +208,30 @@ def _writing_worktree(
         # the merge call exited.
         _abort_inflight_merge(wt)
     return wt
+
+
+def _will_cut_new_branch(source_repo: Path, software_factory_root: Path, story: StoryRecord) -> bool:
+    """True when no checkout exists for ``story`` and its feature branch does
+    not exist yet, so ``ensure_worktree_for_story`` cuts it from a base it has
+    just fetched. Any doubt answers False: an extra refresh is only slower."""
+    import subprocess
+
+    from factory.chain.worktree import _worktree_slots, feature_branch_name, worktree_path
+
+    try:
+        wt = worktree_path(software_factory_root, story.app, story.github_issue_number, story.slug)
+        if any((p / ".git").exists() for p in _worktree_slots(wt)):
+            return False
+        branch = feature_branch_name(story.github_issue_number, story.slug)
+        probe = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=str(source_repo),
+            capture_output=True,
+            timeout=30,
+        )
+        return probe.returncode == 1
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
 
 
 def _abort_inflight_merge(worktree: Path) -> None:

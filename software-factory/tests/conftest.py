@@ -258,6 +258,21 @@ def _reset_provider_bootstrap_memo() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _drop_orphaned_litellm_submodules() -> Iterator[None]:
+    """A test that ``monkeypatch.setitem(sys.modules, "litellm", fake)`` while
+    the real package was not loaded yet DELETES ``litellm`` on teardown; any
+    real ``litellm.*`` submodule imported meanwhile stays behind without its
+    parent. The next ``from litellm.types.utils import ...`` on that xdist
+    worker then dies in importlib's ``_get_parent_path`` with
+    ``KeyError: 'litellm'`` (CI run 42551139856). Drop the orphans so the next
+    import starts clean."""
+    yield
+    if "litellm" not in sys.modules:
+        for name in [n for n in sys.modules if n.startswith("litellm.")]:
+            sys.modules.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
 def _restore_module_factory_roots() -> Iterator[None]:
     """Several CLI/webhook test helpers assign ``factory.cli._FACTORY_ROOT`` (or
     the webhook's) directly. Restore both after every test so a pinned root

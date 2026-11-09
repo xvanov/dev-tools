@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
@@ -424,53 +423,29 @@ def test_empty_static_gates_do_not_check_out_a_baseline(
     assert calls == []
 
 
-def test_a_just_cut_worktree_is_not_fetched_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _writing_worktree_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, branch_exists: bool, checkout_exists: bool
+) -> list[Any]:
+    """Run _writing_worktree with git stubbed; return the argv of every git call."""
     from factory.chain.handlers import _writing_worktree
     from factory.chain.state_machine import StoryRecord
+    from factory.chain.worktree import worktree_path
 
     wt = tmp_path / "wt"
     wt.mkdir()
+    if checkout_exists:
+        existing = worktree_path(tmp_path, "dev-tools", 1, "s")
+        existing.mkdir(parents=True)
+        (existing / ".git").write_text("gitdir: x\n", encoding="utf-8")
     calls: list[Any] = []
 
     def _run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, "", "")
+        argv = args[0] if args else kwargs.get("args")
+        calls.append(argv)
+        rc = 0 if branch_exists or "show-ref" not in argv else 1
+        return subprocess.CompletedProcess(argv, rc, "", "")
 
     monkeypatch.setattr(subprocess, "run", _run)
-    monkeypatch.setattr(
-        "factory.chain.handlers.ensure_worktree_for_story", lambda *a, **k: wt
-    )
-    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda *a, **k: tmp_path)
-    monkeypatch.setattr("factory.chain.pickup.is_pickup", lambda story: False)
-    monkeypatch.setattr("factory.chain.pickup.story_into", lambda story, cfg: "main")
-    monkeypatch.setattr("factory.chain.delivery_gate.stack_parent", lambda *a, **k: None)
-    story = StoryRecord(
-        direction_id="1", app="dev-tools", title="t", slug="s", scope="backend",
-        github_issue_number=1,
-    )
-    cfg = AppConfig(name="dev-tools", repo="o/r")
-    assert _writing_worktree(cfg, tmp_path, story) == wt
-    assert calls == []
-
-
-def test_an_older_worktree_still_refreshes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from factory.chain.handlers import _writing_worktree
-    from factory.chain.state_machine import StoryRecord
-
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    calls: list[Any] = []
-
-    def _run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(args[0] if args else kwargs.get("args"))
-        return subprocess.CompletedProcess(args, 0, "", "")
-
-    monkeypatch.setattr(subprocess, "run", _run)
-    monkeypatch.setattr(time, "time", lambda: wt.stat().st_ctime + 120)
     monkeypatch.setattr(
         "factory.chain.handlers.ensure_worktree_for_story", lambda *a, **k: wt
     )
@@ -483,4 +458,27 @@ def test_an_older_worktree_still_refreshes(
         github_issue_number=1,
     )
     assert _writing_worktree(AppConfig(name="dev-tools", repo="o/r"), tmp_path, story) == wt
-    assert any("fetch" in str(c) for c in calls)
+    return calls
+
+
+def test_a_just_cut_worktree_is_not_fetched_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _writing_worktree_calls(tmp_path, monkeypatch, branch_exists=False, checkout_exists=False)
+    assert not any("fetch" in c or "merge" in c for c in calls)
+
+
+def test_an_existing_worktree_still_refreshes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _writing_worktree_calls(tmp_path, monkeypatch, branch_exists=True, checkout_exists=True)
+    assert any("fetch" in c for c in calls)
+
+
+def test_a_worktree_on_a_branch_left_from_an_earlier_attempt_refreshes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The checkout is gone but the branch is not: it is re-checked-out with its
+    # old base, so it must be refreshed even though the directory is brand new.
+    calls = _writing_worktree_calls(tmp_path, monkeypatch, branch_exists=True, checkout_exists=False)
+    assert any("fetch" in c for c in calls)

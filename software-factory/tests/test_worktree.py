@@ -454,8 +454,15 @@ def test_ensure_steps_aside_when_a_process_holds_the_leftover_directory(tmp_path
     holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], cwd=str(wt))
     try:
         again = _ensure_again(src, factory_root)
-        assert again != wt
-        assert again.name.startswith(wt.name + "-alt-")
+        if sys.platform == "win32":
+            # Windows refuses to delete or rename a directory a live process
+            # has as its cwd: the checkout goes to a sibling.
+            assert again != wt
+            assert again.name.startswith(wt.name + "-alt-")
+        else:
+            # POSIX does not: a cwd hold never blocks the rmtree, so the
+            # canonical path is cleared and reused.
+            assert again == wt
         assert _current_branch(again) == "factory/story-35-e2e"
         assert (again / "work.txt").read_text(encoding="utf-8") == "attempt 1\n"
         third = _ensure_again(src, factory_root)

@@ -180,6 +180,7 @@ def test_context_commit_failure_does_not_advance(
     hook = Path(common) / "hooks" / "pre-commit"
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)  # POSIX git silently skips a hook without the exec bit
     before = _git(worktree, "rev-parse", "HEAD").strip()
 
     fixture = {
