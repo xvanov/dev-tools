@@ -21,8 +21,11 @@ for (const url of ['postgres://pa:pa@127.0.0.1:5433/pa_test_scratch', 'postgres:
 
 // End to end in a child: the real module, the live default DSN, a real query attempt.
 const src = path.join(__dirname, '..', 'src', 'db');
+// PA_DB=postgres: this child is `node -e`, not a test file, so it still applies the
+// checkout's .env. A stack's PA_DB=sqlite would open that database instead of
+// attempting the URL under test.
 const probe = (env, script) => spawnSync(process.execPath, ['-e', script], {
-  env: { ...process.env, PA_TESTING: '', PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:5433/pa', ...env },
+  env: { ...process.env, PA_TESTING: '', PA_DB: 'postgres', PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:5433/pa', ...env },
   encoding: 'utf8',
   windowsHide: true,
 });

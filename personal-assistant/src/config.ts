@@ -61,7 +61,17 @@ function parseEnvFile(file: unknown) {
 
 // Loaded once at require time. Later files do not override earlier ones, and
 // neither overrides process.env.
-const fileEnv: Record<string, string> = {
+//
+// A test process does not apply them. The gitignored .env on a machine that
+// runs the stack is that stack's settings (PA_DB, PA_FAST_LANE, the factory's
+// uv, …). CI has no such file, so a test there sees the defaults; the same
+// test here was asserting against the operator's stack. A test sets
+// process.env itself when it needs a value. secret() still reads the files:
+// that is the credential path, not a setting.
+function isTestProcess() {
+  return Boolean(process.env.PA_TESTING) || /\.test\.js$/i.test(process.argv[1] || '');
+}
+const fileEnv: Record<string, string> = isTestProcess() ? {} : {
   ...parseEnvFile(path.join(REPO_ROOT, '.env')),
   ...parseEnvFile(path.join(TOOL_DIR, '.env')),
 };

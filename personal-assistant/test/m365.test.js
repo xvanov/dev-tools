@@ -14,6 +14,8 @@ const { searchResults, isAutomated, PREFIX } = require('../src/ingest/m365.ts');
 const mail = require('../src/ingest/graphMail.ts');
 const chat = require('../src/ingest/graphChat.ts');
 const calendar = require('../src/ingest/graphCalendar.ts');
+// The channel cases below are the mentions policy. A stack's .env may say off.
+require('../src/config.ts').config.m365.teamsChannels = 'mentions';
 
 const line = (o) => JSON.stringify(o);
 const use = (id, name, input) => line({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });

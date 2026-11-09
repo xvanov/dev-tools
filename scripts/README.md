@@ -59,10 +59,14 @@ Per-tool settings live in `<tool>/test/runner.config.js` (every `skip` and `seri
 | `skip: [{file, reason}]` | not run |
 | `skip: [{file, reason, platform: 'linux'}]` | runs **only** on that `process.platform`; skipped everywhere else |
 | `serial: [{file, reason}]` | run alone after the pool (for a test that cannot share the machine) |
-| `env: {NAME: 'v'}` | added to every test's environment (PA points `PA_DATABASE_URL` at a closed port, so no test can touch a real database) |
+| `env: {NAME: 'v'}` | added to every test's environment, after the stack scrub below (PA points `PA_DATABASE_URL` at a closed port, so no test can touch a real database) |
 | `shards: {'x.test.js': 4}` | run one slow file as 4 parallel processes; its independent top-level blocks are wrapped in `if (owns()) { ... }` from `shard.js` (round-robin; unsharded runs own every block) |
 | `touches: {'x.test.js': ['src/']}` | `--changed`: directories a test walks instead of naming files |
 | `narrow: {'x.test.js': ['src/y/']}` | `--changed`: a slow test that imports the whole app is selected only by its own file and these paths (CI still runs it) |
+
+The runner deletes stack environment from each test process before applying `env`. A shell on a machine that runs the stack inherits `TERMHUB_*` and may inherit `PA_*`, `FACTORY_*` and provider tokens; the assertions are the defaults CI sees, and a test that needs a value sets it itself. Removed: `PA_*`, `TERMHUB_*`, `FACTORY_*`, `AZURE_*`, `OPENAI_*`, `ANTHROPIC_*`, `OPENROUTER_*`, `DEEPSEEK_*`, and `GH_TOKEN` / `GITHUB_TOKEN` / `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` / `GH_HOST` / `GITHUB_PAT` / `GH_PAT`. Kept, because a person or CI sets them on purpose: `PA_TEST_PG_URL`, `PA_CONTRACT_BACKENDS`, `PA_CONTRACT_STRICT`, `PA_JARVISD_EXE`, `PA_COMPAT_BASE`.
+
+A personal-assistant test process (`PA_TESTING`, or started as `node …test.js`) also does not apply `personal-assistant/.env` or the repo-root `.env` to settings. Those files are the running stack's configuration. `secret()` still reads them. The supervisor's setting lookup (`envSetting`) stops at the process environment in a test for the same reason.
 
 ### Writing tests that can run in parallel
 

@@ -33,8 +33,12 @@ async function main() {
     console.log('SKIP supervisorBun: no Bun (npm ci in jarvisd/)');
     return;
   }
+  // A deploy installs a pinned Bun under jarvisd/.bun and that copy wins over
+  // node_modules. Either path is the Bun runtimeSpec('bun') would start.
   const spec = runtimeSpec('bun');
-  assert.deepStrictEqual([spec.runtime, path.basename(spec.worker), spec.execPath], ['bun', 'main.ts', BUN]);
+  assert.strictEqual(spec.runtime, 'bun');
+  assert.strictEqual(path.basename(spec.worker), 'main.ts');
+  assert.ok(fs.existsSync(spec.execPath), spec.execPath);
   assert.throws(() => runtimeSpec('bun', { bun: path.join(os.tmpdir(), 'no-such-bun') }), /no Bun at/);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-supervisor-bun-'));

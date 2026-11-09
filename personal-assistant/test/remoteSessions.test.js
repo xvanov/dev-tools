@@ -175,6 +175,8 @@ const transcript = [
   const realClient = termhubModule.client;
   const { config } = require('../src/config.ts');
   const realMachines = config.termhub.machines;
+  // run() records nothing when sessions are off. A personal stack's .env says so.
+  config.sessions.enabled = true;
   config.termhub.machines = { 'old-box': { name: 'old-box', url: 'http://old-box:7000', reposRoot: 'C:\\r' } };
   termhubModule.client = () => ({
     claudeTranscripts: async () => {

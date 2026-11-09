@@ -705,7 +705,9 @@ function splitAll(pieces) {
   {
     const { config } = require('../src/config.ts');
     const { handle } = require('../src/dashboard/server.ts');
-    // The text format; the local JSON path is covered above.
+    // The text format; the local JSON path is covered above. A stack turns the
+    // lane off in .env; this request is the enabled one.
+    config.fastLane.enabled = true;
     config.fastLane.model = 'azure/pa';
     const b = base({ stream: script(['{"route":"answer","reason":"x"}\nHi', ' there.']) });
     F.setDeps(b.deps);

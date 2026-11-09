@@ -280,10 +280,13 @@
   }
 
   // PA_DISPATCH_* without loading config.js: real env, then the tool's .env,
-  // then the repo root's (config.js's precedence).
+  // then the repo root's (config.js's precedence). A test process stops after
+  // the environment: the checkout's .env is the running stack's settings, and
+  // config.js applies the same rule.
   function envSetting(name: string, fallback: string | number): string {
     const v = process.env[name];
     if (v) return v;
+    if (process.env.PA_TESTING || /\.test\.js$/i.test(process.argv[1] || '')) return String(fallback);
     const toolDir = path.join(__dirname, '..', '..');
     for (const file of [path.join(toolDir, '.env'), path.join(toolDir, '..', '.env')]) {
       try {

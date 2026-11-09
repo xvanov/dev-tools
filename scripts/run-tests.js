@@ -143,7 +143,13 @@ async function main() {
   // committed to. Tests make their own repos with plain `git init` and `git commit`; inheriting
   // those variables would aim every one of them at the real repo (it happened: a test committed
   // fixture files onto the developer's branch). Tests get a git environment of their own.
-  const env = { ...process.env, ...cfg.env };
+  //
+  // A shell on a machine that runs the stack also inherits TERMHUB_* (and may inherit PA_* /
+  // FACTORY_* and provider tokens). The assertions are about the defaults a clean CI environment
+  // sees; a test that needs a value sets it in its own process. Opt-ins a person or CI passes on
+  // purpose are kept. cfg.env is applied after the scrub, so the runner's own settings stay.
+  const env = scrubStackEnv({ ...process.env });
+  Object.assign(env, cfg.env);
   for (const k of Object.keys(env)) if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|PREFIX|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|QUARANTINE_PATH)$/.test(k)) delete env[k];
   const timeoutMs = opts.timeout * 1000;
   const t0 = Date.now();
@@ -178,4 +184,19 @@ async function main() {
   process.exit(failed.length ? 1 : 0);
 }
 
-main().catch((e) => { console.error(e); process.exit(2); });
+// Names a human or CI sets so a test opts into something the clean default skips.
+const STACK_KEEP = new Set(['PA_TEST_PG_URL', 'PA_CONTRACT_BACKENDS', 'PA_CONTRACT_STRICT', 'PA_JARVISD_EXE', 'PA_COMPAT_BASE']);
+const STACK_EXACT = /^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_HOST|GITHUB_PAT|GH_PAT)$/;
+const STACK_PREFIX = /^(PA_|TERMHUB_|FACTORY_|AZURE_|OPENAI_|ANTHROPIC_|OPENROUTER_|DEEPSEEK_)/;
+
+function scrubStackEnv(env) {
+  for (const k of Object.keys(env)) {
+    if (STACK_KEEP.has(k)) continue;
+    if (STACK_PREFIX.test(k) || STACK_EXACT.test(k)) delete env[k];
+  }
+  return env;
+}
+
+module.exports = { scrubStackEnv };
+
+if (require.main === module) main().catch((e) => { console.error(e); process.exit(2); });

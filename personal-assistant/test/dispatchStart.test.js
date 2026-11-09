@@ -18,7 +18,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 // Sharded by scripts/run-tests.js (test/runner.config.js): each top-level block below runs in one shard.
 const { owns } = require('../../scripts/shard');
 // git runs `!helper` credential helpers and this test runs `sh -c`: on Windows, borrow Git's sh.
@@ -279,8 +279,11 @@ const sharedPushurls = (repo) => {
       }
       const api = (() => { try { execFileSync('gh', ['api', 'user'], { env: NOPUSH, stdio: 'ignore', timeout: 30000 }); return 0; } catch (e) { return e.status || 1; } })();
       assert.notStrictEqual(api, 0, 'gh api fails inside a no-push session');
-      const status = (() => { try { execFileSync('gh', ['auth', 'status'], { env: sessionEnv(base), stdio: 'ignore' }); return 0; } catch (e) { return e.status; } })();
-      assert.notStrictEqual(status, 0, 'gh auth status fails inside a no-push session');
+      // gh 2.45 exits 0 for an invalid GH_TOKEN while printing that the token is
+      // invalid. A keyring login does not say that, and must still fail here.
+      const status = spawnSync('gh', ['auth', 'status'], { env: sessionEnv(base), encoding: 'utf8', windowsHide: true });
+      const statusOut = `${status.stdout || ''}${status.stderr || ''}`;
+      assert.ok(status.status !== 0 || /token in GH_TOKEN is invalid|Failed to log in/i.test(statusOut), 'gh auth status is not the operator login');
     } else {
       console.log('dispatchStart: gh not installed — skipped the live gh check');
     }

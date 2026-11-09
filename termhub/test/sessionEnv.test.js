@@ -97,13 +97,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log('sessionEnv.test.js ok');
     return;
   }
+  // The PTY inherits the spare ptyd's environment, snapshotted when it is
+  // spawned, not this process's environment at session-create time.
+  process.env.GH_TOKEN = 'inherited-secret';
+  process.env.PA_TEST_KEEP = 'kept';
   const ptyd = await startSparePtyd(tmp);
   process.env.TERMHUB_PTYD = '1';
   process.env.TERMHUB_PTYD_PORT = String(ptyd.port);
   process.env.TERMHUB_PTYD_BIN = ptyd.bin;
   delete process.env.TERMHUB_PTYD_RESOLVED;
-  process.env.GH_TOKEN = 'inherited-secret';
-  process.env.PA_TEST_KEEP = 'kept';
   const { createSessiond } = require('../sessiond.ts');
   const { createFront } = require('../front.ts');
   const sessiond = createSessiond({ entry: 'test', port: 0 });
