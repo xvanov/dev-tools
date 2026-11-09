@@ -1124,7 +1124,7 @@ not in the Map is not done, and a new one gets added there first.
     within about 1 s (returned 23:57:11.3, `tick dev-tools started (wake)` 23:57:12), but the
     tick took ≈6.7 s to start the pm step (`started_at` 23:57:18.666). pm to sm waited 26 s for
     the next wake tick; sm to dev ran in the same tick.
-    Done (037a281): a submit wakes triage and the research dispatch, not a tick. The tick
+    Done (6399a87): a submit wakes triage and the research dispatch, not a tick. The tick
     that used to start with it ran the GitHub maintenance while holding the app, so the next
     step waited for that process to exit. Triage wakes `triaged` when stories exist (and `tick`
     if it was busy or threw). That tick is `FACTORY_TICK_REASON=wake`: it skips scheduled
