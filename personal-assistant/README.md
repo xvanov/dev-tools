@@ -511,10 +511,14 @@ and the factory's `claude_session` runs) draws from a credit pool apart from the
 `PA_CLAUDE_POOL_RESET_DAY` (default 1). Usage is the `total_cost_usd` each run's stream-json result reports: the PA's own
 calls are `llm_spend` rows with backend `cli`, and the factory posts its runs to `POST /api/telemetry` (backend
 `claude_session`; set `PA_TELEMETRY_URL=http://127.0.0.1:7300` in the factory's environment, unset = off). `pa spend` and the
-Meter page (termhub `/meter`, from `GET /api/meter`) show what is left. **API fallback** is
-`PA_CLAUDE_POOL_FALLBACK_API=1`, off by default: once the pool is spent, `claude_session` jobs are dispatched on the `api`
-runtime (metered, `PA_FACTORY_MODELS` routing) instead; off, they keep running and the page says the pool is spent. If the
-ledger cannot be read the requested runtime stands. The same page shows latency per hop, p50 and p95: OpenTelemetry spans
+Meter page (termhub `/meter`, from `GET /api/meter`) show what is left. **API fallback** is the one runtime-failover
+policy (`src/dispatch/failover.ts`, JOBS-API v1.9): `PA_RUNTIME_FAILOVER=1` (older name `PA_CLAUDE_POOL_FALLBACK_API=1`),
+off by default. On, once the pool is spent, `claude_session` jobs are dispatched on the `api` runtime (metered,
+`PA_FACTORY_MODELS` routing) when the wait for the pool's refill is longer than `PA_RUNTIME_FAILOVER_MIN_WAIT_MIN` (default
+30), and you are notified; every job is also sent with `--failover on`, so the factory may move a job that hits a Claude
+limit or an API 429 the same way (otherwise such a job pauses and resumes at the reset: Build and the card say
+`paused: Claude limit, resumes 15:00`). Off, jobs keep running and the page says the pool is spent. If the ledger cannot be
+read the requested runtime stands. The same page shows latency per hop, p50 and p95: OpenTelemetry spans
 (`@opentelemetry/api`) for a voice turn, an MCP tool call, a factory CLI call and a deploy are written by a local exporter
 to `trace_span` (kept `PA_TELEMETRY_RETENTION_DAYS`, default 30; `PA_TELEMETRY=0` turns the instruments off), with no
 collector or cloud service; the factory's own hops arrive through the same endpoint. Spans carry ids, names and counts,
@@ -899,7 +903,10 @@ factory job (decision D28), so it shows on Build and is metered; there is no rou
 `PA_FACTORY_PATH` nothing dispatches. `pa do 959` sends the ask as a job. What a start does not
 choose comes from the card's dispatch settings (`GET`/`POST /api/commitments/<id>/dispatch-settings`,
 `src/dispatch/settings.ts`): runtime `PA_FACTORY_RUNTIME` (claude_session), mode `PA_DISPATCH_MODE`
-(full), the job kind decided from the ask, the end state from the factory app's `delivery.default`.
+(full), the job kind decided from the ask, the end state from the factory app's `delivery.default`,
+and (JOBS-API v1.9) the review (`off`/`on`/`auto`; `auto` reviews only auto-merge and push-to-main jobs) and the
+job caps (budget, wall clock, agent rounds; default $30 / 4 h / 20) from the factory app's `review` and `caps`. A job
+that reaches a cap stops for you with its work saved; Continue resumes it with the caps granted again.
 Plan mode is a read-only `plan` job: Claude Code runs in its plan permission mode and the factory
 keeps the plan as the job's report (JOBS-API v1.8). The PA never imports factory code: it
 runs `uv run factory job …` (`PA_FACTORY_UV` for the full path of `uv`, since termhub's exec has no
@@ -1759,8 +1766,10 @@ that would merge or push to main is confirmed on the page, as on a card). In the
 model spend (`llm_spend`), the factory's metered spend and the subscription-equivalent of its Claude
 Code runs. On the board, a card that can be started shows one quiet line of what **Do** will send
 (`Claude · full · draft PR · code (auto)`) and a **☰** beside Do: its menu holds the card's dispatch
-settings — runtime, mode, end state, job kind (default: decided from the ask, with the reason) and
-repo/app — each marked default, inferred or set on this card, with a reset. A change is saved on
+settings — runtime, mode, end state, job kind (default: decided from the ask, with the reason),
+repo/app, review and the job caps (budget, wall clock, agent rounds) — each marked default, inferred or set on
+this card, with a reset. Build's Repos editor sets an app's review default (and the diff size that turns
+`auto` on) and its caps. A change is saved on
 the card at once (`POST /api/commitments/<id>/dispatch-settings`); Do sends nothing of its own.
 
 The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);

@@ -19,8 +19,14 @@ const base = { slug: 'acme/widget', apps, configuredRuntime: 'claude_session', c
 // The defaults: claude_session, mode full, the kind from the ask, the end state from the factory app.
 {
   const r = S.resolve({ ...base, text: 'Fix the flaky export test' });
-  assert.deepStrictEqual(r.settings, { runtime: 'claude_session', mode: 'full', delivery: 'pr', jobKind: 'code', app: 'widget', repo: 'acme/widget' });
-  assert.deepStrictEqual(r.source, { mode: 'default', jobKind: 'inferred', runtime: 'default', repo: 'commitment', app: 'repo', delivery: 'app_default' });
+  assert.deepStrictEqual(r.settings, {
+    runtime: 'claude_session', mode: 'full', delivery: 'pr', jobKind: 'code', app: 'widget', repo: 'acme/widget',
+    review: 'auto', budgetUsd: '30', wallClockH: '4', maxRounds: '20',
+  });
+  assert.deepStrictEqual(r.source, {
+    mode: 'default', jobKind: 'inferred', runtime: 'default', repo: 'commitment', app: 'repo', delivery: 'app_default',
+    review: 'default', budgetUsd: 'default', wallClockH: 'default', maxRounds: 'default',
+  });
   assert.match(r.why.delivery, /factory app widget's delivery.default/);
   assert.strictEqual(r.phrase, null);
 }
@@ -92,3 +98,57 @@ const base = { slug: 'acme/widget', apps, configuredRuntime: 'claude_session', c
 }
 
 console.log('dispatchSettings ok');
+
+// JOBS-API v1.9: review and the job caps. The factory app's defaults, else auto / $30 / 4 h / 20;
+// the card's and this start's choices win; only those are sent (policyArgs).
+{
+  const withPolicy = [{ app: 'widget', repo: 'acme/widget', delivery: { default: 'auto_merge' }, review: { default: 'on' }, caps: { budget_usd: 12, wall_clock_h: 2, max_rounds: 8 } }];
+  const r = S.resolve({ ...base, apps: withPolicy, text: 'Fix the export' });
+  assert.deepStrictEqual([r.settings.review, r.source.review], ['on', 'app_default']);
+  assert.deepStrictEqual([r.settings.budgetUsd, r.settings.wallClockH, r.settings.maxRounds], ['12', '2', '8']);
+  assert.strictEqual(r.source.budgetUsd, 'app_default');
+  assert.deepStrictEqual(S.policyArgs(r), { review: null, caps: null }, 'app defaults are the factory\'s to apply');
+
+  const card = S.resolve({ ...base, apps: withPolicy, text: 'x', stored: { review: 'off', budgetUsd: '50' }, given: { maxRounds: '0' } });
+  assert.deepStrictEqual([card.settings.review, card.source.review, card.settings.budgetUsd, card.source.budgetUsd], ['off', 'card', '50', 'card']);
+  assert.deepStrictEqual(S.policyArgs(card), { review: 'off', caps: { budget_usd: 50, max_rounds: 0 } });
+
+  // A report job has no review step: never sent, shown as set by the kind.
+  const rep = S.resolve({ ...base, text: 'x', stored: { review: 'on', jobKind: 'research' } });
+  assert.deepStrictEqual([rep.settings.review, rep.source.review], [null, 'kind']);
+  assert.strictEqual(S.policyArgs(rep).review, null);
+
+  // Checked like every field; round-trips through checkPatch.
+  assert.deepStrictEqual(S.checkPatch({ review: 'AUTO', budgetUsd: '$25', wallClockH: '1.5', maxRounds: '10' }),
+    { review: 'auto', budgetUsd: '25', wallClockH: '1.5', maxRounds: '10' });
+  assert.deepStrictEqual(S.checkPatch({ review: null, budgetUsd: '' }), { review: null, budgetUsd: null });
+  assert.throws(() => S.checkPatch({ review: 'maybe' }), /unknown review/);
+  assert.throws(() => S.checkPatch({ budgetUsd: '-1' }), /0 or more/);
+  assert.throws(() => S.checkPatch({ maxRounds: '2.5' }), /whole number/);
+  const o = S.options([]);
+  assert.deepStrictEqual(o.reviews, ['off', 'on', 'auto']);
+  assert.ok(o.budgetsUsd.includes(30) && o.wallClocksH.includes(4) && o.maxRounds.includes(20));
+}
+
+// The one failover policy (src/dispatch/failover.ts): off by default, threshold, always says why.
+{
+  const FO = require('../src/dispatch/failover.ts');
+  const now = new Date('2026-11-09T10:00:00Z');
+  const in5h = new Date('2026-11-09T15:00:00Z');
+  assert.deepStrictEqual(FO.decide({ requested: 'claude_session', limitedUntil: null, now, enabled: true }),
+    { runtime: 'claude_session', fellBack: false, reason: null, waitMin: null });
+  const off = FO.decide({ requested: 'claude_session', limitedUntil: in5h, now, enabled: false });
+  assert.deepStrictEqual([off.runtime, off.fellBack], ['claude_session', false]);
+  assert.match(off.reason, /failover is off/);
+  const on = FO.decide({ requested: 'claude_session', limitedUntil: in5h, now, enabled: true, minWaitMin: 30, why: 'Claude limit' });
+  assert.deepStrictEqual([on.runtime, on.fellBack, on.waitMin], ['api', true, 300]);
+  assert.match(on.reason, /failed over from claude_session to api/);
+  const soon = FO.decide({ requested: 'claude_session', limitedUntil: new Date('2026-11-09T10:20:00Z'), now, enabled: true, minWaitMin: 30 });
+  assert.deepStrictEqual([soon.runtime, soon.fellBack], ['claude_session', false]);
+  assert.match(soon.reason, /under the failover threshold/);
+  assert.strictEqual(FO.decide({ requested: 'api', limitedUntil: 'unknown', now, enabled: true }).runtime, 'claude_session');
+  assert.strictEqual(FO.decide({ requested: 'api', limitedUntil: new Date('2026-11-09T09:00:00Z'), now, enabled: true }).fellBack, false);
+}
+
+console.log('dispatch settings v1.9: ok');
+

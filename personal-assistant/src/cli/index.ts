@@ -876,7 +876,7 @@ const commands: Json = {
     if (pool?.tracked) {
       out(
         `claude credit pool · ${budget.usd(pool.usedUsd)} of ${budget.usd(pool.monthlyUsd)} used since ${pool.since.slice(0, 10)}, ${budget.usd(pool.remainingUsd)} left` +
-          `${pool.exhausted ? ` · SPENT${pool.fallbackApi ? ': claude_session jobs run on the api runtime' : ' (PA_CLAUDE_POOL_FALLBACK_API is off)'}` : ''}`
+          `${pool.exhausted ? ` · SPENT${pool.fallbackApi ? ': claude_session jobs fail over to the api runtime (PA_RUNTIME_FAILOVER)' : ' (PA_RUNTIME_FAILOVER is off)'}` : ''}`
       );
     } else if (pool) {
       out('claude credit pool · not tracked (set PA_CLAUDE_POOL_USD)');

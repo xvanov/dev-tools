@@ -4,7 +4,8 @@
  * Lists the repos registered with the factory and their gate readiness from the
  * PA's cached `factory app list` (instant), then refreshes it from the factory
  * behind the render. "Add repo" registers one (`factory app add`) and opens its
- * editor; the editor sets delivery, pipeline and each gate — a command, `none`
+ * editor; the editor sets delivery, pipeline, the solo review default and the
+ * per-job caps (JOBS-API v1.9), and each gate — a command, `none`
  * (the repo has no such check: skipped) or not configured — plus the programs a
  * gate needs on PATH (`factory app set`). Suggested gates (detection, including
  * the repo's CI workflows) are prefilled for gates that are not configured, and
@@ -18,6 +19,12 @@
 
   var GATE_LABEL = { lint: 'Lint', format_check: 'Format check', type_check: 'Type check', test: 'Test' };
   var STATUS_LABEL = { configured: 'configured', not_configured: 'not configured', missing_tool: 'missing tool' };
+  var REVIEW_LABEL = {
+    auto: 'auto — only when nothing human gates the merge (auto-merge, push to main)',
+    on: 'on — every solo job',
+    off: 'off — no review',
+  };
+  var CAP_LABEL = { budget_usd: 'Budget per job ($)', wall_clock_h: 'Wall clock per job (h)', max_rounds: 'Agent rounds per job' };
   var state = { apps: [], deliveries: [], pipelines: ['chain', 'solo', 'auto'], gates: ['lint', 'format_check', 'type_check', 'test'], enabled: true };
   var editing = null; // app name in the sheet
 
@@ -103,6 +110,8 @@
         el('span', { class: 'chip rd-' + (status || 'unknown'), text: status ? STATUS_LABEL[status] || status : 'readiness unknown' }),
         a.delivery ? el('span', { class: 'chip', text: a.delivery }) : null,
         a.pipeline ? el('span', { class: 'chip', text: a.pipeline }) : null,
+        a.review && a.review.default ? el('span', { class: 'chip', text: 'review ' + a.review.default }) : null,
+        a.caps ? el('span', { class: 'chip', title: 'per-job caps (0 = none)', text: '$' + a.caps.budget_usd + ' · ' + a.caps.wall_clock_h + 'h · ' + a.caps.max_rounds + ' rounds' }) : null,
         el('button', { type: 'button', text: 'Edit', onclick: function () { openEditor(a.app, null); } }),
         a.gates ? el('div', { class: 'meta', text: gateSummary(a.gates) }) : null,
         r && r.blocking ? el('div', { class: 'why', text: r.blocking }) : null
@@ -204,11 +213,27 @@
     var keep = { value: '', label: '(unknown — leave as is)' };
     var deliveries = state.deliveries.map(function (d) { return { value: d.value, label: d.value + ' — ' + d.plain }; });
     var pipelines = state.pipelines.map(function (p) { return { value: p, label: p }; });
+    var reviews = ['auto', 'on', 'off'].map(function (r) { return { value: r, label: REVIEW_LABEL[r] }; });
+    var rv = a.review || {};
+    var caps = a.caps || {};
+    function num(name, value, step) {
+      return el('input', { name: name, type: 'number', min: '0', step: step, value: value == null ? '' : String(value), placeholder: 'unknown' });
+    }
     form.replaceChildren(
       el('div', { class: 'two' },
         el('label', null, 'Delivery default', select('delivery', a.delivery ? deliveries : [keep].concat(deliveries), a.delivery || '')),
         el('label', null, 'Pipeline default', select('pipeline', a.pipeline ? pipelines : [keep].concat(pipelines), a.pipeline || ''))
-      )
+      ),
+      el('div', { class: 'two' },
+        el('label', null, 'Review (solo jobs)', select('review', rv.default ? reviews : [keep].concat(reviews), rv.default || '')),
+        el('label', null, 'Under auto, also review diffs of at least (lines; 0 = never)', num('reviewMinDiffLines', rv.autoMinDiffLines, '1'))
+      ),
+      el('div', { class: 'two' },
+        el('label', null, CAP_LABEL.budget_usd, num('cap-budget_usd', caps.budget_usd, '0.5')),
+        el('label', null, CAP_LABEL.wall_clock_h, num('cap-wall_clock_h', caps.wall_clock_h, '0.5')),
+        el('label', null, CAP_LABEL.max_rounds, num('cap-max_rounds', caps.max_rounds, '1'))
+      ),
+      el('div', { class: 'meta', text: 'A job that reaches a cap stops for you (needs you), with its work saved; Continue gives it the caps again. 0 = no cap.' })
     );
     var gates = a.gates || {};
     state.gates.forEach(function (g) { form.append(gateFields(g, gates[g])); });
@@ -246,6 +271,16 @@
     // and the select's first option must not overwrite it.
     if (form.elements.delivery.value && form.elements.delivery.value !== row.delivery) body.delivery = form.elements.delivery.value;
     if (form.elements.pipeline.value && form.elements.pipeline.value !== row.pipeline) body.pipeline = form.elements.pipeline.value;
+    var rv = row.review || {};
+    if (form.elements.review.value && form.elements.review.value !== rv.default) body.review = form.elements.review.value;
+    var mdl = form.elements.reviewMinDiffLines.value.trim();
+    if (mdl !== '' && Number(mdl) !== rv.autoMinDiffLines) body.reviewMinDiffLines = Number(mdl);
+    var caps = {};
+    ['budget_usd', 'wall_clock_h', 'max_rounds'].forEach(function (k) {
+      var v = form.elements['cap-' + k].value.trim();
+      if (v !== '' && Number(v) !== (row.caps || {})[k]) caps[k] = Number(v);
+    });
+    if (Object.keys(caps).length) body.caps = caps;
     state.gates.forEach(function (g) {
       var mode = form.elements['mode-' + g].value;
       var cmd = form.elements['cmd-' + g].value.trim();

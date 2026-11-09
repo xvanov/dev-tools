@@ -13,6 +13,11 @@
 //             `none` for research/report/plan
 //   jobKind   from the ask's text (factoryCore.inferKind; deterministic)
 //   app/repo  the commitment's repo and the factory app registered for it
+//   review    off | on | auto (JOBS-API v1.9): the factory app's review.default,
+//             else auto (review only at auto_merge / push_to_main); code jobs only
+//   budgetUsd, wallClockH, maxRounds   the job caps (v1.9): the app's caps, else
+//             $30 / 4 h / 20; 0 = no cap. Sent only when set (given / card): the
+//             factory resolves the app's and the defaults itself, the same way.
 //
 //   resolve(input)               pure: the effective settings and where each came from
 //   forCard(id, {given})         the card's resolved settings + the options (GET)
@@ -25,13 +30,21 @@
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 type Json = import('../types.ts').Json;
-type FactoryApp = { app: string; repo?: string | null; path?: string | null; delivery?: { default?: string | null } | null; [k: string]: unknown };
-type Fields = { runtime: string | null; mode: string | null; delivery: string | null; jobKind: string | null; app: string | null; repo: string | null };
+type FactoryApp = {
+  app: string; repo?: string | null; path?: string | null; delivery?: { default?: string | null } | null;
+  review?: { default?: string | null; auto_min_diff_lines?: number | null } | null;
+  caps?: { budget_usd?: number | null; wall_clock_h?: number | null; max_rounds?: number | null } | null;
+  [k: string]: unknown;
+};
+type Fields = {
+  runtime: string | null; mode: string | null; delivery: string | null; jobKind: string | null; app: string | null; repo: string | null;
+  review: string | null; budgetUsd: string | null; wallClockH: string | null; maxRounds: string | null;
+};
 type Overrides = Partial<Fields>;
 type Resolved = {
   settings: Fields;
   source: Record<keyof Fields, string>;
-  why: { jobKind: string; delivery: string };
+  why: { jobKind: string; delivery: string; review: string };
   /** the operator's words that picked the delivery (source `inferred`) */
   phrase: string | null;
 };
@@ -41,7 +54,12 @@ const D = require('./deliveryCore.ts');
 const R = require('./routeCore.ts');
 const { MODES } = require('./modes.ts');
 
-const FIELDS: (keyof Fields)[] = ['runtime', 'mode', 'delivery', 'jobKind', 'app', 'repo'];
+const FIELDS: (keyof Fields)[] = ['runtime', 'mode', 'delivery', 'jobKind', 'app', 'repo', 'review', 'budgetUsd', 'wallClockH', 'maxRounds'];
+const REVIEWS = ['off', 'on', 'auto'];
+/** The factory's defaults (software-factory factory/job_policy.py). */
+const CAP_DEFAULTS: Record<string, number> = { budgetUsd: 30, wallClockH: 4, maxRounds: 20 };
+/** card field → the factory's cap key. */
+const CAP_KEY: Record<string, string> = { budgetUsd: 'budget_usd', wallClockH: 'wall_clock_h', maxRounds: 'max_rounds' };
 const KEY = (id: number | string) => `dispatch.card.${Number(id)}`;
 
 /** Pure. One field's value checked and normalised; null clears it. Throws on a bad value. */
@@ -63,6 +81,19 @@ function check(field: string, value: unknown): string | null {
     case 'repo':
       if (v.length > 300) throw new Error('repo is too long');
       return v;
+    case 'review': {
+      const r = v.toLowerCase();
+      if (!REVIEWS.includes(r)) throw new Error(`unknown review "${v}" — one of: ${REVIEWS.join(', ')}`);
+      return r;
+    }
+    case 'budgetUsd':
+    case 'wallClockH':
+    case 'maxRounds': {
+      const n = Number(v.replace(/^\$/, ''));
+      if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error(`${field}: a number, 0 or more (0 = no cap)`);
+      if (field === 'maxRounds' && !Number.isInteger(n)) throw new Error('maxRounds: a whole number');
+      return String(n);
+    }
     default: throw new Error(`unknown dispatch setting "${field}" — one of: ${FIELDS.join(', ')}`);
   }
 }
@@ -142,10 +173,30 @@ function resolve({
   }
   source.delivery = ds;
 
+  // JOBS-API v1.9: the solo review and the job caps. A non-code job has no
+  // review step; its caps are shown but the factory bounds it by its one run.
+  let [review, rvs] = pick('review');
+  let reviewWhy = rvs === 'given' ? 'chosen for this start' : 'chosen on the card';
+  if (jobKind !== 'code') [review, rvs, reviewWhy] = [null, 'kind', `a ${jobKind} job has no review step`];
+  else if (!review) {
+    const appReview = app?.review?.default && REVIEWS.includes(app.review.default) ? app.review.default : null;
+    if (appReview) [review, rvs, reviewWhy] = [appReview, 'app_default', `factory app ${app?.app}'s review.default`];
+    else [review, rvs, reviewWhy] = ['auto', 'default', 'reviewed only when nothing human gates the merge (auto-merge, push to main)'];
+  }
+  source.review = rvs;
+  const caps = {} as Record<'budgetUsd' | 'wallClockH' | 'maxRounds', string>;
+  for (const f of ['budgetUsd', 'wallClockH', 'maxRounds'] as const) {
+    const [v, s] = pick(f);
+    const fromApp = (app?.caps as Record<string, unknown> | null | undefined)?.[CAP_KEY[f] as string];
+    if (v != null) [caps[f], source[f]] = [v, s];
+    else if (fromApp != null && Number.isFinite(Number(fromApp))) [caps[f], source[f]] = [String(Number(fromApp)), 'app_default'];
+    else [caps[f], source[f]] = [String(CAP_DEFAULTS[f]), 'default'];
+  }
+
   return {
-    settings: { runtime, mode, delivery, jobKind, app: app ? app.app : appName, repo: repo || slug || null },
+    settings: { runtime, mode, delivery, jobKind, app: app ? app.app : appName, repo: repo || slug || null, review, ...caps },
     source,
-    why: { jobKind: kindWhy, delivery: deliveryWhy },
+    why: { jobKind: kindWhy, delivery: deliveryWhy, review: reviewWhy },
     phrase,
   };
 }
@@ -158,6 +209,11 @@ function options(apps: FactoryApp[]) {
     deliveries: (D.DELIVERIES as string[]).map((d) => ({ value: d, plain: D.describe(d, { route: 'factory' }) })),
     jobKinds: F.KINDS,
     apps: apps.map((a) => ({ app: a.app, repo: a.repo || null, deliveryDefault: a.delivery?.default || null })),
+    reviews: REVIEWS,
+    // Picks the menu offers (any number may be POSTed); 0 = no cap.
+    budgetsUsd: [5, 10, 30, 50, 100, 0],
+    wallClocksH: [1, 2, 4, 8, 24, 0],
+    maxRounds: [5, 10, 20, 40, 0],
   };
 }
 
@@ -177,6 +233,21 @@ async function stored(commitmentId: number | string | null | undefined): Promise
     }
   }
   return out;
+}
+
+/**
+ * Pure. What `job submit` should carry for review / caps: only the values set
+ * for this start or on the card (the factory resolves the app's and the
+ * defaults itself), and none for a non-code job's review.
+ */
+function policyArgs(r: Pick<Resolved, 'settings' | 'source'>): { review: string | null; caps: Record<string, number> | null } {
+  const set = (f: keyof Fields) => r.source[f] === 'given' || r.source[f] === 'card';
+  const review = r.settings.jobKind === 'code' && set('review') ? r.settings.review : null;
+  const caps: Record<string, number> = {};
+  for (const f of ['budgetUsd', 'wallClockH', 'maxRounds'] as const) {
+    if (set(f) && r.settings[f] != null) caps[CAP_KEY[f] as string] = Number(r.settings[f]);
+  }
+  return { review, caps: Object.keys(caps).length ? caps : null };
 }
 
 /**
@@ -227,4 +298,4 @@ async function setForCard(commitmentId: number | string, patch: Json) {
   return forCard(commitmentId);
 }
 
-module.exports = { FIELDS, check, checkPatch, resolve, options, stored, effective, forCard, setForCard };
+module.exports = { FIELDS, REVIEWS, check, checkPatch, resolve, options, policyArgs, stored, effective, forCard, setForCard };

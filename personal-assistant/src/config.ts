@@ -506,6 +506,13 @@ const config = {
     runtime: env('PA_FACTORY_RUNTIME', 'claude_session'),
     // The mode a card's dispatch starts in when nobody picked one (src/dispatch/settings.ts).
     mode: env('PA_DISPATCH_MODE', 'full'),
+    // Runtime failover (JOBS-API v1.9; src/dispatch/failover.ts): one policy for
+    // a provider limit inside the factory and the Claude credit pool here. Off
+    // by default. On, a job may move to the other runtime when the wait for
+    // the limit's reset is longer than failoverMinWaitMin, and the operator is
+    // always notified. PA_CLAUDE_POOL_FALLBACK_API=1 is the older name for it.
+    failover: env('PA_RUNTIME_FAILOVER', env('PA_CLAUDE_POOL_FALLBACK_API', '0')) === '1',
+    failoverMinWaitMin: envInt('PA_RUNTIME_FAILOVER_MIN_WAIT_MIN', 30),
     // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
     models: env('PA_FACTORY_MODELS', ''),
     // The worker's factory pass (src/dispatch/factoryPace.ts): every
@@ -705,15 +712,17 @@ const config = {
   // interactive allowance; src/claudePool.js). monthlyUsd is the pool in
   // API-equivalent dollars (PA_CLAUDE_POOL_USD); unset or 0 = not tracked, no
   // fallback. The pool resets on resetDay of each month (local time).
-  // fallbackApi (PA_CLAUDE_POOL_FALLBACK_API=1, default off): once the pool is
-  // spent, a claude_session job is dispatched on the api runtime instead.
+  // fallbackApi: the runtime failover policy (factory.failover, PA_RUNTIME_FAILOVER,
+  // or its older name PA_CLAUDE_POOL_FALLBACK_API=1; default off) applied to the
+  // pool: once it is spent, a claude_session job is dispatched on the api
+  // runtime when the wait for the pool's reset is over the failover threshold.
   claudePool: {
     monthlyUsd: (() => {
       const n = Number.parseFloat(env('PA_CLAUDE_POOL_USD', ''));
       return Number.isFinite(n) && n > 0 ? n : null;
     })(),
     resetDay: Math.min(28, Math.max(1, envInt('PA_CLAUDE_POOL_RESET_DAY', 1))),
-    fallbackApi: env('PA_CLAUDE_POOL_FALLBACK_API', '0') === '1',
+    fallbackApi: env('PA_RUNTIME_FAILOVER', env('PA_CLAUDE_POOL_FALLBACK_API', '0')) === '1',
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker

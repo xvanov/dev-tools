@@ -305,6 +305,8 @@ async function start(o: StartOptions): Promise<Json> {
     delivery, deliverySource: source, deliveryPhrase: source === 'explicit' ? deliveryPhrase : eff.phrase,
     brief, briefBy, confirmedUnattended, again,
     jobKind: kind, runtime: s.runtime, title, branch: onBranch, pr: onPr, timings: { route: Date.now() - calledAt },
+    // JOBS-API v1.9: the card's review / caps choices (the defaults are the factory's).
+    ...require('./settings.ts').policyArgs(eff),
   });
 }
 

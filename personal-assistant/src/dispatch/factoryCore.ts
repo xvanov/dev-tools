@@ -22,7 +22,7 @@ type ExecResult = { code: number | null; stdout?: string; stderr?: string; timed
 type PrLink = { url: string; number: number | null; story_id: number | null; state: string | null; ci_state: string | null; ci_failing: string[] | null };
 type StepLink = { step_id: string; job_id: string | null; story_id: number | null; persona: string | null; runtime: string | null; model: string | null; state: string | null; started_at: string | null; ended_at: string | null; machine: string | null; termhub_session_id: string | null; url: string | null };
 type Notice = { key: string; title: string; body: string; url: string | null };
-type NoticeMemo = Map<string, { state: string; ciFailing: boolean }>;
+type NoticeMemo = Map<string, { state: string; ciFailing: boolean; failover?: string | null }>;
 type JobView = ReturnType<typeof jobView>;
 
 // Delivery levels are the shared vocabulary in deliveryCore.ts. The operator
@@ -191,7 +191,10 @@ function researchAsk({ kind, title, ask = null, done = [], repo = null }: { kind
 // `branch` / `pr` continue existing work: the job starts on that branch or
 // that PR's head instead of a fresh one (`job submit --branch|--pr`, a
 // factory newer than v1.2; an older one refuses the flag in its parser).
-function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null, branch = null, pr = null }: {
+const REVIEWS = ['off', 'on', 'auto'];
+const CAP_KEYS = ['budget_usd', 'wall_clock_h', 'max_rounds'];
+
+function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null, branch = null, pr = null, review = null, caps = null, failover = null }: {
   app?: string | null;
   title: string;
   ask?: string | null;
@@ -207,8 +210,17 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   runtime?: string | null;
   branch?: string | null;
   pr?: number | string | null;
+  /** JOBS-API v1.9: off | on | auto (code jobs; null = the factory app's) */
+  review?: string | null;
+  /** JOBS-API v1.9: {budget_usd, wall_clock_h, max_rounds} (only the ones set) */
+  caps?: Record<string, number | null | undefined> | null;
+  /** JOBS-API v1.9: on | off (null = the factory's FACTORY_RUNTIME_FAILOVER) */
+  failover?: string | null;
 }): string[] {
   const k = kind == null ? 'code' : jobKind(kind);
+  if (review != null && !REVIEWS.includes(review)) throw new Error(`unknown review "${review}" — one of ${REVIEWS.join(', ')}`);
+  if (review != null && k !== 'code') throw new Error(`a ${k} job has no review step`);
+  if (failover != null && failover !== 'on' && failover !== 'off') throw new Error(`failover is on or off, not "${failover}"`);
   if (!app && k === 'code') throw new Error('submit needs a factory app');
   if (!title) throw new Error('submit needs a title');
   if (!ask && !askFile) throw new Error('submit needs the ask');
@@ -239,6 +251,14 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   if (pr != null) argv.push('--pr', String(Number(pr)));
   argv.push('--pipeline', pipeline(pipe), '--delivery', delivery);
   for (const [persona, model] of Object.entries(models || {})) argv.push('--model', `${persona}=${model}`);
+  if (review != null) argv.push('--review', review);
+  for (const [key, v] of Object.entries(caps || {})) {
+    if (v == null) continue;
+    if (!CAP_KEYS.includes(key)) throw new Error(`unknown cap "${key}"`);
+    if (!(Number.isFinite(Number(v)) && Number(v) >= 0)) throw new Error(`cap ${key}: a number, 0 or more`);
+    argv.push('--cap', `${key}=${Number(v)}`);
+  }
+  if (failover != null) argv.push('--failover', failover);
   argv.push('--source', source, '--external-id', String(externalId));
   return argv;
 }
@@ -255,6 +275,8 @@ const REFUSAL_CODES = new Set([
   'review_independence', 'pipeline_unavailable', 'duplicate_key',
   // v1.2 refusals.
   'invalid_kind', 'invalid_runtime', 'runtime_unavailable',
+  // v1.9 refusals.
+  'invalid_review', 'invalid_cap', 'invalid_failover',
   // v1.3 (`--branch` / `--pr`): submit asks GitHub before writing anything,
   // and refuses work it cannot safely continue.
   'invalid_branch', 'branch_is_default', 'branch_not_found', 'pr_not_found', 'pr_not_open', 'pr_from_fork',
@@ -793,6 +815,17 @@ function notices(prev: NoticeMemo | null | undefined, jobs: Job[] | null | undef
         url: firstPr,
       });
     }
+    // JOBS-API v1.9: a job that moved runtime is always said out loud.
+    const fo = job?.failover && typeof job.failover === 'object' ? job.failover : null;
+    const foKey = fo ? `${fo.from}>${fo.to}@${fo.at || ''}` : null;
+    if (foKey && foKey !== (was?.failover || null)) {
+      out.push({
+        key: `factory-failover:${id}:${foKey}`,
+        title: clip(`Factory job ${id} moved from ${fo.from} to ${fo.to}`, 200),
+        body: [title, fo.why ? clip(String(fo.why), 300) : null].filter(Boolean).join('\n'),
+        url: firstPr,
+      });
+    }
     const red = ciFailing(job);
     if (red.length && !was?.ciFailing) {
       const s = red[0] as Job;
@@ -809,7 +842,10 @@ function notices(prev: NoticeMemo | null | undefined, jobs: Job[] | null | undef
 
 /** Pure. The per-job memory `notices` compares against next time. */
 function noticeState(jobs: Job[] | null | undefined): NoticeMemo {
-  return new Map((Array.isArray(jobs) ? jobs : []).filter((j) => j?.job_id).map((j): [string, { state: string; ciFailing: boolean }] => [String(j.job_id), { state: j.state, ciFailing: ciFailing(j).length > 0 }]));
+  return new Map((Array.isArray(jobs) ? jobs : []).filter((j) => j?.job_id).map((j): [string, { state: string; ciFailing: boolean; failover: string | null }] => [
+    String(j.job_id),
+    { state: j.state, ciFailing: ciFailing(j).length > 0, failover: j.failover && typeof j.failover === 'object' ? `${j.failover.from}>${j.failover.to}@${j.failover.at || ''}` : null },
+  ]));
 }
 
 /**

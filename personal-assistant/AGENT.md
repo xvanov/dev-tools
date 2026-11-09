@@ -670,8 +670,11 @@ Wrap a main hop in `telemetry.span(hop, name, attrs, fn)` (`src/telemetry`), nev
 arguments. New hops use the `hop` vocabulary Meter groups by (`voice.turn`, `tool.call`, `factory.cli`, `deploy`, the
 factory's `factory.*`). Percentiles are computed in JS over `repo.telemetry.hopDurations`, not in SQL, so SQLite serves them
 too. Headless Claude usage is `llm_spend` with backend `cli` (PA) or `claude_session` (the factory, via `POST /api/telemetry`);
-`src/claudePool.js` sums both against `PA_CLAUDE_POOL_USD`. The API fallback (`PA_CLAUDE_POOL_FALLBACK_API`, default off)
-lives in one place, `claudePool.route`, called by `dispatch/factory.start`; it fails open. Anything new that runs headless
+`src/claudePool.js` sums both against `PA_CLAUDE_POOL_USD`. A spent pool is a runtime limit like the factory's provider
+limits (JOBS-API v1.9), so the API fallback is the one failover policy, `src/dispatch/failover.ts` (`PA_RUNTIME_FAILOVER`,
+older name `PA_CLAUDE_POOL_FALLBACK_API`, default off; only when the wait is over `PA_RUNTIME_FAILOVER_MIN_WAIT_MIN`, 30;
+always notified). It is applied in one place, `claudePool.route`, called by `dispatch/factory.start`; it fails open. With
+the policy on, every job is also submitted with `--failover on`, so the factory may move a job that hits a provider limit. Anything new that runs headless
 Claude must record its `total_cost_usd` with one of those two backends, or the pool under-counts.
 
 ## Where the store lives

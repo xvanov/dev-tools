@@ -936,7 +936,7 @@
         "Factory spans": "the Python factory posts its own to POST /api/telemetry (X-PA guarded) when PA_TELEMETRY_URL is set (the dashboard, e.g. http://127.0.0.1:7300; unset = off): hops factory.sm, factory.dev, factory.review, factory.tech_writer, deploy and factory.claude_session (software-factory/factory/telemetry.py).",
         "Meter page": "termhub/web/meterModel.js on the Meter page: latency per hop (p50/p95 over the last 14 days), spend per day, model and purpose from llm_spend, and the credit pool. GET /api/meter?days=N (src/dashboard/meter.ts, src/telemetry/meter.ts); `pa spend` prints the pool too.",
         "Credit pool": "headless Claude Code (the PA's `claude -p`, backend cli, and the factory's claude_session runs) draws from a credit pool apart from the interactive allowance (since 15 Jun 2026). Each run's stream-json result carries total_cost_usd and usage; the PA's calls are recorded in llm_spend (backend cli) and the factory posts its runs there (backend claude_session). Usage since the pool's reset day against PA_CLAUDE_POOL_USD gives the credit left (src/claudePool.ts). Unset PA_CLAUDE_POOL_USD = not tracked.",
-        "API fallback": "PA_CLAUDE_POOL_FALLBACK_API=1 (default off): once the pool is spent, a claude_session job is dispatched on the api runtime instead (src/dispatch/factory.ts asks claudePool.route); fails open to claude_session when the pool cannot be read. Off, a spent pool is shown on Meter and runs carry on."
+        "API fallback": "a spent pool is one more runtime limit, decided by the one failover policy (src/dispatch/failover.ts, JOBS-API v1.9): PA_RUNTIME_FAILOVER=1 (PA_CLAUDE_POOL_FALLBACK_API=1 is its older name; default off) dispatches a claude_session job on the api runtime when the wait for the pool's refill is over PA_RUNTIME_FAILOVER_MIN_WAIT_MIN (default 30), and notifies; src/dispatch/factory.ts asks claudePool.route; fails open to claude_session when the pool cannot be read. Off, a spent pool is shown on Meter and runs carry on."
       },
       "env": [
         {
@@ -960,6 +960,14 @@
           "default": "0"
         },
         {
+          "name": "PA_RUNTIME_FAILOVER",
+          "default": "0"
+        },
+        {
+          "name": "PA_RUNTIME_FAILOVER_MIN_WAIT_MIN",
+          "default": "30"
+        },
+        {
           "name": "PA_TELEMETRY_URL",
           "default": null
         }
@@ -969,6 +977,7 @@
         "personal-assistant/src/telemetry/exporter.ts",
         "personal-assistant/src/telemetry/meter.ts",
         "personal-assistant/src/claudePool.ts",
+        "personal-assistant/src/dispatch/failover.ts",
         "personal-assistant/src/dashboard/meter.ts",
         "personal-assistant/src/repo/telemetry.ts",
         "termhub/web/meterModel.js",
@@ -990,7 +999,7 @@
       },
       "details": {
         "Routes": "none to pick (D28): every dispatch (pa do, Do, the planner, accepted cards, the chat's factory_start and session_start) is a factory job; PA_DISPATCH_VIA, PA_ROUTE_CHOOSER, --via claude and --machine are gone (refused). Without PA_FACTORY_PATH nothing dispatches",
-        "Card dispatch settings": "src/dispatch/settings.ts. GET /api/commitments/:id/dispatch-settings answers {card, factory, settings: {runtime, mode, delivery, jobKind, app, repo}, source: {each field: given|card|default|inferred|kind|app_default|repo_default|fallback|commitment|repo|none}, why: {jobKind, delivery}, overrides, options: {runtimes, modes, deliveries [{value, plain}], jobKinds, apps [{app, repo, deliveryDefault}]}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as dispatch.card.<id> and answers the GET shape. Defaults: runtime PA_FACTORY_RUNTIME (claude_session; a plan job is claude_session), mode PA_DISPATCH_MODE (full), delivery = your words for this start, else the factory app's delivery.default, else the repo's (pa delivery), else PA_DELIVERY_DEFAULT; research/report/plan deliver none. Job kind: plan mode → plan; else factoryCore.inferKind (deterministic: the planner's kind, then the ask's words). On the Plan board each Do card shows one read-only line of what Do sends (e.g. Claude · full · draft PR · code (auto)) and a ☰ button whose menu (dispatchMenu.client.js, /dispatchMenu.js) has a select per field with its source and a reset; it fetches each card's settings in the background (two at a time), keeps them across re-renders, POSTs a change at once (optimistic, reverted with a toast on error) and never rebuilds the board. Do itself sends no settings, only the confirmed level. /api/machines is gone (8.6.4)",
+        "Card dispatch settings": "src/dispatch/settings.ts. GET /api/commitments/:id/dispatch-settings answers {card, factory, settings: {runtime, mode, delivery, jobKind, app, repo, review, budgetUsd, wallClockH, maxRounds}, source: {each field: given|card|default|inferred|kind|app_default|repo_default|fallback|commitment|repo|none}, why: {jobKind, delivery, review}, overrides, options: {runtimes, modes, deliveries [{value, plain}], jobKinds, apps [{app, repo, deliveryDefault}], reviews, budgetsUsd, wallClocksH, maxRounds}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as dispatch.card.<id> and answers the GET shape. Defaults: runtime PA_FACTORY_RUNTIME (claude_session; a plan job is claude_session), mode PA_DISPATCH_MODE (full), delivery = your words for this start, else the factory app's delivery.default, else the repo's (pa delivery), else PA_DELIVERY_DEFAULT; research/report/plan deliver none. Review (JOBS-API v1.9): the factory app's review.default, else auto; none for a report job. Caps: the app's caps, else $30 / 4 h / 20 rounds; only values set for the start or on the card go to job submit (--review, --cap), the rest the factory resolves itself; --failover on goes with every job while PA_RUNTIME_FAILOVER is on. Job kind: plan mode → plan; else factoryCore.inferKind (deterministic: the planner's kind, then the ask's words). On the Plan board each Do card shows one read-only line of what Do sends (e.g. Claude · full · draft PR · code (auto)) and a ☰ button whose menu (dispatchMenu.client.js, /dispatchMenu.js) has a select per field with its source and a reset; it fetches each card's settings in the background (two at a time), keeps them across re-renders, POSTs a change at once (optimistic, reverted with a toast on error) and never rebuilds the board. Do itself sends no settings, only the confirmed level. /api/machines is gone (8.6.4)",
         "Plan mode": "a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
         "Claude session (legacy)": "startSession: a Claude Code session in its own worktree via termhub POST /api/sessions. No production caller since D28; kept only while the land/drop/remote tests seed runs through it (docs/native/PLAN.md 8.6.3). If called it logs a warning and records an llm_spend row of unknown cost (purpose dispatch-session-unmetered)",
         "Unmetered starts": "the only agent session the PA still opens outside the factory is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
@@ -1416,7 +1425,7 @@
         "Usage limit": "JOBS-API v1.9: a 5-hour/weekly limit message trips this runtime's breaker (<state>/runtime_limits.json, factory/provider_limits.py) until the reset it names (else backoff 15 min doubling to 5 h); the job waits (blocked, why 'paused: Claude limit, resumes HH:MM') and resumes by itself at the reset; failover to api only when FACTORY_RUNTIME_FAILOVER or the job says so",
         "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond) is the API; a step's session link is termhub's front: FACTORY_TERMHUB_PUBLIC_URL if set, else the front's /api/secure-url (Tailscale HTTPS), else the front itself (http://127.0.0.1:7000), never sessiond, which serves no page (8.4.17). The PA re-points any loopback link at that machine's front (PA_TERMHUB_URL or PA_MACHINES). Without termhub the run starts as a local process and cannot be watched live.",
         "Compaction": "unknown: each run is one Claude Code conversation; Claude Code compacts it if it fills",
-        "Credit pool": "a claude_session run draws from the Claude credit pool (not metered per run here): its total_cost_usd and token usage are posted to the PA (POST /api/telemetry, when PA_TELEMETRY_URL is set) and counted against PA_CLAUDE_POOL_USD; once spent, with PA_CLAUDE_POOL_FALLBACK_API=1, the PA dispatches new jobs on the api runtime (see the Meter component)"
+        "Credit pool": "a claude_session run draws from the Claude credit pool (not metered per run here): its total_cost_usd and token usage are posted to the PA (POST /api/telemetry, when PA_TELEMETRY_URL is set) and counted against PA_CLAUDE_POOL_USD; once spent, with the failover policy on (PA_RUNTIME_FAILOVER, older name PA_CLAUDE_POOL_FALLBACK_API), the PA dispatches new jobs on the api runtime (see the Meter component)"
       },
       "env": [
         {

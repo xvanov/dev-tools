@@ -79,6 +79,10 @@ type StartOptions = {
   mode?: string | null;
   /** the end state; resolved when not given */
   delivery?: string | null;
+  /** JOBS-API v1.9: off | on | auto, only when chosen (settings.policyArgs) */
+  review?: string | null;
+  /** JOBS-API v1.9: {budget_usd, wall_clock_h, max_rounds}, only the ones chosen */
+  caps?: Record<string, number> | null;
   deliverySource?: string | null;
   deliveryPhrase?: string | null;
   pipeline?: string | null;
@@ -452,6 +456,7 @@ async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
   confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null, branch = null, pr = null, timings = null,
+  review = null, caps = null,
 }: StartOptions): Promise<Json> {
   // Where the call's time went, in ms: logged and answered (factory_start's timings_ms).
   const ms: Record<string, number> = { ...(timings || {}) };
@@ -560,6 +565,11 @@ async function start({
       runtime: rt,
       branch,
       pr,
+      // JOBS-API v1.9: review only for a code job; caps when the card set them;
+      // failover on when the PA's one failover policy is (src/dispatch/failover.ts).
+      review: kind === 'code' ? review : null,
+      caps,
+      failover: config.factory.failover ? 'on' : null,
     });
 
   let job: Job | null = null;

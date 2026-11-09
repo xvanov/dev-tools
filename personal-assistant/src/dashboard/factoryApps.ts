@@ -9,7 +9,9 @@
 //                                     detection suggests (incl. ones mirrored from the repo's CI)
 //   POST /api/factory/apps            {repo, path?, delivery?} -> `factory app add`
 //   POST /api/factory/apps/<app>      {delivery?, pipeline?, gates?: {test: "cmd"|"none"|""},
-//                                      requires?: {test: ["lychee"]}} -> `factory app set`
+//                                      requires?: {test: ["lychee"]}, review?: off|on|auto,
+//                                      reviewMinDiffLines?: n, caps?: {budget_usd, wall_clock_h,
+//                                      max_rounds}} -> `factory app set` (JOBS-API v1.9)
 //
 // A gate is a shell command, `none` (the repo has no such check: skipped) or ""
 // (not configured). Commands go to the factory as one argv element each
@@ -26,6 +28,8 @@ const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TOOL = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
 const GATES = ['lint', 'format_check', 'type_check', 'test'];
 const PIPELINES = ['chain', 'solo', 'auto'];
+const REVIEWS = ['off', 'on', 'auto'];
+const CAPS = ['budget_usd', 'wall_clock_h', 'max_rounds'];
 const MAX_CMD = 2000;
 
 function bad(msg: string): Error {
@@ -50,6 +54,15 @@ function toolList(gate: string, v: unknown): string[] {
   return [...new Set(out)];
 }
 
+/** Pure. One cap value: a number >= 0 (0 = no cap); max_rounds a whole number. */
+function capValue(key: string, v: unknown): string {
+  const n = Number(v);
+  if (v === '' || v == null || !Number.isFinite(n) || n < 0) throw bad(`cap ${key}: a number, 0 or more (0 = no cap)`);
+  if (key === 'max_rounds' && !Number.isInteger(n)) throw bad('cap max_rounds: a whole number');
+  if (n > 100000) throw bad(`cap ${key}: too large`);
+  return String(n);
+}
+
 /** Pure. The edit form, checked, as `factory app set` argv — or throws a 400. */
 function setArgv(app: string, body: Json): string[] {
   if (!APP.test(String(app || ''))) throw bad('not an app name');
@@ -72,6 +85,21 @@ function setArgv(app: string, body: Json): string[] {
   for (const [gate, v] of Object.entries(requires)) {
     if (!GATES.includes(gate)) throw bad(`unknown gate "${gate}"`);
     argv.push(`--requires=${gate}=${toolList(gate, v).join(',')}`);
+  }
+  // JOBS-API v1.9: the solo review default and the per-job caps.
+  if (body?.review) {
+    if (!REVIEWS.includes(body.review)) throw bad(`review is one of ${REVIEWS.join(', ')}`);
+    argv.push(`--review-default=${body.review}`);
+  }
+  if (body?.reviewMinDiffLines != null && body.reviewMinDiffLines !== '') {
+    const n = Number(body.reviewMinDiffLines);
+    if (!Number.isInteger(n) || n < 0) throw bad('review min diff lines: a whole number, 0 or more');
+    argv.push(`--review-min-diff-lines=${n}`);
+  }
+  const caps = body?.caps && typeof body.caps === 'object' ? body.caps : {};
+  for (const [key, v] of Object.entries(caps)) {
+    if (!CAPS.includes(key)) throw bad(`unknown cap "${key}"`);
+    argv.push(`--cap=${key}=${capValue(key, v)}`);
   }
   if (argv.length === 4) throw bad('nothing to change');
   return argv;
@@ -98,6 +126,9 @@ function row(a: Json): Json {
     path: a.path,
     delivery: a.delivery?.default || null,
     pipeline: a.pipeline_default || null,
+    // v1.9 (an older factory sends neither: null)
+    review: a.review ? { default: a.review.default ?? null, autoMinDiffLines: a.review.auto_min_diff_lines ?? null } : null,
+    caps: a.caps ? { budget_usd: a.caps.budget_usd ?? null, wall_clock_h: a.caps.wall_clock_h ?? null, max_rounds: a.caps.max_rounds ?? null } : null,
     ticked: a.ticked ?? null,
     gates: a.gates || null,
     readiness: r ? { status: r.status, blocking: r.blocking || null, warnings: r.warnings || [], missingTools: r.missing_tools || {} } : null,
@@ -110,6 +141,8 @@ function pickers(): Json {
     deliveries: D.DELIVERIES.map((d: string) => ({ value: d, plain: D.describe(d) })),
     pipelines: PIPELINES,
     gates: GATES,
+    reviews: REVIEWS,
+    caps: CAPS,
   };
 }
 
@@ -169,4 +202,4 @@ async function post(pathname: string, body: Json): Promise<Json | undefined> {
   return r;
 }
 
-module.exports = { get, post, setArgv, addInput, row, gateValue, toolList };
+module.exports = { get, post, setArgv, addInput, row, gateValue, toolList, capValue };

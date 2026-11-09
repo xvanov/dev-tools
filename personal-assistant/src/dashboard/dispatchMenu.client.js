@@ -2,7 +2,8 @@
 
 // A Plan card's dispatch settings, behind its ☰ button (plan 8.6.4, D28).
 // Every Do is a factory job, so what is left to choose is runtime, mode, end
-// state, job kind and app/repo: the card shows one read-only line of what Do
+// state, job kind and app/repo, and (JOBS-API v1.9) whether the job is
+// reviewed and its caps (budget, wall clock, agent rounds): the card shows one read-only line of what Do
 // will send ("Claude · full · draft PR · code (auto)") and the ☰ opens a small
 // menu with one select per setting, each saying whether it is the default,
 // inferred or set on this card, with a reset. The settings are the server's
@@ -24,7 +25,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DispatchMenu = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const FIELDS = ['runtime', 'mode', 'delivery', 'jobKind', 'app'];
+  const FIELDS = ['runtime', 'mode', 'delivery', 'jobKind', 'app', 'review', 'budgetUsd', 'wallClockH', 'maxRounds'];
   const RUNTIME = { claude_session: 'Claude', api: 'API' };
   const RUNTIME_LONG = { claude_session: 'Claude session (subscription)', api: 'API models (metered)' };
   const DELIVERY = { none: 'nothing pushed', branch: 'branch', draft_pr: 'draft PR', pr: 'PR', auto_merge: 'auto-merge', push_to_main: 'push to main' };
@@ -41,7 +42,21 @@
     app_default: "the app's default", repo_default: "the repo's default", fallback: 'default',
     kind: 'set by the kind', commitment: "the card's repo", repo: "the repo's app", none: 'none',
   };
-  const LABEL = { runtime: 'Runtime', mode: 'Mode', delivery: 'End state', jobKind: 'Job kind', app: 'Repo / app' };
+  const LABEL = {
+    runtime: 'Runtime', mode: 'Mode', delivery: 'End state', jobKind: 'Job kind', app: 'Repo / app',
+    review: 'Review', budgetUsd: 'Budget', wallClockH: 'Wall clock', maxRounds: 'Agent rounds',
+  };
+  const REVIEW = {
+    auto: 'auto — only when nothing human gates the merge',
+    on: 'on — a separate reviewer reads the diff',
+    off: 'off — no review step',
+  };
+  const CAP_SHOW = {
+    budgetUsd: (v) => (Number(v) === 0 ? 'no cap' : `$${v}`),
+    wallClockH: (v) => (Number(v) === 0 ? 'no cap' : `${v} h`),
+    maxRounds: (v) => (Number(v) === 0 ? 'no cap' : `${v} rounds`),
+  };
+  const CAP_OPTIONS = { budgetUsd: 'budgetsUsd', wallClockH: 'wallClocksH', maxRounds: 'maxRounds' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;
 
@@ -80,7 +95,8 @@
     for (const f of FIELDS) {
       const overridden = f === 'app' ? has(s.overrides, 'app') || has(s.overrides, 'repo') : has(s.overrides, f);
       if (overridden) continue;
-      out[f] = { value: s.settings[f], source: s.source[f], why: f === 'jobKind' ? s.why.jobKind : f === 'delivery' ? s.why.delivery : null };
+      const why = f === 'jobKind' ? s.why.jobKind : f === 'delivery' ? s.why.delivery : f === 'review' ? s.why.review || null : null;
+      out[f] = { value: s.settings[f], source: s.source[f], why };
       if (f === 'app') out.repo = { value: s.settings.repo, source: s.source.repo };
     }
     return out;
@@ -128,6 +144,28 @@
       field: 'app', label: LABEL.app, value: s.overrides.app || '',
       options: [{ value: '', label: dApp }, ...(o.apps || []).map((a) => ({ value: a.app, label: appName(a) }))],
     });
+    // JOBS-API v1.9. A report job has no review step.
+    if ((o.reviews || []).length) {
+      out.push({
+        field: 'review', label: LABEL.review, value: report ? '' : s.overrides.review || '',
+        disabled: report, note: report ? s.why.review || null : null,
+        options: [
+          { value: '', label: report ? 'no review step' : d.review && d.review.value ? `default: ${d.review.value} — ${d.review.why || ''}`.replace(/ — $/, '') : 'default' },
+          ...(o.reviews || []).map((r) => ({ value: r, label: REVIEW[r] || r })),
+        ],
+      });
+    }
+    for (const f of ['budgetUsd', 'wallClockH', 'maxRounds']) {
+      const picks = o[CAP_OPTIONS[f]];
+      if (!picks) continue;
+      out.push({
+        field: f, label: LABEL[f], value: s.overrides[f] != null ? String(s.overrides[f]) : '',
+        options: [
+          { value: '', label: dflt(f, CAP_SHOW[f]) },
+          ...picks.map((v) => ({ value: String(v), label: CAP_SHOW[f](v) })),
+        ],
+      });
+    }
     for (const r of out) {
       r.badge = badge(s, r.field);
       r.overridden = r.field === 'app' ? has(s.overrides, 'app') || has(s.overrides, 'repo') : has(s.overrides, r.field);
@@ -170,9 +208,20 @@
     if (n.settings.jobKind && n.settings.jobKind !== 'code') {
       n.settings.delivery = 'none';
       n.source.delivery = 'kind';
-    } else if (n.settings.delivery === 'none' && !has(n.overrides, 'delivery') && d.delivery && d.delivery.value && d.delivery.value !== 'none') {
+      // A report job has no review step (v1.9).
+      if ('review' in n.settings) {
+        n.settings.review = null;
+        n.source.review = 'kind';
+      }
+      return n;
+    }
+    if (n.settings.delivery === 'none' && !has(n.overrides, 'delivery') && d.delivery && d.delivery.value && d.delivery.value !== 'none') {
       n.settings.delivery = d.delivery.value;
       n.source.delivery = d.delivery.source;
+    }
+    if ('review' in n.settings && n.settings.review == null && !has(n.overrides, 'review') && d.review && d.review.value) {
+      n.settings.review = d.review.value;
+      n.source.review = d.review.source;
     }
     return n;
   }
@@ -360,7 +409,7 @@
       line.textContent = summary(e && e.data);
       const button = h('button', {
         type: 'button', class: 'dmenu-btn', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-controls': `dmenu-${id}`,
-        title: 'Dispatch settings: runtime, mode, end state, job kind, repo', 'aria-label': `Dispatch settings for #${id}`, text: '☰',
+        title: 'Dispatch settings: runtime, mode, end state, job kind, repo, review, caps', 'aria-label': `Dispatch settings for #${id}`, text: '☰',
       });
       const wrap = h('span', { class: 'dmenu-wrap' }, button);
       button.addEventListener('click', () => toggle(id, wrap, button));
@@ -371,5 +420,5 @@
     return { parts, prefetch, close, isOpen: () => Boolean(open), _cache: cache };
   }
 
-  return { FIELDS, LABEL, summary, badge, rememberDefaults, rows, patchFor, optimistic, controller };
+  return { FIELDS, LABEL, REVIEW, summary, badge, rememberDefaults, rows, patchFor, optimistic, controller };
 });
