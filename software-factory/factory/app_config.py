@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from factory.delivery import DeliveryConfig
+from factory.job_policy import JobCapsConfig, ReviewConfig
 
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
@@ -337,6 +338,12 @@ class AppConfig(BaseModel):
     # per-app ceiling: a job's requested level wins. Absent = today's
     # behaviour (auto_merge). See factory/delivery.py.
     delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
+    # JOBS-API v1.9 (factory/job_policy.py): whether a solo story is reviewed
+    # (``default: off|on|auto``, ``auto_min_diff_lines``) and the per-job caps
+    # (``budget_usd``, ``wall_clock_h``, ``max_rounds``). A job's own value
+    # wins; absent = auto / $30 / 4 h / 20. Set by ``factory app set``.
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
+    caps: JobCapsConfig = Field(default_factory=JobCapsConfig)
 
     # Self-tick guard (Tier 3 — FACTORY-SELF-TICK). When this app builds the
     # factory's OWN repo (``apps/factory``), pm-sync will NOT turn its pending

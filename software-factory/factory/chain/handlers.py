@@ -285,6 +285,8 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     "pickup_branch": "TEXT",
     "pickup_pr": "INTEGER",
     "pickup_into": "TEXT",
+    # JOBS-API v1.9 job policy (StoryRecord.policy_json). NULL = pre-v1.9.
+    "policy_json": "TEXT",
     # JSONL of prior dev sandbox attempts (one entry per chain-level retry):
     # ``[{attempt, ts, test_output_tail, files_touched, summary}, ...]``.
     # Fed forward into the next dev invocation's initial message so the LLM
@@ -788,6 +790,9 @@ def handle_stories_spawned(
             _dl_level, _dl_info = record_spawn_level(
                 story, app_config, direction, software_factory_root
             )
+            from factory.job_policy import stamp_policy as _stamp_policy
+
+            _stamp_policy(story, direction, app_config)
             # Dry-run is a pure preview: build the would-be StoryRecord for
             # the returned list but never persist it or author its oracle —
             # a persisted dry-run story is a live dispatchable artifact (the
@@ -1047,6 +1052,10 @@ def handle_stories_spawned(
         _dl_level, _dl_info = record_spawn_level(
             story, app_config, direction, software_factory_root
         )
+        # JOBS-API v1.9: review mode, job caps, failover — once, like the level.
+        from factory.job_policy import stamp_policy as _stamp_policy
+
+        _stamp_policy(story, direction, app_config)
         # Dry-run is a pure preview: never persist the story or author its
         # oracle (see the dual-draft branch above and the 2026-07-20 incident).
         if not dry_run:
@@ -2945,6 +2954,17 @@ def _handle_dev_once(
                 )
             _dev_timeout_s = _solo.SOLO_DEV_WALL_CLOCK_S
             _spend_cap, _spend_basis = _solo.spend_cap_for(story, software_factory_root, db)
+            # JOBS-API v1.9 job caps: one conversation never outruns what is
+            # left of the job's budget or wall clock (the orchestrator parks
+            # the job between steps; this bounds the step itself).
+            _job_left = _job_cap_remaining(story, software_factory_root, db)
+            if _job_left.get("wall_s") is not None:
+                _dev_timeout_s = int(max(300, min(_dev_timeout_s, _job_left["wall_s"])))
+            if _job_left.get("budget_usd") is not None:
+                _spend_basis["job_budget_left_usd"] = round(_job_left["budget_usd"], 4)
+                if _spend_cap is None or _job_left["budget_usd"] < _spend_cap:
+                    _spend_cap = _job_left["budget_usd"]
+                    _spend_basis["binding_limit"] = "job_budget"
             log_story_event(
                 story.id,
                 "solo_spend_cap",
@@ -3025,7 +3045,19 @@ def _handle_dev_once(
                     software_factory_root=software_factory_root,
                     slug_hint=story.slug,
                 )
+            _resume_sid = (
+                _last_claude_dev_session(story, software_factory_root)
+                if (solo_kwargs and reviewer_findings)
+                else None
+            )
+            _left = (
+                _job_cap_remaining(story, software_factory_root, db).get("budget_usd")
+                if solo_kwargs
+                else None
+            )
             run_res = claude_dev_run(
+                resume_session_id=_resume_sid,
+                job_budget_left_usd=_left,
                 story_path=story_file_path_obj,
                 repo_path=Path(repo_path),
                 software_factory_root=software_factory_root,
@@ -3085,6 +3117,37 @@ def _handle_dev_once(
                 software_factory_root=software_factory_root,
                 slug_hint=story.slug,
             )
+
+        if not dry_run and getattr(run_res, "agent_session_id", None):
+            log_story_event(
+                story.id,
+                "claude_session_dev_session",
+                {"session_id": run_res.agent_session_id},
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+
+        # JOBS-API v1.9: a provider limit (Claude's 5-hour/weekly window, an
+        # API 429) is transient. Trip the runtime's breaker and wait for the
+        # reset: no dev retry spent, the worktree (the work so far) kept, and
+        # the orchestrator re-dispatches dev once the breaker closes.
+        if not dry_run and run_res.test_run_passed is not True:
+            from factory.provider_limits import note_run_error, provider_error_text
+
+            _rt = getattr(story, "runtime", None) or "api"
+            _perr = provider_error_text(_rt, run_res)
+            _hit = (
+                note_run_error(software_factory_root, _rt, _perr, story=story) if _perr else None
+            )
+            if _hit is not None:
+                story.state = advance(story, EVENT_DEV_TESTS_RED).value
+                story.error = _hit.describe()
+                persist_story(story, db)
+                return HandlerResult(
+                    next_state=StoryState(story.state),
+                    payload={"test_run_passed": False, "provider_limit": True},
+                    error=None,
+                )
 
         # Pre-model sandbox infrastructure guard. If the sandbox died before
         # any model work (transient .venv relink → TemplateNotFound, SDK
@@ -3334,6 +3397,18 @@ def _handle_dev_once(
                 software_factory_root,
                 repo=Path(repo_path) if solo_kwargs else None,
             )
+        if not dry_run and solo_kwargs:
+            # JOBS-API v1.9: decide the review once, at the first green, from
+            # the job's review setting (and, under ``auto``, the diff size).
+            try:
+                _solo.record_review_decision(
+                    story,
+                    Path(repo_path),
+                    app_config.default_branch or "main",
+                    software_factory_root,
+                )
+            except Exception as _exc:  # noqa: BLE001 - static decision stands
+                _logger.warning("review decision failed for story %s: %r", story.id, _exc)
         story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
         story.dev_step_checkpoint = None
         from factory.chain.solo import is_solo as _is_solo_green
@@ -4583,6 +4658,53 @@ def _fold_nonblocking_findings_into_comments(result: dict[str, Any]) -> None:
     result["comments_to_post"] = comments
 
 
+_MAX_CLAUDE_REVIEW_NO_VERDICT = 2
+
+
+def _claude_review_no_verdict(
+    story: StoryRecord, conv: Any, *, db: Path, software_factory_root: Path
+) -> HandlerResult:
+    """A claude_session review run that returned no verdict (limit, launch
+    failure, crash). Not a review cycle and not an approval: a provider limit
+    trips the runtime's breaker and the story waits at TESTS_GREEN for the
+    reset (no cycle spent); any other failure is retried, at most
+    ``_MAX_CLAUDE_REVIEW_NO_VERDICT`` times in a row, then the story parks in
+    ``blocked_review_nonconvergent`` for a human (fail safe: never ship
+    unreviewed because the reviewer broke)."""
+    from factory.chain.event_log import log_story_event, read_story_events
+    from factory.provider_limits import note_run_error
+
+    err = str(getattr(conv, "error", None) or getattr(conv, "stop_reason", "") or "no output")
+    hit = note_run_error(software_factory_root, "claude_session", err, story=story)
+    prior = 0
+    for e in reversed(
+        read_story_events(story.id, software_factory_root=software_factory_root, slug_hint=story.slug)
+    ):
+        if e.get("event") == "claude_review_no_verdict" and not e.get("provider_limit"):
+            prior += 1
+        elif e.get("event") in ("reviewer_cycle", "handler_end"):
+            if e.get("event") == "reviewer_cycle":
+                break
+    log_story_event(
+        story.id,
+        "claude_review_no_verdict",
+        {"error": err[:400], "provider_limit": hit is not None, "attempt": prior + 1},
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    if hit is None and prior + 1 >= _MAX_CLAUDE_REVIEW_NO_VERDICT:
+        story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
+        story.error = f"claude_session review returned no verdict {prior + 1}x: {err}"[:500]
+    else:
+        story.state = StoryState.TESTS_GREEN.value
+        story.error = (
+            f"review paused: {hit.describe()}" if hit is not None
+            else f"claude_session review returned no verdict; retrying: {err}"
+        )[:500]
+    persist_story(story, db)
+    return HandlerResult(next_state=StoryState(story.state), payload={"review_no_verdict": True})
+
+
 @traced("factory.review")
 def handle_review(
     story: StoryRecord,
@@ -4902,24 +5024,55 @@ def handle_review(
                 "Return the JSON object for the review. No prose outside the JSON."
             )
             _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
-            model_id = _route_for(story, persona)
-            collision = _review_model_collision(story, model_id) if _is_solo_review(story) else None
-            if collision is not None:
-                return _block_on_review_collision(
-                    story, collision, db=db, software_factory_root=software_factory_root
+            from factory.chain.solo import review_runtime as _review_runtime
+
+            if _review_runtime(story) == "claude_session":
+                # JOBS-API v1.9: the review step on the story's own runtime. The
+                # same prompt, run by a SEPARATE read-only Claude Code
+                # conversation in the worktree (its independence is a fresh
+                # context and no write access, not a different model).
+                from factory.claude_session.run import claude_review_run
+
+                try:
+                    _rtree = _writing_worktree(app_config, software_factory_root, story)
+                except Exception:  # noqa: BLE001 - fall back to the app checkout
+                    _rtree = resolve_app_repo_path(app_config, software_factory_root)
+                review_text, review_conv = claude_review_run(
+                    prompt=full_prompt,
+                    worktree=Path(_rtree),
+                    software_factory_root=software_factory_root,
+                    db_path=db,
+                    model=getattr(story, "runtime_model", None),
+                    story_id=story.id,
+                    app=story.app,
+                    direction_id=story.direction_id,
                 )
-            result_any = text_run(
-                persona=persona,
-                prompt=full_prompt,
-                model_id=model_id,
-                schema=None,  # reviewer output is JSON but we don't enforce schema here
-                max_tokens=max_output_tokens_for(model_id),
-                story_id=story.id,
-                app=story.app,
-                direction_id=story.direction_id,
-                db_path=db,
-            )
-            result = _parse_reviewer_result(result_any)
+                if not review_text.strip():
+                    return _claude_review_no_verdict(
+                        story, review_conv, db=db, software_factory_root=software_factory_root
+                    )
+                result = _parse_reviewer_result(review_text)
+            else:
+                model_id = _route_for(story, persona)
+                collision = (
+                    _review_model_collision(story, model_id) if _is_solo_review(story) else None
+                )
+                if collision is not None:
+                    return _block_on_review_collision(
+                        story, collision, db=db, software_factory_root=software_factory_root
+                    )
+                result_any = text_run(
+                    persona=persona,
+                    prompt=full_prompt,
+                    model_id=model_id,
+                    schema=None,  # reviewer output is JSON but we don't enforce schema here
+                    max_tokens=max_output_tokens_for(model_id),
+                    story_id=story.id,
+                    app=story.app,
+                    direction_id=story.direction_id,
+                    db_path=db,
+                )
+                result = _parse_reviewer_result(result_any)
 
     story.reviewer_result_json = json.dumps(result)
 
@@ -7567,6 +7720,34 @@ def _update_picked_up_pr(
 # --------------------------------------------------------------------------- #
 # helpers used by the orchestrator
 # --------------------------------------------------------------------------- #
+
+
+def _job_cap_remaining(story: StoryRecord, root: Path, db: Path) -> dict[str, Any]:
+    """What is left of the job's caps for one step (JOBS-API v1.9); {} = no caps."""
+    from factory.job_caps import remaining, usage_for_story
+    from factory.job_policy import story_caps
+
+    caps = story_caps(story)
+    if not caps:
+        return {}
+    try:
+        return remaining(caps, usage_for_story(root, db, story))
+    except Exception:  # noqa: BLE001 - the between-steps check still applies
+        return {}
+
+
+def _last_claude_dev_session(story: StoryRecord, root: Path) -> str | None:
+    """The Claude session id of the story's latest dev conversation, or None."""
+    from factory.chain.event_log import read_story_events
+
+    try:
+        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+    except Exception:  # noqa: BLE001
+        return None
+    for e in reversed(events):
+        if e.get("event") == "claude_session_dev_session" and e.get("session_id"):
+            return str(e["session_id"])
+    return None
 
 
 def find_direction_for_story(story: StoryRecord, software_factory_root: Path) -> Direction | None:

@@ -267,12 +267,14 @@ def test_run_task_api_writes_the_report(root: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_run_task_without_report_fails(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tasks, "api_runner", _fake_runner(None, error="rate limited"))
+    # v1.9: a rate limit is not a failure (test_provider_limits.py); any other
+    # error without a report still fails the job.
+    monkeypatch.setattr(tasks, "api_runner", _fake_runner(None, error="the sandbox crashed"))
     job = _research()
     tasks.run_task(root, job["job_id"])
     st = job_status(root, job["job_id"])
     assert st["state"] == "failed" and "without writing a report" in st["why"]
-    assert "rate limited" in st["why"]
+    assert "the sandbox crashed" in st["why"]
     code, obj = _cli("report", job["job_id"], "--json")
     assert code == 1 and obj["error"] == "no_report"
 

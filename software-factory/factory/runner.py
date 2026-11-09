@@ -602,6 +602,13 @@ class RunResult:
     gate_stop_reason: str = ""
     # Live cost at which the spend cap paused the run (None = cap not hit).
     spend_cap_hit_usd: float | None = None
+    # The agent's own conversation id (claude_session: the Claude session the
+    # review fix round resumes, JOBS-API v1.9). None for OpenHands.
+    agent_session_id: str | None = None
+    # The provider's own error when the agent run ended on one (claude_session:
+    # Claude Code's error result, e.g. the usage-limit message), kept apart from
+    # ``error``, which a later grade may overwrite. JOBS-API v1.9.
+    provider_error: str | None = None
 
 
 @dataclass

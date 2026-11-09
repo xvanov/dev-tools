@@ -241,6 +241,7 @@ def create_task(
     claude_model: str | None,
     source: str,
     external_id: str | None,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[TaskRef, bool]:
     """Create the job directory atomically. Returns ``(ref, created)``; a
     resubmit with the same ``(source, external_id)`` returns the original."""
@@ -283,6 +284,8 @@ def create_task(
                 "workspace": None,
                 "cancel": None,
             }
+            # v1.9: ``caps`` / ``failover`` when the submit gave them.
+            meta.update(extra or {})
             (staging / "ask.md").write_text(ask, encoding="utf-8")
             write_meta(staging, meta)
             os.rename(staging, final)
@@ -566,7 +569,13 @@ def _default_claude_runner(
     conv = outcome.conversation
     if read_only:
         save_plan(cwd, conv.plan_text, is_error=bool(conv.error))
-    return {"error": conv.error, "warning": outcome.warning, "stop": conv.stop_reason}
+    return {
+        "error": conv.error,
+        "warning": outcome.warning,
+        "stop": conv.stop_reason,
+        # v1.9: Claude Code's own error result (a usage limit pauses the job).
+        "provider_error": conv.error if conv.stop_reason == "claude_error" else None,
+    }
 
 
 def save_plan(cwd: Path, text: str, *, is_error: bool = False) -> bool:
@@ -639,6 +648,33 @@ def run_task(root: Path, job_id: str) -> dict[str, Any]:
             why=info.get("warning"),
         )
     else:
+        # JOBS-API v1.9: a provider limit is not a failed job. Trip the
+        # runtime's breaker and put the job back in the queue; dispatch starts
+        # it again once the limit resets (auto-resume).
+        from types import SimpleNamespace
+
+        from factory.provider_limits import note_run_error, provider_error_text
+
+        rt = str(meta.get("runtime") or "api")
+        perr = provider_error_text(
+            rt, SimpleNamespace(error=info.get("error"), provider_error=info.get("provider_error"))
+        )
+        hit = note_run_error(root, rt, perr, source=ref.job_id) if perr else None
+        if hit is not None:
+            if ref.app and (d / "checkout").exists():
+                shutil.rmtree(d / "checkout", ignore_errors=True)
+            return update_meta(
+                d,
+                state=QUEUED,
+                worker_pid=None,
+                paused={
+                    "runtime": hit.runtime,
+                    "until": hit.until.isoformat() if hit.until else None,
+                    "reason": hit.reason,
+                    "at": _now(),
+                },
+                why=hit.describe(),
+            )
         why = "the agent ended without writing a report"
         if info.get("error"):
             why += f": {info['error']}"
@@ -726,6 +762,10 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 continue
             if live >= max_workers():
                 break
+            # JOBS-API v1.9: no job starts on a runtime whose limit breaker is
+            # open, unless its failover policy moves it to the other runtime.
+            if _limited(root, ref, dry_run=dry_run):
+                continue
             started.append(ref.job_id)
             live += 1
             if dry_run:
@@ -743,6 +783,27 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 continue
             update_meta(ref.dir_path, worker_pid=pid)
     return {"started": started, "reaped": reaped, "blocked": blocked}
+
+
+def _limited(root: Path, ref: TaskRef, *, dry_run: bool = False) -> bool:
+    """True when the job must wait for its runtime's limit to reset."""
+    from factory import provider_limits as PL
+
+    rt = str(ref.meta.get("runtime") or "api")
+    entry = PL.open_entry(root, rt)
+    if entry is None:
+        return False
+    go, target, why = PL.decide_failover(root, rt, entry, ref.meta.get("failover"))
+    if not go:
+        return True
+    if not dry_run:
+        ref.meta = update_meta(
+            ref.dir_path,
+            runtime=target,
+            failover={"from": rt, "to": target, "at": _now(), "why": why},
+            why=why,
+        )
+    return False
 
 
 #: A job claimed (``starting``) but with no worker pid this long after its last
@@ -819,7 +880,9 @@ _STATE_MAP = {
 }
 
 
-def task_job_state(ref: TaskRef, factory_block: str | None) -> tuple[str, str | None]:
+def task_job_state(
+    ref: TaskRef, factory_block: str | None, root: Path | None = None
+) -> tuple[str, str | None]:
     meta = ref.meta
     raw = str(meta.get("state") or QUEUED)
     why = meta.get("why")
@@ -834,6 +897,9 @@ def task_job_state(ref: TaskRef, factory_block: str | None) -> tuple[str, str | 
     if state == "queued":
         if factory_block:
             return "blocked", factory_block
+        paused = task_pause(ref, root) if root is not None else None
+        if paused is not None:
+            return "blocked", paused["why"]
         return "queued", why or "waiting for the next factory tick (factory job dispatch)"
     if state == "in_progress" and not why:
         why = (
@@ -842,6 +908,15 @@ def task_job_state(ref: TaskRef, factory_block: str | None) -> tuple[str, str | 
             else "starting the agent"
         )
     return state, why
+
+
+def task_pause(ref: TaskRef, root: Path) -> dict[str, Any] | None:
+    """The status ``paused`` of a queued job whose runtime is limited, else None."""
+    if str(ref.meta.get("state") or QUEUED) != QUEUED:
+        return None
+    from factory import provider_limits as PL
+
+    return PL.pause_view(PL.open_entry(root, str(ref.meta.get("runtime") or "api")))
 
 
 def cancel_task(root: Path, job_id: str, *, by: str = "factory job cancel") -> dict[str, Any]:
@@ -926,4 +1001,5 @@ __all__ = [
     "report_markdown",
     "run_task",
     "task_job_state",
+    "task_pause",
 ]

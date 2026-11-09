@@ -127,6 +127,8 @@ def run_conversation(
     add_dirs: list[str] | None = None,
     permission_mode: str | None = None,
     argv_wrap: Callable[[list[str]], list[str]] | None = None,
+    resume_session: str | None = None,
+    budget_left_usd: Callable[[], float | None] | None = None,
     poll_s: float = 2.0,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -139,7 +141,8 @@ def run_conversation(
     deadline = started + float(wall_clock_s)
     plans: list[RoundPlan] = []
     session_uuid = str(uuid.uuid4())
-    resume: str | None = None
+    # JOBS-API v1.9: a review fix round continues the dev's own session.
+    resume: str | None = resume_session or None
     message = prompt
     max_rounds = max(1, int(max_gate_rounds)) if gate_check is not None else 1
     session: SessionInfo | None = None
@@ -151,7 +154,7 @@ def run_conversation(
         argv = build_claude_argv(
             claude_bin,
             model=model,
-            session_uuid=session_uuid if round_no == 1 else None,
+            session_uuid=session_uuid if (round_no == 1 and not resume) else None,
             resume=resume,
             add_dirs=add_dirs,
             permission_mode=permission_mode,
@@ -272,6 +275,11 @@ def run_conversation(
             break
         if not resume:
             out.stop_reason = "no_session_to_resume"
+            break
+        # JOBS-API v1.9 job cap: never start another round past the budget.
+        left = budget_left_usd() if budget_left_usd is not None else None
+        if left is not None and out.subscription_equiv_usd >= left:
+            out.stop_reason = "job_cap"
             break
         message = _feedback(verdict, round_no, max_rounds)
 

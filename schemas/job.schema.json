@@ -29,7 +29,10 @@
     "base": { "anyOf": [{ "$ref": "#/$defs/base" }, { "type": "null" }], "description": "v1.3" },
     "stalled": { "type": "boolean", "description": "v1.3" },
     "ticked": { "type": ["boolean", "null"], "description": "v1.6: something ticks the job's app (null: cannot tell; research/report)" },
-    "github_as_of": { "type": ["string", "null"], "description": "v1.7: when the PR/CI fields were read from GitHub (null: not asked, or GitHub could not be asked)" }
+    "github_as_of": { "type": ["string", "null"], "description": "v1.7: when the PR/CI fields were read from GitHub (null: not asked, or GitHub could not be asked)" },
+    "paused": { "type": ["object", "null"], "description": "v1.9: {runtime, until, reason, reset_known, why} while the next step's runtime is at a provider limit", "additionalProperties": true },
+    "failover": { "type": ["object", "null"], "description": "v1.9: the latest runtime failover {from, to, at, why}", "additionalProperties": true },
+    "policy": { "type": ["object", "null"], "description": "v1.9: {review: {mode, source, decision}, caps: {budget_usd, wall_clock_h, max_rounds, source, used}, failover} (null for research/report/plan)", "additionalProperties": true }
   },
   "additionalProperties": true,
   "$defs": {

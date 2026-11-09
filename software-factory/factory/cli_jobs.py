@@ -128,6 +128,17 @@ def submit_cmd(
     pr: str | None = typer.Option(
         None, "--pr", help="v1.3: continue on this existing PR (updates it; opens none)"
     ),
+    review: str | None = typer.Option(
+        None, "--review", help="v1.9: off | on | auto (code jobs; default: the app's, else auto)"
+    ),
+    cap: list[str] | None = typer.Option(
+        None,
+        "--cap",
+        help="v1.9: NAME=VALUE (repeat): budget_usd=30, wall_clock_h=4 (or 90m), max_rounds=20; 0 = none",
+    ),
+    failover: str | None = typer.Option(
+        None, "--failover", help="v1.9: on | off (default: FACTORY_RUNTIME_FAILOVER, off)"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
 ) -> None:
     """Create a job (code: a direction, pre-approved for --source pa/human;
@@ -173,6 +184,9 @@ def submit_cmd(
                 runtime=runtime,
                 branch=branch,
                 pr=pr_number,
+                review=review,
+                caps=list(cap or []),
+                failover=failover,
             ),
         )
 

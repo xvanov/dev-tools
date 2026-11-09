@@ -440,6 +440,132 @@ def _solo_tick_budget_shortfall(
     return _sandbox_tick_budget_shortfall(story, "dev", tick_started_mono, now_mono=now_mono)
 
 
+#: Handlers that run an agent / model and so count against job caps and wait
+#: on a provider breaker (JOBS-API v1.9).
+_AGENT_HANDLERS: frozenset[str] = frozenset(
+    {"sm", "dev", "review", "tech_writer", "docs_sm", "docs_onboarder"}
+)
+
+
+def step_runtime(story: StoryRecord, handler_name: str) -> str | None:
+    """The runtime a dispatch of ``handler_name`` runs on, or None (no model).
+
+    dev runs on the story's runtime; review on ``solo.review_runtime``; every
+    other model step follows routes.yaml (``api``)."""
+    if handler_name not in _AGENT_HANDLERS:
+        return None
+    if handler_name == "dev":
+        return getattr(story, "runtime", None) or "api"
+    if handler_name == "review":
+        from factory.chain.solo import review_runtime
+
+        return review_runtime(story)
+    return "api"
+
+
+def _park_at_job_cap(
+    story: StoryRecord, handler_name: str, *, app_config: Any, db: Path, root: Path
+) -> bool:
+    """Park ``story`` in BLOCKED_BUDGET_EXCEEDED when its job reached a cap."""
+    from factory.job_caps import breach_for_story, preserve_work
+
+    try:
+        reason, basis = breach_for_story(root, db, story)
+    except Exception:  # noqa: BLE001 - the per-story breaker still bounds it
+        return False
+    if reason is None:
+        return False
+    try:
+        saved = preserve_work(story, app_config, root)
+    except Exception as exc:  # noqa: BLE001
+        saved = {"note": f"could not save the work: {exc!r}"[:300]}
+    from_state = story.state
+    story.state = advance(story, EVENT_BUDGET_EXCEEDED).value
+    story.last_rejection_reason = reason + " — resume the job to continue (a new cap window)"
+    H.persist_story(story, db)
+    log_story_event(
+        story.id,
+        "job_cap_exceeded",
+        {
+            "handler": handler_name,
+            "from_state": from_state,
+            "to_state": story.state,
+            "reason": reason,
+            **basis,
+            "saved": saved,
+        },
+        software_factory_root=root,
+        slug_hint=story.slug,
+    )
+    return True
+
+
+def _provider_pause(story: StoryRecord, handler_name: str, *, db: Path, root: Path) -> str | None:
+    """The pause reason when the step's runtime is limited, else None.
+
+    May fail the story over to the other runtime first (then None: dispatch)."""
+    from factory import provider_limits as PL
+    from factory.job_policy import story_failover
+
+    rt = step_runtime(story, handler_name)
+    if rt is None:
+        return None
+    entry = PL.open_entry(root, rt)
+    if entry is None:
+        return None
+    # Failover moves the STORY's runtime, so only the steps that run on it.
+    if handler_name in ("dev", "review") and rt == (getattr(story, "runtime", None) or "api"):
+        go, target, why = PL.decide_failover(root, rt, entry, story_failover(story))
+        if go:
+            from datetime import UTC as _UTC
+            from datetime import datetime as _dt
+
+            from factory.job_policy import story_policy
+
+            story.runtime = target
+            if target != "claude_session":
+                story.runtime_model = None
+            story.error = why[:500]
+            _pol = story_policy(story) or {}
+            _pol["failed_over"] = {
+                "from": rt, "to": target, "why": why, "until": entry.get("until"),
+                "at": _dt.now(_UTC).isoformat(),
+            }
+            story.policy_json = json.dumps(_pol)
+            H.persist_story(story, db)
+            log_story_event(
+                story.id,
+                "runtime_failover",
+                {"from": rt, "to": target, "why": why, "until": entry.get("until"),
+                 "handler": handler_name},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+            return None
+    why = PL.describe_entry(entry)
+    # One event per pause (not one per tick for five hours).
+    try:
+        from factory.chain.event_log import read_story_events
+
+        last = next(
+            (e for e in reversed(read_story_events(story.id, software_factory_root=root,
+                                                   slug_hint=story.slug))
+             if e.get("event") == "provider_limit_deferred"),
+            None,
+        )
+    except Exception:  # noqa: BLE001
+        last = None
+    if last is None or last.get("until") != entry.get("until"):
+        log_story_event(
+            story.id,
+            "provider_limit_deferred",
+            {"runtime": rt, "until": entry.get("until"), "handler": handler_name, "why": why},
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    return why
+
+
 def _record_budget_deferral(story: StoryRecord, reason: str, *, db: Path, root: Path) -> int:
     """Log one deferral; after ``_MAX_SILENT_BUDGET_DEFERRALS`` CONSECUTIVE ones
     surface it in ``factory inbox`` via ``last_rejection_reason`` (cleared by the
@@ -3220,6 +3346,26 @@ def tick(
                     summary.stories_blocked += 1
                     break
 
+                # JOBS-API v1.9 job caps (budget / wall clock / rounds, either
+                # runtime). Reached → park for a human with the work saved,
+                # never failed; ``factory job resume`` opens a new window.
+                if handler_name in _AGENT_HANDLERS and not dry_run:
+                    if _park_at_job_cap(story, handler_name, app_config=cfg, db=db, root=root):
+                        summary.handler_runs.append((story.slug, story.state, story.state))
+                        summary.stories_blocked += 1
+                        break
+
+                # JOBS-API v1.9 provider limits: no step starts on a runtime
+                # whose breaker is open (a Claude 5-hour/weekly window, an API
+                # 429). The story waits where it is, nothing spent; at the
+                # reset the next tick dispatches it. Failover, when the job or
+                # FACTORY_RUNTIME_FAILOVER allows it, re-stamps the runtime.
+                if handler_name in _AGENT_HANDLERS and not dry_run:
+                    _paused = _provider_pause(story, handler_name, db=db, root=root)
+                    if _paused is not None:
+                        summary.deferred.append((story.slug, _paused))
+                        break
+
                 # Tick-budget guard (solo AND chain sandboxes). Dispatch is serial
                 # and the systemd tick is killed at ``TimeoutStartSec``; never
                 # start a sandbox that cannot finish inside what is left of this
@@ -3579,6 +3725,20 @@ def tick(
                     # next tick will dispatch the same handler again.
                     story.state = from_state
                     story.error = repr(exc)
+                    # JOBS-API v1.9: a rate limit raised by a model call trips
+                    # that runtime's breaker; the rolled-back step waits for it.
+                    try:
+                        from factory.provider_limits import note_run_error
+
+                        _rt = step_runtime(story, handler_name)
+                        if _rt is not None:
+                            note_run_error(
+                                root, _rt, repr(exc),
+                                headers=getattr(getattr(exc, "response", None), "headers", None),
+                                story=story,
+                            )
+                    except Exception:  # noqa: BLE001 - never mask the handler error
+                        pass
                     # Refresh the breaker's spend accumulator from the ledger:
                     # a crashed handler may still have recorded partial run cost.
                     # None == transient read failure → keep the prior value

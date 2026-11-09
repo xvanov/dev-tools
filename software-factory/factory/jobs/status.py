@@ -35,6 +35,7 @@ interpretations is meant to ship.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -696,6 +697,12 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             f": {v.note}" if v.note else _story_reason(v.row)
         )
 
+    # v1.9: a live story whose next step's runtime is limited is paused until
+    # the reset; the job is blocked (never stalled, never failed).
+    paused = _code_pause(ctx, live) if state == "in_progress" and live else None
+    if paused is not None:
+        state, why = "blocked", paused["why"]
+
     # v1.6: a job whose app nothing ticks never moves; say so instead of
     # "the next factory tick", which will not come.
     ticked = ctx.tick_coverage().ticked(ref.app)
@@ -803,21 +810,100 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "subscription_equiv_usd": subscription_equiv(run_rows),
         # v1.3 (additive)
         "base": base_view(meta),
-        "stalled": is_stalled(state, updated_at, ctx.factory_block),
+        "stalled": is_stalled(
+            state, updated_at, ctx.factory_block or (paused or {}).get("why")
+        ),
         # v1.6 (additive)
         "ticked": ticked,
+        # v1.9 (additive): provider-limit pause, the latest runtime failover,
+        # and the job's review / caps policy (with what the caps have used).
+        "paused": paused,
+        "failover": _last_failover(ctx, rows),
+        "policy": _policy_view(ctx, ref, rows, state_yaml),
         # v1.7: when the PR/CI fields were read. Null when GitHub was not asked
         # or could not answer (see docs/JOBS-API.md).
         "github_as_of": gh.as_of if gh is not None else None,
     }
 
 
+def _code_pause(ctx: _Ctx, live: list[Any]) -> dict[str, Any] | None:
+    """``paused`` when a live story's next step runs on a limited runtime."""
+    from types import SimpleNamespace
+
+    from factory import provider_limits as PL
+    from factory.chain.orchestrator import _dispatch_for_story, step_runtime
+
+    if not PL.any_open(ctx.root):
+        return None
+    for v in live:
+        row = v.row
+        try:
+            story = SimpleNamespace(**{**row, "chain_kind": row.get("chain_kind") or "tdd"})
+            handler = _dispatch_for_story(story)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 - an odd row is not a pause
+            continue
+        rt = step_runtime(story, handler) if handler else None  # type: ignore[arg-type]
+        entry = PL.open_entry(ctx.root, rt) if rt else None
+        if entry is not None:
+            return PL.pause_view(entry)
+    return None
+
+
+def _last_failover(ctx: _Ctx, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The latest runtime failover of the job's stories (``policy_json``)."""
+    best: dict[str, Any] | None = None
+    for r in rows:
+        try:
+            fo = (json.loads(r.get("policy_json") or "{}") or {}).get("failed_over")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(fo, dict) and (best is None or str(fo.get("at")) > str(best.get("at"))):
+            best = {"story_id": r.get("id"), **fo}
+    return best
+
+
+def _policy_view(
+    ctx: _Ctx, ref: Any, rows: list[dict[str, Any]], state_yaml: dict[str, Any]
+) -> dict[str, Any] | None:
+    from factory.job_caps import WINDOW_KEY, job_usage
+    from factory.job_policy import policy_view, resolve_policy
+
+    pol = None
+    for r in rows:
+        if r.get("policy_json"):
+            try:
+                pol = json.loads(r["policy_json"])
+                break
+            except (TypeError, ValueError):
+                pol = None
+    if pol is None:
+        try:
+            pol = resolve_policy(ctx.app_cfg(ref.app), ref.meta)
+        except Exception:  # noqa: BLE001
+            return None
+    view = policy_view(pol)
+    if view is not None:
+        try:
+            since = state_yaml.get(WINDOW_KEY)
+            view["caps"]["used"] = (
+                job_usage(
+                    None, ref.app, str(ref.direction_id),
+                    since=str(since) if since else None, conn=ctx.conn,
+                )
+                if ctx.conn is not None
+                else None
+            )
+        except Exception:  # noqa: BLE001
+            view["caps"]["used"] = None
+    return view
+
+
 def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
     """The status object of a research/report job (``factory.jobs.tasks``)."""
-    from factory.jobs.tasks import report_info, task_job_state
+    from factory.jobs.tasks import report_info, task_job_state, task_pause
 
     meta = ref.meta
-    state, why = task_job_state(ref, ctx.factory_block)
+    state, why = task_job_state(ref, ctx.factory_block, ctx.root)
     rows = _run_rows(ctx, ref.app_label, ref.task_id, [])
     metered = round(sum(float(r.get("cost_usd") or 0.0) for r in rows), 4)
     return {
@@ -850,6 +936,10 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
         "stalled": False,
         "ticked": None,
         "github_as_of": None,
+        # v1.9 (additive)
+        "paused": task_pause(ref, ctx.root),
+        "failover": meta.get("failover") if isinstance(meta.get("failover"), dict) else None,
+        "policy": None,
     }
 
 

@@ -467,6 +467,10 @@ class StoryRecord(SQLModel, table=True):
     # ``factory.chain.delivery_gate.story_level`` resolves and records those on
     # first touch.
     delivery_level: str | None = None
+    # JOBS-API v1.9 job policy stamped at spawn (factory/job_policy.py): review
+    # mode (+ the decision recorded at first green), job caps, failover. NULL =
+    # spawned before v1.9 (old review rule, no job caps).
+    policy_json: str | None = None
 
 
 # Event names — strings the chain emits when a handler completes.

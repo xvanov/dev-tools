@@ -1270,7 +1270,7 @@
       },
       "health": "factory-serve",
       "details": {
-        "Contract": "software-factory/docs/JOBS-API.md, v1.7 (serve reads local state plus a background GitHub snapshot; github_as_of)",
+        "Contract": "software-factory/docs/JOBS-API.md, v1.9 (v1.7: serve reads local state plus a background GitHub snapshot, github_as_of; v1.8: the plan kind; v1.9: review off|on|auto on both runtimes, job caps, provider-limit pause/breaker/failover: paused, failover, policy)",
         "Commands": [
           "job submit",
           "job status",
@@ -1288,7 +1288,7 @@
         "Push": "E3: `factory serve` POSTs job state changes (a new state or why; {jobs: [{job_id, state, why, updated_at}]}) to the PA's /api/factory/events from its own thread, 0.2-0.4 s after a tick commits a story transition to factory.db (statted every 0.1 s); done, failed and cancelled jobs are re-read by a full check every 5 s and right after an API submit, cancel or resume. A job whose last story delivers is pushed done with that transition, then corrected to what `job status` reads on GitHub (about 3 s, on serve's confirm thread, so other jobs' pushes never wait for it) if that differs, re-asked every 30 s while GitHub says in_progress (FACTORY_PA_EVENTS_URL, default the local PA)",
         "Schemas": "plan 1.1 (D15): one JSON Schema source at the repo root, schemas/*.schema.json: Job (this status object, v1.4), Run (a PA run's id chain), Card, Event (an /api/events frame), Approval (the chat's permission prompt). TS types are generated (schemas/types.d.ts by schemas/gen-types.js); the PA validates with schemas/index.js (dependency-free), the factory with factory/contract_schemas.py (jsonschema). Both sides test their real objects against them"
       },
-      "contract": "v1.7",
+      "contract": "v1.9",
       "code": [
         "software-factory/docs/JOBS-API.md",
         "software-factory/factory/cli_jobs.py",
@@ -1318,7 +1318,7 @@
         "Scheduler": "`factory serve` on both stacks (Windows: the factory-serve logon task, scripts/windows/install-serve.ps1, running `--supervise`; Linux: factory-serve.service, replacing the factory-tick@<app> timers; `factory on/off` manage it): ticks only apps whose config sets serve_tick: true, every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d within 1 s: it dispatches research/report jobs at once; a submit runs PM triage in the serve process and the tick starts when that triage finishes (a submit no longer starts a maintenance tick beside it); a resume or a finished step ticks the app at once, and that tick dispatches before the interval tick's GitHub maintenance; one serve per factory root (state/locks/serve.lock plus a SQLite lease, state/scheduler/leases.db, 30 s TTL); exits 75 for a restart when the checkout's HEAD moves; `factory serve --status`. A code job for an app nothing ticks (no serve_tick, no factory-tick@ timer) is accepted with a `ticker:` warning, and submit, job status/list and app list carry `ticked: false` (status why: `waiting: app X is not ticked`; JOBS-API v1.6, factory/scheduler/coverage.py)",
         "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
         "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
-        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): one fix round, only for a high or blocking finding, test slop, or a score under 0.7, and a finding that survives that round parks the story (blocked_review_nonconvergent); medium and low findings do not spend a round; a reviewer that resolves to the dev's model is refused; claude_session solo has no reviewer",
+        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): one fix round, only for a high or blocking finding, test slop, or a score under 0.7, and a finding that survives that round parks the story (blocked_review_nonconvergent); medium and low findings do not spend a round; a reviewer that resolves to the dev's model is refused; since JOBS-API v1.9 whether a solo story is reviewed is the job's review setting (off | on | auto; auto = only at auto_merge / push_to_main; per app review.default and review.auto_min_diff_lines, per job --review), on either runtime (claude_session: a separate read-only plan-mode Claude Code run)",
         "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; a worktree a terminal still holds is left in place and the next checkout is created beside it and reused; never merged below auto_merge",
         "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch. The tech_writer's context update is committed on the story branch before the PR is opened; a failed commit bounces the story",
         "Research/report": "detached workers (python -m factory.jobs.worker), at most FACTORY_TASK_MAX_WORKERS (default 2), 5400 s wall clock",
@@ -1411,7 +1411,9 @@
         "Cost": "cost_usd is always 0; the API-price equivalent is summed in subscription_equiv_usd",
         "Model": "--model claude_session=<name> (e.g. claude-sonnet-5-5); default: the CLI's default",
         "Pipeline": "auto resolves to solo; under --pipeline chain only the dev persona is Claude Code",
-        "Bounds": "5400 s, at most 3 gate rounds, no-progress abort; a usage-limit message fails the run as infrastructure",
+        "Bounds": "5400 s, at most 3 gate rounds, no-progress abort, and the job caps (JOBS-API v1.9: $30 counting total_cost_usd, 4 h, 20 rounds; per app and per job)",
+        "Review": "JOBS-API v1.9: a solo story's review runs here too, as a separate Claude Code run with --permission-mode plan (read-only) on the same reviewer prompt; a blocking finding goes back into the dev's own session (claude --resume) for one fix round",
+        "Usage limit": "JOBS-API v1.9: a 5-hour/weekly limit message trips this runtime's breaker (<state>/runtime_limits.json, factory/provider_limits.py) until the reset it names (else backoff 15 min doubling to 5 h); the job waits (blocked, why 'paused: Claude limit, resumes HH:MM') and resumes by itself at the reset; failover to api only when FACTORY_RUNTIME_FAILOVER or the job says so",
         "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond) is the API; a step's session link is termhub's front: FACTORY_TERMHUB_PUBLIC_URL if set, else the front's /api/secure-url (Tailscale HTTPS), else the front itself (http://127.0.0.1:7000), never sessiond, which serves no page (8.4.17). The PA re-points any loopback link at that machine's front (PA_TERMHUB_URL or PA_MACHINES). Without termhub the run starts as a local process and cannot be watched live.",
         "Compaction": "unknown: each run is one Claude Code conversation; Claude Code compacts it if it fills",
         "Credit pool": "a claude_session run draws from the Claude credit pool (not metered per run here): its total_cost_usd and token usage are posted to the PA (POST /api/telemetry, when PA_TELEMETRY_URL is set) and counted against PA_CLAUDE_POOL_USD; once spent, with PA_CLAUDE_POOL_FALLBACK_API=1, the PA dispatches new jobs on the api runtime (see the Meter component)"
@@ -1428,10 +1430,19 @@
         {
           "name": "FACTORY_CLAUDE_BIN",
           "default": null
+        },
+        {
+          "name": "FACTORY_RUNTIME_FAILOVER",
+          "default": "off"
+        },
+        {
+          "name": "FACTORY_FAILOVER_MIN_WAIT_MIN",
+          "default": "30"
         }
       ],
       "code": [
         "software-factory/factory/claude_session/run.py",
+        "software-factory/factory/provider_limits.py",
         "software-factory/factory/claude_session/termhub.py",
         "software-factory/factory/claude_session/cli.py",
         "software-factory/factory/claude_session/ledger.py"

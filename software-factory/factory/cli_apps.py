@@ -309,8 +309,14 @@ def set_app(
     pipeline_default: str | None = None,
     gates: dict[str, str] | None = None,
     requires: dict[str, list[str]] | None = None,
+    review_default: str | None = None,
+    review_min_diff_lines: int | None = None,
+    caps: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Change an app's default delivery level, default pipeline and/or gates.
+
+    v1.9: ``review_default`` (off|on|auto), ``review_min_diff_lines`` (0 = no
+    size rule) and ``caps`` (``{budget_usd|wall_clock_h|max_rounds: value}``).
 
     ``gates``: ``{gate: command}`` keyed by short (``test``) or field name
     (``test_command``); the command ``none`` means the repo has no such check,
@@ -335,10 +341,31 @@ def set_app(
     pipeline = _parse_pipeline(pipeline_default)
     gate_values = _parse_gates(gates)
     req_updates = _parse_requires(requires)
-    if level is None and pipeline is None and not gate_values and not requires:
+    from factory.job_policy import parse_caps, parse_review
+
+    try:
+        review_mode = parse_review(review_default)
+    except ValueError as exc:
+        raise AppAddError("invalid_review", str(exc)) from exc
+    if review_min_diff_lines is not None and int(review_min_diff_lines) < 0:
+        raise AppAddError("invalid_review", "--review-min-diff-lines must be >= 0")
+    try:
+        cap_values = parse_caps(caps or {})
+    except ValueError as exc:
+        raise AppAddError("invalid_cap", str(exc)) from exc
+    if (
+        level is None
+        and pipeline is None
+        and not gate_values
+        and not requires
+        and review_mode is None
+        and review_min_diff_lines is None
+        and not cap_values
+    ):
         raise AppAddError(
             "nothing_to_set",
-            "pass --delivery-default, --pipeline-default, --gate and/or --requires",
+            "pass --delivery-default, --pipeline-default, --gate, --requires, "
+            "--review-default, --review-min-diff-lines and/or --cap",
         )
 
     text = cfg_path.read_text(encoding="utf-8")
@@ -378,6 +405,31 @@ def set_app(
             gblock["requires"] = merged
             new_text = _set_block_child(new_text, "gates", "requires", json.dumps(merged))
         expected["gates"] = gblock
+    if review_mode is not None or review_min_diff_lines is not None:
+        rblock = expected.get("review")
+        if rblock is not None and not isinstance(rblock, dict):
+            raise AppAddError("invalid_config", f"{cfg_path}: review must be a mapping")
+        rblock = dict(rblock or {})
+        if review_mode is not None:
+            rblock["default"] = review_mode
+            # Quoted: a bare ``on``/``off`` is a YAML boolean.
+            new_text = _set_block_child(new_text, "review", "default", _q(review_mode))
+        if review_min_diff_lines is not None:
+            rblock["auto_min_diff_lines"] = int(review_min_diff_lines)
+            new_text = _set_block_child(
+                new_text, "review", "auto_min_diff_lines", str(int(review_min_diff_lines))
+            )
+        expected["review"] = rblock
+    if cap_values:
+        cblock = expected.get("caps")
+        if cblock is not None and not isinstance(cblock, dict):
+            raise AppAddError("invalid_config", f"{cfg_path}: caps must be a mapping")
+        cblock = dict(cblock or {})
+        for key, val in cap_values.items():
+            v: Any = int(val) if key == "max_rounds" else float(val)
+            cblock[key] = v
+            new_text = _set_block_child(new_text, "caps", key, str(v))
+        expected["caps"] = cblock
 
     try:
         AppConfig.model_validate(expected)
@@ -400,6 +452,8 @@ def set_app(
                 (f"gates.{fld}", _gate_raw(raw, fld), _gate_raw(expected, fld))
                 for fld in (*GATE_KEYS, "requires")
             ),
+            ("review", raw.get("review"), expected.get("review")),
+            ("caps", raw.get("caps"), expected.get("caps")),
         )
         if before != after
     ]
@@ -415,10 +469,26 @@ def set_app(
         "config_path": str(cfg_path.resolve()),
         "delivery": {"default": cfg.delivery.default.value},
         "pipeline_default": cfg.pipeline_default,
+        **policy_defaults(cfg),
         "gates": ready["gates"],
         "readiness": _readiness_view(ready),
         "changed": changed,
         "comments_preserved": preserved,
+    }
+
+
+def policy_defaults(cfg: AppConfig) -> dict[str, Any]:
+    """``review`` and ``caps`` as ``app list/show/set`` report them (v1.9)."""
+    return {
+        "review": {
+            "default": cfg.review.default,
+            "auto_min_diff_lines": cfg.review.auto_min_diff_lines,
+        },
+        "caps": {
+            "budget_usd": cfg.caps.budget_usd,
+            "wall_clock_h": cfg.caps.wall_clock_h,
+            "max_rounds": cfg.caps.max_rounds,
+        },
     }
 
 
@@ -653,6 +723,7 @@ def list_registered_apps(root: Path, *, coverage: Any = None) -> list[dict[str, 
                 "path": str(path),
                 "delivery": {"default": cfg.delivery.default.value},
                 "pipeline_default": cfg.pipeline_default,
+                **policy_defaults(cfg),  # v1.9
                 "ticked": coverage.ticked(app),  # v1.6
                 "gates": ready["gates"],
                 "readiness": _readiness_view(ready),
@@ -687,6 +758,7 @@ def show_app(root: Path, app: str) -> dict[str, Any]:
         "config_path": str(cfg_path.resolve()),
         "delivery": {"default": cfg.delivery.default.value},
         "pipeline_default": cfg.pipeline_default,
+        **policy_defaults(cfg),
         "gates": ready["gates"],
         "readiness": _readiness_view(ready),
         "detected": {k: det.gates.get(k, "") for k in GATE_KEYS} if det else {},
@@ -831,6 +903,17 @@ def set_cmd(
     ),
     gate: list[str] | None = typer.Option(None, "--gate", help=_GATE_HELP),
     requires: list[str] | None = typer.Option(None, "--requires", help=_REQUIRES_HELP),
+    review_default: str | None = typer.Option(
+        None, "--review-default", help="v1.9: off | on | auto (solo review for jobs that name none)"
+    ),
+    review_min_diff_lines: int | None = typer.Option(
+        None,
+        "--review-min-diff-lines",
+        help="v1.9: under auto, review a diff at least this big (0 = no size rule)",
+    ),
+    cap: list[str] | None = typer.Option(
+        None, "--cap", help="v1.9: NAME=VALUE (repeat): budget_usd, wall_clock_h, max_rounds"
+    ),
     json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
 ) -> None:
     """Change an app's defaults and gates (edits config.yaml in place)."""
@@ -842,6 +925,9 @@ def set_cmd(
             pipeline_default=pipeline_default,
             gates=_assignments(gate, "--gate"),
             requires=_assignments(requires, "--requires"),  # type: ignore[arg-type]
+            review_default=review_default,
+            review_min_diff_lines=review_min_diff_lines,
+            caps=_assignments(cap, "--cap"),
         )
     except AppAddError as exc:
         _fail(json_out, exc.code, exc.message)
@@ -849,6 +935,8 @@ def set_cmd(
         typer.echo(json.dumps(res))
         return
     typer.echo(f"{res['app']}: {res['config_path']}")
+    typer.echo(f"  review: {res['review']}")
+    typer.echo(f"  caps: {res['caps']}")
     typer.echo(f"  delivery default: {res['delivery']['default']}")
     typer.echo(f"  pipeline default: {res['pipeline_default']}")
     _echo_gates(res)

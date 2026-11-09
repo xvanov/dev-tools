@@ -39,6 +39,18 @@ export type Job = {
   ticked?: boolean | null;
   /** v1.7: when the PR/CI fields were read from GitHub (null: not asked, or GitHub could not be asked) */
   github_as_of?: string | null;
+  /** v1.9: {runtime, until, reason, reset_known, why} while the next step's runtime is at a provider limit */
+  paused?: {
+    [key: string]: unknown;
+  } | null;
+  /** v1.9: the latest runtime failover {from, to, at, why} */
+  failover?: {
+    [key: string]: unknown;
+  } | null;
+  /** v1.9: {review: {mode, source, decision}, caps: {budget_usd, wall_clock_h, max_rounds, source, used}, failover} (null for research/report/plan) */
+  policy?: {
+    [key: string]: unknown;
+  } | null;
   [key: string]: unknown;
 };
 

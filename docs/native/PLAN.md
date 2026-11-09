@@ -1911,6 +1911,40 @@ not in the Map is not done, and a new one gets added there first.
     (`session-resume-unmetered`). Needs either a factory "interactive session" job kind that
     adopts an existing Claude session id, or reading the resumed session's usage from its
     transcript (`~/.claude/projects/**.jsonl`) when it ends.
+- [ ] **8.7 Runtime parity: review, job caps and provider limits on both runtimes (JOBS-API v1.9).**
+  - [ ] **8.7.1 The factory side**: `review: off|on|auto` (default `auto` = review only at
+    `auto_merge`/`push_to_main`; app `review.auto_min_diff_lines`), the solo review step on
+    `claude_session` (a separate `--permission-mode plan` run of the same reviewer prompt; the fix
+    round resumes the dev's own Claude session); job caps $30 / 4 h / 20 rounds counting
+    `total_cost_usd` (park in `blocked_budget_exceeded` with the work committed and, when the
+    factory owns the branch, pushed; `job resume` opens a new window); provider limits (Claude's
+    5-hour/weekly message, 429 + headers) pause the job, trip a per-runtime breaker until the reset
+    and resume by themselves; failover opt-in (`FACTORY_RUNTIME_FAILOVER`, `--failover`) past a
+    30 min wait. Status `paused`, `failover`, `policy`.
+  - [ ] **8.7.2 The PA side**: review and caps in a card's dispatch settings (☰ menu) and in
+    Build's Repos editor; `PA_CLAUDE_POOL_FALLBACK_API` folded into one failover policy
+    (`src/dispatch/failover.ts`, `PA_RUNTIME_FAILOVER`, threshold, always notified); a factory
+    failover raises a notice.
+  - [ ] **8.7.3 Job caps for research/report/plan jobs.** Today they are bounded only by their one
+    5400 s run (≤ 2 rounds); a task job has no `needs_human` state to park in. Add one (with
+    resume opening a cap window, as for code jobs) and check the caps in `dispatch_tasks`.
+  - [ ] **8.7.4 A live budget inside a `claude_session` conversation.** The job budget is checked
+    between steps and between gate rounds (`total_cost_usd` arrives per round); one long round can
+    overrun it. Read the stream's per-turn usage and stop the round at the cap, as the `api`
+    watchdog does.
+  - [ ] **8.7.5 The chain pipeline's review on `claude_session`.** `chain` + `claude_session`
+    keeps routes.yaml's reviewer (`api`, metered) for its model independence. Decide whether it
+    should run as a read-only Claude run like solo, and how independence is kept (a different
+    Claude model for the reviewer, `--model claude_reviewer=`).
+  - [ ] **8.7.6 Rate-limit headers from the OpenHands sandbox.** An `api` dev run's 429 reaches the
+    handler as error text only, so its reset comes from the message or the backoff; a reviewer /
+    SM / tech-writer `text_run` exception carries `response.headers`. Pass the headers out of the
+    sandbox run.
+  - [ ] **8.7.7 Named zones on Windows.** `resets 3pm (Europe/Sofia)` needs `tzdata` for
+    `zoneinfo`; without it the factory reads the time as local, right only when the factory
+    machine is in that zone. Add `tzdata` to the factory's dependencies.
+  - [ ] **8.7.8 Wake `factory serve` at a breaker's reset** instead of waiting for its next
+    periodic tick (`FACTORY_SERVE_INTERVAL_S`, 300 s).
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
   stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
   `research` and `whats-on` run live.

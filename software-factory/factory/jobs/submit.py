@@ -99,6 +99,9 @@ class SubmitRequest:
     runtime: str = "api"  # v1.2: api | claude_session
     branch: str | None = None  # v1.3: continue on this existing branch
     pr: int | None = None  # v1.3: continue on this existing PR
+    review: str | None = None  # v1.9: off | on | auto (None = the app's)
+    caps: list[str] = field(default_factory=list)  # v1.9: NAME=VALUE
+    failover: str | None = None  # v1.9: on | off (None = FACTORY_RUNTIME_FAILOVER)
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +316,29 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             raise JobError("invalid_argument", f"{flag} must be a single line (no CR/LF)")
     external_id = (req.external_id or "").strip() or None
 
+    # v1.9: review mode, job caps, failover (factory/job_policy.py).
+    from factory.job_policy import parse_caps, parse_failover, parse_review
+
+    try:
+        review = parse_review(req.review)
+    except ValueError as exc:
+        raise JobError("invalid_review", str(exc)) from exc
+    try:
+        caps = parse_caps(list(req.caps or []))
+    except ValueError as exc:
+        raise JobError("invalid_cap", str(exc)) from exc
+    try:
+        failover = parse_failover(req.failover)
+    except ValueError as exc:
+        raise JobError("invalid_failover", str(exc)) from exc
+    policy_meta: dict[str, Any] = {}
+    if review is not None:
+        policy_meta["review"] = review
+    if caps:
+        policy_meta["caps"] = caps
+    if failover is not None:
+        policy_meta["failover"] = failover
+
     # v1.2: kind + runtime. The defaults (code, api) are exactly v1/v1.1.
     kind = normalize_kind(req.kind)
     if kind is None:
@@ -343,8 +369,13 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
     if (req.branch or "").strip() and req.pr is not None:
         raise JobError("invalid_argument", "pass only one of --branch or --pr")
     if kind in TASK_KINDS:
+        if review is not None:
+            raise JobError(
+                "invalid_argument", f"--review only applies to code jobs (got --kind {kind})"
+            )
         return _submit_task(
-            root, req, kind, runtime, title, source, external_id, model_flags, claude_model
+            root, req, kind, runtime, title, source, external_id, model_flags, claude_model,
+            policy_meta=policy_meta,
         )
 
     pipeline = (req.pipeline or "auto").strip().lower()
@@ -441,6 +472,8 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
                 # v1.3, written only for a pickup so a v1 job's frontmatter is
                 # unchanged (factory/chain/pickup.py reads it at spawn).
                 meta["base"] = pickup.frontmatter()
+            # v1.9, written only when given (absent = the app's / defaults).
+            meta.update(policy_meta)
             if runtime != RUNTIME_API:
                 # Written only when not the default, so a v1 job's frontmatter
                 # is exactly what it was.
@@ -608,6 +641,8 @@ def _result(
         "kind": "code",
         "runtime": str(meta.get("runtime") or "api"),
         "base": base_view(meta),
+        # v1.9: the resolved review / caps / failover the job will run under.
+        "policy": _policy_of(cfg, meta),
     }
     # Additive (not in the v1 success shape): a job with no flow.md, no
     # api_spec.md and no explore tag fails the backpressure gate
@@ -667,6 +702,8 @@ def _submit_task(
     external_id: str | None,
     model_flags: list[str],
     claude_model: str | None,
+    *,
+    policy_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A research/report job: no direction, no PR. See ``factory.jobs.tasks``."""
     from factory.job_routing import validate_model_map
@@ -716,6 +753,7 @@ def _submit_task(
             claude_model=claude_model,
             source=source,
             external_id=external_id,
+            extra=policy_meta,
         )
     out = _task_result(ref, created=created)
     if created:
@@ -725,6 +763,12 @@ def _submit_task(
 
         request_wake(root, ref.app, reason=f"submit {ref.job_id}")
     return out
+
+
+def _policy_of(cfg: Any, meta: dict[str, Any]) -> dict[str, Any] | None:
+    from factory.job_policy import policy_view, resolve_policy
+
+    return policy_view(resolve_policy(cfg, meta))
 
 
 def _task_result(ref: TaskRef, *, created: bool) -> dict[str, Any]:

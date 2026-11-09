@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8 2026-11-09, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8 and v1.9 2026-11-09, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -142,11 +142,13 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
 - **`solo` is accepted** (production engine: `factory/chain/solo.py`). A solo story runs
   SM → ONE dev conversation (5400 s wall clock, up to 3 in-conversation gate rounds, a
   no-progress abort, ≤ 3 dev attempts) → [review] → tech-writer → docs-enforcer → the
-  story's delivery level → the SAME merge gates and CI as `chain`. The review runs on the
-  `api` runtime only: the chain's reviewer persona (routes.yaml's model, never a dev tier's;
-  one resolving to the dev's model is refused) for at most 2 cycles, so a blocking finding
-  gets ONE fix round and one that survives it parks the story in
-  `blocked_review_nonconvergent`. A `claude_session` solo story has no reviewer.
+  story's delivery level → the SAME merge gates and CI as `chain`. Whether the review runs is
+  the job's `review` setting (v1.9: `off|on|auto`, default `auto` = only at `auto_merge` /
+  `push_to_main`). It runs on the story's runtime: on `api` the chain's reviewer persona
+  (routes.yaml's model, never a dev tier's; one resolving to the dev's model is refused), on
+  `claude_session` the same prompt in a separate read-only Claude Code run (v1.9). At most 2
+  cycles either way, so a blocking finding gets ONE fix round and one that survives it parks
+  the story in `blocked_review_nonconvergent`.
   The acceptance oracle is NOT required: when the app enables it, it is a required merge gate
   and its leak check blocks every solo dev dispatch; otherwise the independent checks are
   the test command, the merge gates and CI. A solo job is always ONE story and ONE PR: PM's
@@ -550,9 +552,9 @@ report `loggedIn: true`, or when it reports a login other than `claude.ai` (an A
 bill the key, which this runtime exists to avoid). The check runs at submit only; a stamped story
 whose CLI later disappears fails its dev step as infrastructure (bounded retries, no dev retry
 spent). It cannot see the subscription's usage limit (that costs a model call): a run that hits it
-ends at once with Claude's message (`Claude Code error: You've hit your … limit …`), which a
-research/report job carries in `why` (state `failed`) and a code job's dev step treats as
-infrastructure (no dev retry spent; the bounded infra retries, then the story blocks loudly).
+ends at once with Claude's message (`Claude Code error: You've hit your … limit …`). Since v1.9
+that pauses the job until the limit resets (see "Provider limits" in v1.9), for every job kind;
+it is no longer `failed`, and no dev retry is spent.
 
 **`factory job report`** on a code job → `{"error": "no_report"}` (exit 1); an unknown id →
 `not_found` as for `status`.
@@ -687,8 +689,9 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
 - Local dev loop (tests until green): yes. Chain dev retries; solo / `claude_session` run
   in-conversation gate rounds.
 - Local review loop: yes for `chain` (reviewer ↔ dev, 3 cycles; a medium finding is a
-  cycle) and `api`-runtime `solo` (2 cycles: one fix round, and only for a high-severity
-  finding; medium and low are posted on the PR). `claude_session` `solo` has no reviewer.
+  cycle) and for `solo` on either runtime when the job's `review` setting says so (v1.9; 2
+  cycles: one fix round, and only for a high-severity finding; medium and low are posted on
+  the PR). The default, `auto`, reviews only `auto_merge` / `push_to_main` jobs.
 - CI watch + CI-fix loop on the PR: yes. `draft_pr`/`pr` watch before delivery; `auto_merge`
   fixes before merging; at most 3 cycles. The watch (and `ci` in `factory job status`, and
   the `push_to_main` main-green hold) counts only the checks that decide something
@@ -804,3 +807,112 @@ session outside the factory, unmetered and invisible on Build).
 
 Refusals are research's: `--branch`/`--pr` → `invalid_argument`; a delivery other than `none` →
 `invalid_delivery`. A factory older than v1.8 refuses `--kind plan` with `invalid_kind`.
+
+## v1.9 additions (2026-11-09): review on both runtimes, job caps, provider limits
+
+Additive: a job that sends none of the new flags runs as before, except that `auto` (the new
+review default) no longer reviews an `api` solo job below `auto_merge`, and a provider limit
+pauses a job instead of failing it.
+
+### Submit: new flags
+
+```
+--review off|on|auto        code jobs; default: the app's review.default, else auto
+--cap NAME=VALUE            repeatable; budget_usd=30, wall_clock_h=4 (or 90m), max_rounds=20;
+                            0 = no such cap; default: the app's caps, else those values
+--failover on|off           default: FACTORY_RUNTIME_FAILOVER (off)
+```
+
+Written to the direction frontmatter (`review`, `caps`, `failover`; `job.yaml` for a task job)
+only when given. Resolved job > app > default and stamped on every story at spawn
+(`StoryRecord.policy_json`, `factory/job_policy.py`), like the delivery level. Refusals:
+`invalid_review`, `invalid_cap`, `invalid_failover`; `--review` on a research/report/plan job
+→ `invalid_argument`. Success JSON adds `"policy"` (shape below).
+
+### Review: `off | on | auto`
+
+Applies to the `solo` pipeline (the `chain` always reviews; that is what the chain is).
+
+- `on`: reviewed. `off`: not reviewed. `auto` (default): reviewed when the story's delivery
+  level is `auto_merge` or `push_to_main` (no human between the change and the default
+  branch). An app's `review.auto_min_diff_lines: N` also reviews, under `auto`, any diff of at
+  least N changed lines (added + deleted vs the base).
+- Decided once, when the dev first goes green, and recorded on the story (`review_decision`
+  event, `policy.review.decision` in status). A story spawned before v1.9 keeps the old rule
+  (`api` reviewed, `claude_session` not).
+- The review runs on the story's runtime. `api`: one text call to the chain's reviewer (as
+  before). `claude_session`: the same persona and prompt (ask, packet, diff) in a SEPARATE
+  Claude Code run started with `--permission-mode plan` (read-only, enforced by Claude Code)
+  in the story worktree, so it can open any file. Its final message (or `ExitPlanMode` plan)
+  is the review JSON. A blocking finding goes back into the dev's own Claude session
+  (`claude --resume <session>`) for the one fix round; if that session cannot be resumed, a
+  fresh dev conversation gets the findings instead. A Claude review run that returns no verdict
+  is retried (at most 2 in a row, then `blocked_review_nonconvergent`; a provider limit waits
+  instead). Its independence is a fresh context with no write access, not a different model.
+- The `chain` pipeline's reviewer stays on routes.yaml (`api`) on either runtime.
+
+### Job caps
+
+Per job, on either runtime: `budget_usd` (metered `cost_usd` plus each Claude Code run's
+`total_cost_usd`, so one dollar figure means the same on both runtimes), `wall_clock_h` (from
+the job's first agent run) and `max_rounds` (agent runs: dev conversations, review runs,
+research/report runs). Defaults $30, 4 h, 20; per app (`caps:` in config.yaml, `factory app
+set --cap`), per job (`--cap`).
+
+- Checked before every agent step. A dev conversation is also bounded by what is left: its wall
+  clock, its `api` live spend cap, and on `claude_session` no gate round starts past the budget.
+- Reaching a cap parks the story in `blocked_budget_exceeded` with `last_rejection_reason`
+  `job_cap: …` (the job reads `needs_human`), never `failed`. The work is saved first: a dirty
+  worktree is committed on the story branch (`wip(factory): … paused at a job cap`) and, when
+  the factory owns the branch and the level pushes (`branch` and up), the branch is pushed
+  (plain push, never forced; a picked-up branch is never pushed).
+- `factory job resume` continues it and opens a new cap window (state.yaml
+  `caps_window_started_at`): usage counts from there, so Continue grants the caps again.
+- Separate and unchanged: `factory_settings.yaml` `caps.per_story_spend_usd` (metered only) and
+  the daily/hourly caps.
+- Not yet for research/report/plan jobs (one bounded run each, 5400 s): see PLAN.md.
+
+### Provider limits (`factory/provider_limits.py`)
+
+A provider limit is transient, never a failed job and never a dev attempt:
+
+- Recognised: Claude's subscription messages (`You've hit your limit · resets 3pm
+  (Europe/Sofia)`, `5-hour limit reached ∙ resets 3pm`, `Claude usage limit reached. Your limit
+  will reset at 3pm (America/New_York).`, `… resets Nov 12, 9am …`, the older `Claude AI usage
+  limit reached|<epoch>`) and API 429s (`RateLimitError`, `429`, `Too Many Requests`) with
+  `Retry-After` (seconds or a date), `retry-after-ms`, `x-ratelimit-reset-*` (`1m30s`),
+  `anthropic-ratelimit-*-reset` (RFC 3339) or "try again in 20s". The reset time is parsed when
+  present (a named zone needs tzdata, else local time); otherwise exponential backoff
+  (`claude_session` 15 min doubling to 5 h, `api` 60 s doubling to 30 min).
+- The step's runtime gets a circuit breaker (`<state>/runtime_limits.json`): until the reset no
+  step starts on it. A code story waits where it is (no state change, no retry, its worktree
+  kept); a research/report/plan job goes back to `queued`. When the reset passes the next tick
+  dispatches it: auto-resume, nothing to click. A step's runtime: dev on the story's runtime,
+  review per above, every other model step (`sm`, `tech_writer`, docs) on `api`.
+- Failover to the other runtime is off by default. `FACTORY_RUNTIME_FAILOVER=on` (global) or
+  `--failover on` (job; wins either way) turns it on; it happens only when the wait exceeds
+  `FACTORY_FAILOVER_MIN_WAIT_MIN` (default 30) and the other runtime is neither limited nor
+  missing. It re-stamps the story's (or task's) runtime, the one exception to "stamped once",
+  and is always recorded (`runtime_failover` event, status `failover`) so the caller notifies.
+
+### Status / list: new fields
+
+```
+"paused": {"runtime", "until", "reason", "reset_known", "why"} | null,
+"failover": {"from", "to", "at", "why", "until"?, "story_id"?} | null,
+"policy": {"review": {"mode", "source", "decision": {"review", "reason", "diff_lines"} | null},
+           "caps": {"budget_usd", "wall_clock_h", "max_rounds", "source": {...},
+                    "used": {"spend_usd", "rounds", "wall_s", "since"} | null},
+           "failover": "on" | "off" | null} | null
+```
+
+A paused job reads `state: "blocked"`, `why: "paused: Claude limit, resumes 15:00"` (local time;
+a weekday when not today) and is never `stalled`. `policy` is null for research/report/plan.
+
+### App commands
+
+`factory app set --review-default off|on|auto --review-min-diff-lines N --cap NAME=VALUE`
+(repeatable); `app set`, `app show` and every `app list` row add
+`"review": {"default", "auto_min_diff_lines"}` and `"caps": {"budget_usd", "wall_clock_h",
+"max_rounds"}`. Errors add `invalid_review`, `invalid_cap`.
+

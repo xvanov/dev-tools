@@ -160,6 +160,8 @@ def run_claude(
     success: Callable[[ConversationResult], bool] | None = None,
     links: dict[str, Any] | None = None,
     permission_mode: str | None = None,
+    resume_session: str | None = None,
+    budget_left_usd: Callable[[], float | None] | None = None,
 ) -> ClaudeRunOutcome:
     from factory.claude_session.cli import claude_binary
 
@@ -255,6 +257,8 @@ def run_claude(
                 add_dirs=add_dirs,
                 permission_mode=permission_mode,
                 argv_wrap=argv_wrap,
+                resume_session=resume_session,
+                budget_left_usd=budget_left_usd,
             )
             tel["stop_reason"] = conv.stop_reason
             tel["rounds"] = len(conv.rounds)
@@ -330,6 +334,8 @@ def claude_dev_run(
     no_progress_abort_s: int | None = None,
     brief_addendum: str | None = None,
     context_dir: str | None = None,
+    resume_session_id: str | None = None,
+    job_budget_left_usd: float | None = None,
     **_ignored: Any,
 ) -> Any:
     """The claude_session twin of ``runner.sandbox_run(persona="dev", …)``.
@@ -379,26 +385,44 @@ def claude_dev_run(
         / "claude_runs"
         / f"{app or 'app'}-{story_id or 0}-{stamp}"
     )
-    outcome = run_claude(
-        db_path=db_path,
-        persona="dev",
-        cwd=Path(repo_path),
-        run_dir=run_dir,
-        prompt=prompt,
-        title=f"factory dev · {app}:{direction_id} story {story_id}",
-        model=model,
-        wall_clock_s=float(wall_clock_timeout_s or 1800),
-        story_id=story_id,
-        app=app,
-        direction_id=direction_id,
-        story_path=str(story_path),
-        gate_check=gate_check,
-        max_gate_rounds=max_gate_rounds,
-        no_progress_abort_s=no_progress_abort_s,
-        cancelled=job_cancel_probe(db_path, app, direction_id),
-        success=None,
-        links={"external": job_external_id(software_factory_root, app, direction_id)},
-    )
+    def _go(text: str, resume: str | None, sub_dir: str) -> ClaudeRunOutcome:
+        return run_claude(
+            db_path=db_path,
+            persona="dev",
+            cwd=Path(repo_path),
+            run_dir=run_dir / sub_dir if sub_dir else run_dir,
+            prompt=text,
+            title=f"factory dev · {app}:{direction_id} story {story_id}",
+            model=model,
+            wall_clock_s=float(wall_clock_timeout_s or 1800),
+            story_id=story_id,
+            app=app,
+            direction_id=direction_id,
+            story_path=str(story_path),
+            gate_check=gate_check,
+            max_gate_rounds=max_gate_rounds,
+            no_progress_abort_s=no_progress_abort_s,
+            cancelled=job_cancel_probe(db_path, app, direction_id),
+            success=None,
+            links={"external": job_external_id(software_factory_root, app, direction_id)},
+            resume_session=resume,
+            budget_left_usd=(lambda: job_budget_left_usd)
+            if job_budget_left_usd is not None
+            else None,
+        )
+
+    outcome: ClaudeRunOutcome | None = None
+    if resume_session_id and reviewer_findings:
+        # JOBS-API v1.9: the review's findings go back into the dev's OWN
+        # conversation (``--resume``), which still holds the job, the repo
+        # reading and its reasoning. If that session cannot be resumed (gone,
+        # another machine) and nothing was done, start fresh with everything.
+        outcome = _go(fix_round_message(reviewer_findings), resume_session_id, "")
+        c = outcome.conversation
+        if not c.any_result and c.tokens_out == 0 and not c.cancelled:
+            outcome = _go(prompt, None, "fresh")
+    if outcome is None:
+        outcome = _go(prompt, None, "")
     conv = outcome.conversation
     if gate_check is not None:
         verdict = conv.final_verdict
@@ -437,10 +461,105 @@ def claude_dev_run(
         usage_reliable=conv.any_result or None,
         gate_rounds=list(conv.gate_rounds),
         gate_stop_reason=conv.stop_reason,
+        agent_session_id=conv.session_id,
+        provider_error=conv.error if conv.stop_reason == "claude_error" else None,
     )
 
 
+def fix_round_message(reviewer_findings: dict[str, Any]) -> str:
+    """The message a resumed dev session gets for a review fix round: the
+    findings, rendered as the fresh prompt renders them, and the rules."""
+    from factory.runner import _build_initial_message
+
+    marker = "\u2063FIX-ROUND\u2063"
+    full = _build_initial_message(
+        persona="dev",
+        story_text=marker,
+        context_prelude="",
+        persona_prompt="",
+        reviewer_findings=reviewer_findings,
+    )
+    findings = full.split(marker, 1)[1].strip() if marker in full else full
+    return (
+        "# An independent review of your change found blocking issues\n\n"
+        "A separate read-only reviewer read your diff. Fix what it found in this "
+        "same working tree, keep the tests green, and do not touch unrelated code. "
+        "This is the ONE fix round: a blocking finding that survives it stops the "
+        "job for a human. The factory grades your tree again when you stop.\n\n"
+        f"{findings}\n\n"
+        "End with the `SELF_SUMMARY:` block again.\n"
+    )
+
+
+_CLAUDE_REVIEW_FOOTER = """\
+# Running as Claude Code inside the software factory: the REVIEW step
+
+- You are the independent reviewer. You did not write this change; judge it.
+- This run is READ-ONLY (Claude Code plan permission mode): read, grep and
+  list any file in the working directory (the story's worktree, with the
+  change applied) and run read-only git (`git diff`, `git log`). Do not try
+  to edit anything.
+- Your FINAL message must be ONLY the review JSON object your instructions
+  describe. If you use ExitPlanMode, the plan you submit must be that JSON.
+"""
+
+#: One review run's wall clock. A review reads; it does not iterate.
+CLAUDE_REVIEW_WALL_CLOCK_S = 1800
+
+
+def claude_review_run(
+    *,
+    prompt: str,
+    worktree: Path,
+    software_factory_root: Path,
+    db_path: Path,
+    model: str | None,
+    story_id: int | None,
+    app: str | None,
+    direction_id: str | None,
+    wall_clock_s: float = CLAUDE_REVIEW_WALL_CLOCK_S,
+) -> tuple[str, ConversationResult]:
+    """The review step on ``claude_session`` (JOBS-API v1.9).
+
+    The same reviewer prompt the api runtime sends to ``text_run``, run by a
+    separate Claude Code conversation in ``plan`` permission mode (read-only,
+    enforced by Claude Code, not by the prompt), in the story worktree so it
+    can open any file. Returns the review text (the last ``ExitPlanMode`` plan,
+    else the final message) for ``handlers._parse_reviewer_result``, and the
+    conversation (its ``error`` carries a provider-limit message).
+    """
+    from datetime import UTC, datetime
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = (
+        state_dir(Path(software_factory_root))
+        / "claude_runs"
+        / f"{app or 'app'}-{story_id or 0}-review-{stamp}"
+    )
+    outcome = run_claude(
+        db_path=db_path,
+        persona="reviewer",
+        cwd=Path(worktree),
+        run_dir=run_dir,
+        prompt=f"{prompt.rstrip()}\n\n---\n\n{_CLAUDE_REVIEW_FOOTER}",
+        title=f"factory review · {app}:{direction_id} story {story_id}",
+        model=model,
+        wall_clock_s=float(wall_clock_s),
+        story_id=story_id,
+        app=app,
+        direction_id=direction_id,
+        cancelled=job_cancel_probe(db_path, app, direction_id),
+        success=lambda c: bool(c.any_result) and not c.error,
+        links={"external": job_external_id(software_factory_root, app, direction_id)},
+        permission_mode="plan",
+    )
+    conv = outcome.conversation
+    return ("" if conv.error else conv.plan_text), conv
+
+
 __all__ = [
+    "CLAUDE_REVIEW_WALL_CLOCK_S",
+    "claude_review_run",
     "ClaudeRunOutcome",
     "claude_dev_run",
     "job_cancel_probe",

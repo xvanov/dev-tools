@@ -578,10 +578,14 @@ def test_cli_list_json_shape(cli, factory_root: Path, tmp_path: Path) -> None:
             "path",
             "delivery",
             "pipeline_default",
+            "review",  # v1.9
+            "caps",  # v1.9
             "ticked",
             "gates",
             "readiness",
         }
+        assert row["review"] == {"default": "auto", "auto_min_diff_lines": 0}
+        assert row["caps"] == {"budget_usd": 30.0, "wall_clock_h": 4.0, "max_rounds": 20}
     assert apps["w"]["delivery"] == {"default": "draft_pr"}
     assert apps["legacy"]["delivery"] == {"default": "auto_merge"}
     assert apps["legacy"]["path"] == str((factory_root.parent / "legacy").resolve())

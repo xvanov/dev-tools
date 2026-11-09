@@ -4,7 +4,7 @@ Operator decision 2026-11-02, built on the B.1 design (``b1_solo_mode_design``).
 A story stamped ``pipeline: solo`` at spawn (``factory/job_routing.py``) runs:
 
     SM → dev (ONE long conversation, in-conversation gate feedback)
-       → TESTS_GREEN → [review, api runtime only] → tech_writer → docs_enforcer
+       → TESTS_GREEN → [review, per the job's review setting] → tech_writer → docs_enforcer
        → PR / delivery level
        → the SAME merge gates (``gates/evaluator.required_gate_labels``) → deploy
 
@@ -25,7 +25,7 @@ and ``b1_phase1a_reviewer_ablation_result``.
 The mode is read from the STORY ROW (``StoryRecord.pipeline``), never from live
 config: a story spawned under one mode finishes under it.
 
-**Review before delivery (API runtime).** The ablation's REWORK came from up to
+**Review before delivery (either runtime, JOBS-API v1.9).** The ablation's REWORK came from up to
 three review cycles. What having NO review cost is a diff that passes its tests
 and lint and is still wrong: the deepseek-pr job's PR #63 ran ``git`` without a
 ``cwd``, hardcoded a port the config owns and added an unrequested help entry
@@ -35,12 +35,16 @@ must differ from every dev tier — with at most ``SOLO_MAX_REVIEW_CYCLES``
 cycles: a ``high`` finding gets ONE fix round in a fresh dev conversation, and
 a blocker that survives it parks the story in ``blocked_review_nonconvergent``.
 ``medium`` and ``low`` findings are posted on the PR and do not spend the round.
-for a human instead of shipping. That review is one text call and zero tool
+for a human instead of shipping. Whether a story is reviewed is the job's
+``review`` setting (``off|on|auto``, ``factory/job_policy.py``; ``auto`` =
+only when delivery is ``auto_merge``/``push_to_main``). On ``api`` that review is one text call and zero tool
 turns, so the prompt carries the job's ask verbatim and the bounded content of
 the files the diff touches plus the files the ask or the context names
 (``review_packet``): a hunk cannot show that a new command runs ``git`` with no
-``cwd`` when the precedent file does. A ``claude_session`` solo story keeps no
-reviewer: its dev is Claude Code in a session the operator can watch and steer.
+``cwd`` when the precedent file does. On ``claude_session`` the same prompt
+goes to a separate Claude Code run in ``plan`` permission mode (read-only, it
+may open any file), and a blocking finding is sent back into the dev's own
+Claude session (``--resume``) for the one fix round.
 
 **Independence.** Beyond that review, the checks the dev cannot influence are the
 app's merge gates and CI. The acceptance oracle is used when the app enables it
@@ -106,13 +110,35 @@ def is_solo(story: Any) -> bool:
 
 
 def solo_reviews(story: Any) -> bool:
-    """True when a solo story is reviewed before delivery: the ``api`` runtime only.
+    """True when a solo story is reviewed before delivery (JOBS-API v1.9).
 
-    Reads the spawn stamps (``pipeline``, ``runtime``) like ``is_solo``.
+    Either runtime: the review step runs on the story's runtime
+    (``handlers.handle_review``). Whether it runs is the job's ``review``
+    setting (``factory/job_policy.py``): the decision recorded when the dev
+    first went green, else the stamp alone (``off`` / ``on`` / ``auto`` =
+    delivery ``auto_merge``/``push_to_main``). A story spawned before v1.9
+    keeps the old rule (api reviewed, claude_session not).
+    """
+    if not is_solo(story):
+        return False
+    from factory.job_policy import review_wanted
+
+    return review_wanted(story)
+
+
+def review_runtime(story: Any) -> str:
+    """The runtime the review STEP runs on.
+
+    A solo story's review runs on its own runtime (Claude Code, read-only, for
+    ``claude_session``). The chain's reviewer stays on routes.yaml (``api``):
+    its model independence from the dev tiers is enforced there, and v1.2
+    documents chain + claude_session as "the dev persona only is Claude Code".
     """
     from factory.jobs.kinds import RUNTIME_CLAUDE
 
-    return is_solo(story) and (getattr(story, "runtime", None) or "api") != RUNTIME_CLAUDE
+    if is_solo(story) and (getattr(story, "runtime", None) or "api") == RUNTIME_CLAUDE:
+        return RUNTIME_CLAUDE
+    return "api"
 
 
 def requires_production_delta(app_config: Any) -> bool:
@@ -978,6 +1004,54 @@ def _changed_paths_ro(repo: Path, base_branch: str) -> set[str] | None:
     return {p for p in (tracked.splitlines() + untracked.splitlines()) if p.strip()}
 
 
+def diff_lines_ro(repo: Path, base_branch: str) -> int | None:
+    """Added + deleted lines vs the merge-base (committed and not), or None.
+
+    Untracked files are not counted (``git diff`` does not see them); the
+    green path commits the tree first, so at decision time they are tracked.
+    """
+    mb = _merge_base(repo, base_branch)
+    if mb is None:
+        return None
+    rc, out = _git_ro(repo, "diff", "--numstat", mb)
+    if rc != 0:
+        return None
+    total = 0
+    for line in out.splitlines():
+        parts = line.split("	")
+        if len(parts) < 3:
+            continue
+        for n in parts[:2]:
+            if n.isdigit():  # "-" = binary
+                total += int(n)
+    return total
+
+
+def record_review_decision(
+    story: Any, repo: Path | None, base_branch: str, software_factory_root: Path
+) -> dict[str, Any] | None:
+    """At a solo story's first green: decide review once (job_policy) and log it."""
+    if not is_solo(story):
+        return None
+    from factory.job_policy import decide_review, recorded_decision
+
+    if recorded_decision(story) is not None:
+        return None
+    lines = diff_lines_ro(Path(repo), base_branch) if repo is not None else None
+    dec = decide_review(story, lines)
+    if getattr(story, "id", None) is not None:
+        from factory.chain.event_log import log_story_event
+
+        log_story_event(
+            story.id,
+            "review_decision",
+            {**dec, "review_runtime": review_runtime(story)},
+            software_factory_root=software_factory_root,
+            slug_hint=getattr(story, "slug", None),
+        )
+    return dec
+
+
 def branch_is_empty_ro(repo: Path, base_branch: str) -> bool | None:
     """True = no change vs the merge-base (committed or not); None = unknown."""
     paths = _changed_paths_ro(repo, base_branch)
@@ -1050,11 +1124,12 @@ def checks_plan(
     in_conv.extend(name for name, _ in gates_static)
     plan = {
         "pipeline": SOLO,
+        "review_runtime": review_runtime(story),
         "reviewer": (
             f"independent review before delivery (max {SOLO_MAX_REVIEW_CYCLES} cycles: "
             "one fix round on a high finding; medium and low are PR comments)"
             if solo_reviews(story)
-            else "skipped (solo pipeline, claude_session runtime)"
+            else "skipped (the job's review setting)"
         ),
         "in_conversation_checks": in_conv,
         "test_command": getattr(gates, "test_command", None),
@@ -1097,7 +1172,10 @@ __all__ = [
     "oracle_leak_precheck",
     "requires_production_delta",
     "solo_reviews",
+    "review_runtime",
     "spend_cap_for",
     "branch_is_empty_ro",
+    "diff_lines_ro",
+    "record_review_decision",
     "production_delta_ro",
 ]

@@ -198,6 +198,11 @@ def resume_job(root: Path, job_id: str, *, github: bool = True) -> dict[str, Any
 
     now = datetime.now(UTC).isoformat()
     was_cancelled = _uncancel(root, ref, now)
+    # JOBS-API v1.9: Continue grants the job caps again (a new window), so a
+    # job parked at its budget / wall clock / rounds does not re-park at once.
+    from factory.job_caps import open_window
+
+    open_window(Path(ref.dir_path), now)
 
     resumed: list[dict[str, Any]] = []
     for plan, story in plans:

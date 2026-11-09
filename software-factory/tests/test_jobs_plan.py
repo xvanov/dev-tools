@@ -138,13 +138,34 @@ def test_claude_plan_job_that_errors_fails(root: Path, monkeypatch: pytest.Monke
     import factory.claude_session.run as run_mod
 
     def fake_run_claude(**kw: Any) -> Any:
-        conv = ConversationResult(stop_reason="claude_error", error="Claude Code error: You've hit your limit")
+        conv = ConversationResult(stop_reason="claude_error", error="Claude Code error: API Error: 500 internal")
         return run_mod.ClaudeRunOutcome(conv, 1, None)
 
     monkeypatch.setattr(run_mod, "run_claude", fake_run_claude)
     job = _submit_plan("--runtime", "claude_session")
     final = tasks.run_task(root, job["job_id"])
-    assert final["state"] == "failed" and "hit your limit" in final["why"]
+    assert final["state"] == "failed" and "500 internal" in final["why"]
+
+
+def test_claude_plan_job_at_its_limit_is_paused_not_failed(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v1.9: the subscription limit pauses the job (queued + breaker), never fails it."""
+    import factory.claude_session.run as run_mod
+
+    def fake_run_claude(**kw: Any) -> Any:
+        conv = ConversationResult(
+            stop_reason="claude_error",
+            error="Claude Code error: You've hit your limit \u00b7 resets 3pm (UTC)",
+        )
+        return run_mod.ClaudeRunOutcome(conv, 1, None)
+
+    monkeypatch.setattr(run_mod, "run_claude", fake_run_claude)
+    job = _submit_plan("--runtime", "claude_session")
+    final = tasks.run_task(root, job["job_id"])
+    assert final["state"] == "queued"
+    assert final["paused"]["runtime"] == "claude_session"
+    assert final["why"].startswith("paused: Claude limit, resumes ")
 
 
 def test_research_still_skips_permissions(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
