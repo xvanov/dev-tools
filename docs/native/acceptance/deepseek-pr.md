@@ -1,5 +1,146 @@
 # Acceptance review: `deepseek-pr` (plan 8.3)
 
+## Re-review, 2026-11-09
+
+**Verdict: FAIL.** The outcome happened. The factory opened a ready PR (#78) through the metered
+DeepSeek API runtime and the diff is in scope. The git fallback now runs in the checkout, so the
+blocker from #63 and #72 is gone, and Kimi approved with only lows and no fix round. The context
+update is in the PR. CI was not green, and after the e2e had already returned the factory started
+a CI-fix that took the job from $1.42 to **$2.34**, over the $2 ceiling. Two hops still miss the
+Map's current `max_ms` (D27: report the numbers, the lead resets the targets): the tool call
+**1165 ms** (target 1000) and the worker hop **2207 ms** (target 200). Approval to "started" is
+**275 ms** (target 1000).
+
+Load before the run was 0.23 on 16 cores. Serve had restarted onto `9cd5567` at 01:56:29Z, and the
+run started about nine minutes later. At 02:12Z the load was 0.83. Another e2e opened a dummy PR
+(#75) at 02:07Z, during this job's dev step.
+
+| | |
+|---|---|
+| Date | 2026-11-09 02:03Z to 02:29Z |
+| Stack | personal (the personal machine, Linux): PA on :7300, factory serve on :7330, its termhub |
+| Commit served | `9cd55676963b2e09580f8cb7cf45dcbfe0279f28` (GET /api/version, and the checkout HEAD). Factory serve logged "checkout moved … -> 9cd5567" and restarted at 01:56:29Z. |
+| Job | `dev-tools:008` (card #7, run 9, story 202, steps 51057 pm, 51058 sm, 51059 dev, 51060 reviewer, 51061 tech_writer; 51062 is the later CI-fix dev). Runtime `api`, delivery `pr`, solo pipeline. Marker `e2e-b3efe900-4b04-40a4-8a22-2e5e8d88c59f`. |
+| PR | [#78](https://github.com/xvanov/dev-tools/pull/78), head `d4ef131` (commits `71f470a` feat, merge of origin/main `ccec530`, `d4ef131` context). Closed after review, branch deleted. No later commit landed. |
+| Reviewer | a fresh session that did not implement the workflow or its fixes (D10) |
+| Criteria | `architecture.json` → `examples[deepseek-pr].acceptance` |
+
+### How it was run
+
+1. `node bin\pa.js e2e deepseek-pr --dry-run --on <the personal machine> --stack personal` from the
+   laptop's live checkout passed **23 of 23 checks** (map 2, config 3, build 5, plan 3, run 1,
+   mcp 7, policy 1, github 1).
+2. The real run, once, with `--keep` (the remote runner adds `--report`): 02:05:17Z to 02:17:52Z
+   on the personal machine. It passed **100 of 100 view checks** and exits 1 on the jarvis and
+   worker hops. The laptop lost its path to the machine for a few minutes after the start; the
+   run continued there, and the report came back when the path returned.
+3. Outputs inspected by hand: the PR's metadata, checks and diff with `gh` (owner token; the
+   active account was not changed); `job status` through serve's `/api/cli`; the story log; the
+   dev and reviewer `stream.jsonl` (commands, the review JSON, usage); `/api/state` on that PA.
+   The dispatch journal line with the per-lap `timings_ms` was not in the window searched, so the
+   jarvis split below is the e2e's own note.
+4. Cleanup: a CI-fix dev had already started (02:25:08Z). The PR was commented and closed, the
+   branch deleted, then `job cancel` (02:28:50Z, job cost **$2.336**) and
+   `pa e2e --sweep --marker e2e-b3efe900-…`, which killed the seven sessions and dropped card #7.
+
+### Rubric, previous re-review → now
+
+| Criterion | 2026-11-08 | Now | Evidence |
+|---|---|---|---|
+| `pr`: the PR is open and ready for review | pass | **pass** | #78 `OPEN`, `isDraft: false`, `mergedAt: null` while kept. Body is the factory's (`pr`, will not merge). Head `d4ef131`. |
+| `ci`: CI is green on the PR head | pass | **fail** | Run 42549793897. personal-assistant (ubuntu, windows) and the contract job SUCCESS. jarvisd (ubuntu, windows) FAILURE in `npm test` (`tsc`). software-factory (ubuntu) FAILURE in pytest (5m21s); the windows job was still running when this was scored, so its log was not downloaded. The e2e recorded `ci: failing` and still marked the github hop reached. |
+| `review`: an independent code review finds no blocker | fail | **pass** | The `cwd` blocker is fixed (below). Remaining notes are lows. |
+| `scope`: the diff stays inside what the card asked for | pass | **pass** | Five files: `src/cli/version.ts`, `test/version.test.js`, the HELP line and registration in `src/cli/index.ts`, two paths added to the dashboard component's code list in `architecture.json`, and `apps/dev-tools/context/navigation.md` from tech_writer. No unrequested HELP topic. |
+
+### Code review of #78
+
+The git fallback is `execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repoRoot })`
+with `repoRoot = path.resolve(__dirname, '..', '..')`, the personal-assistant directory inside
+the checkout. Git from that directory returns this repo's HEAD, not the caller's working
+directory. If the dashboard answers nothing and git throws, `fail()` sets exit code 1. The
+address is `config.dispatch.host` and `port`. That is the #63/#72 blocker, fixed.
+
+Lows, not blockers:
+
+- `version.ts` and the test still have no trailing newline. Kimi's only findings were those two
+  lows, plus a note that one test compares two literals.
+- The tests cover `formatVersionOutput` only. The git `cwd` and the HTTP call are untested.
+- A `0.0.0.0` bind is still not rewritten to `127.0.0.1`. This stack listens on `127.0.0.1`.
+- The new paths were appended to the dashboard component's code list, beside the passkey files.
+
+The diff was read at `d4ef131`. The branch was deleted after that; the verb was not executed
+from a second directory.
+
+### The independent review (8.4.50)
+
+One Kimi cycle, `azure/Kimi-K2.7-Code`, `num_turns` 0, 22017 input tokens, 35.7 s, $0.0589.
+Verdict `approve`, test score 0.85. Findings: two lows (the missing newlines). No high, no
+medium. No second dev step. The stream stores only the persona head of the prompt and notes the
+full prompt was 88214 characters, so the ask and the precedent files are not visible there; the
+token count is about twice the previous cycles' ~10k.
+
+`comments_to_post` held those lows and two "cite the precedent" notes. None of them is on the
+PR (no review comments, no "Reviewer note" in the story log). The review handler ended at
+02:13:37Z and the PR was pushed at 02:14:10Z, so the post, which requires a PR number, had
+nothing to post to (8.4.55).
+
+### Other acceptance items
+
+| Item | Result | Evidence |
+|---|---|---|
+| Outcome: a ready PR through the metered API, never merged | **pass** | pm and sm `azure/DeepSeek-V4-Flash`, dev `azure/deepseek-v4-pro`, reviewer and tech_writer `azure/Kimi-K2.7-Code`, all `runtime: api`, `billing: metered`. #78 was not merged. |
+| Delivery is the factory's | **pass** | The dev commands that mention commit or push are a `git add`, a message-file write, and two greps. None is `git push`, `gh`, or `--no-verify`. The factory pushed at 02:14:10.35 (`delivery_pr_head_pushed`). |
+| Dev setup (8.4.51) | **pass** | Handler 02:05:58.72, `solo_checks` 0.8 s later, lint baseline 02:06:01.23 on the three context markdown files (not `ruff check .`). Stream's first event 02:06:02.05, **0.8 s** after `started_at` 02:06:01.25. The agent then took 416 s. |
+| Context update (8.4.52) | **pass** | Commit `d4ef131` is in #78 and adds `src/cli/version.ts` and the test to `navigation.md`. |
+| Cost ≤ $2 | **fail** on the final job | The e2e read **$1.4232** (pm $0.0022, sm $0.0028, dev $1.3325, reviewer $0.0589, tech_writer $0.0268) and passed. The CI-fix dev (step 51062) then ran; at cancel the job was **$2.336**. |
+| Views | **pass** | 100/100 checks. Plan, plan-card, build, run, mcp, github, e2. Each reported step link returned 200 on that machine's termhub front. Five screenshots; the images were not opened. Ask is the `factory_job` tool check. |
+| Approvals | **pass** | Policy checks: allow (`approve-chat-actions`) then ask (`chat-actions-ask`). |
+| Plan board leak (8.4.53) | **not shown** | `/api/state` had one commitment, card #7. No other card's text named the dummy ask. There was no second card for a leak to land on. |
+| E6 / multi-line commit | **pass** | No guard refusal and no hang. The commit message went through a file. |
+
+### Hops
+
+Targets are the Map's current `max_ms`. D27 says these are the numbers the lead resets from.
+The e2e is the clock except where the story log is named.
+
+| Hop | Target | 2026-11-08 re-review | Now | Detail | Result |
+|---|---|---|---|---|---|
+| jarvis: tool call excluding model time | 1000 ms | 3945 ms | **1165 ms** | Round trip 9972 ms less compose's model call 8807 ms. Per-lap `ms.serve` was not in the log window searched. | **fail, 165 ms over** |
+| dispatcher: approval to "started" | 1000 ms | 7348 ms | **275 ms** | factory_start return to the pm step's `started_at` 02:05:27.779. | **pass** |
+| factory-chain: dev, review, gates, PR | unbounded | 1637 s | **536.5 s** | pm 5.0 s, then 12 s to sm (11.2 s), dev setup ~3 s, dev agent 416 s, review 36 s, tech_writer 19 s, push at 02:14:10. | reported |
+| github: CI watch to green | unbounded, ≤ 3 CI-fix cycles | 147 s, green | **36.3 s, not green** | e2e `ci_done` 02:15:00 with `ci: failing`. The factory's own watch started 02:19:21 and redispatched a dev at 02:25:04 (cycle 1 of 3). That dev was cancelled. | **fail** (not green) |
+| worker: state change to the board redraw | 200 ms | not measured; 300–334 ms by hand | **2207 ms** | e2e note: queued 179 ms via the run row (job status); triaging not seen; in_progress 2207 ms via the run row (job status). No terminal plan-card sample: the job was still `pr_open` when the e2e scored the hop. | **fail, 2.0 s over** |
+
+### Defects
+
+Ticked from this run: 8.4.15 (275 ms), 8.4.16 (the e2e now records the hop; the number is 2207 ms),
+8.4.49 (the `cwd` is the checkout), 8.4.51 (agent's first event 0.8 s after `started_at`),
+8.4.52 (the context file is in the PR).
+
+Still open: 8.4.14 (1165 ms). 8.4.50's fix round is gone, but the lows never reached the PR, so
+that item stays open. 8.4.53 was not shown either way.
+
+New, filed under 8.4:
+
+1. **8.4.55** Solo review notes never reach the PR. The review ends before the PR number exists,
+   and the post is skipped.
+2. **8.4.56** CI on the PR head is red, and the e2e counts a failing watch as the hop. jarvisd's
+   `tsc` fails on `compose.ts`'s `ms.hints`, which this diff does not touch; the last green run
+   on main skipped jarvisd. software-factory ubuntu failed pytest.
+3. **8.4.57** After the e2e returns, a failing CI starts a fix dev. This one took the job from
+   $1.42 to $2.34, over the $2 ceiling, before it was cancelled.
+
+### Evidence
+
+On the personal machine, under its PA data dir `e2e/`:
+
+- `20261109T020300Z-deepseek-pr-dry/summary.json`
+- `20261109T020517Z-deepseek-pr/summary.json` (hops, 100 checks, cost $1.4232, golden timeline)
+
+Factory state (that machine): `api_runs/dev-tools-202-dev-20261109T020602053388Z/stream.jsonl`,
+`…-reviewer-20261109T021300809484Z/stream.jsonl`,
+`logs/0202-008-add-pa-version-verb-with-dashboard-git-fallback-and-unit.log`.
+
 ## Re-review, 2026-11-08
 
 **Verdict: FAIL.** The outcome happened again, and most of the first review's failures are fixed
