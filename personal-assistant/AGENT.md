@@ -20,8 +20,8 @@ patch — and no worker, cron job, skill or agent may ever trigger a send.
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
 that a dirty tree breaks termhub's updater — dispatched work must not be able to cause that.
-A run on another machine (`--machine`, `src/dispatch/remote.ts`; Windows, Linux or macOS) gets
-the same: its worktree and the pushurl block are made on that machine through termhub's
+A run on another machine (`--machine`, `src/dispatch/remote.ts`; Windows, Linux or macOS; no
+new ones since D28, which refuses `--machine`) got the same: its worktree and the pushurl block are made on that machine through termhub's
 `POST /api/exec` (exit codes checked, no shell) before `claude` is typed, and the dispatcher
 checks the worktree exists through termhub's API rather than trusting the shell.
 
@@ -412,27 +412,35 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 `budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a
 `dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
 
-**The factory is a dispatch target under the same rules, reached only through its contract.**
-`--via factory` (`src/dispatch/factory.ts`) sends a run to the software factory instead of a
-Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
+**The factory is THE dispatch target (decision D28), reached only through its contract.**
+Every agent session the PA dispatches is a factory job (`src/dispatch/factory.ts`), so it shows
+on Build and is metered (the credit pool on `claude_session`, the API keys on `api`): `pa do`,
+the dashboard's Do, the planner, accepted cards, and the chat's `factory_start` and
+`session_start`. There is no route to pick: `PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `--via claude`
+and `--machine` are gone and refused. `dispatch.startSession` (a raw Claude Code session) has no
+production caller and is kept only to seed the land/drop tests (docs/native/PLAN.md 8.6.3); if
+anything calls it, it logs and writes an `llm_spend` row of unknown cost. The PA never imports factory code or reads its store: it runs `uv run factory
 job|app …` through `runCommand` (`src/dispatch/exec.ts`) and parses the one JSON object the
 factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit
-`--delivery` (the end state above; `plan` is never a job) and the factory honours it as asked. A
-factory job changes code, so the planner only ever *offers* one; its own runs stay `plan`-mode
-Claude sessions (`test/factoryDispatch.test.js` checks the planner source). A job's end moves its
+`--delivery` (the end state above; a research/report/plan job delivers `none`) and the factory
+honours it as asked. A code job changes code, so the planner only ever *offers* one; its own runs
+are `plan` mode, a read-only factory `plan` job (JOBS-API v1.8: on `claude_session` Claude Code
+runs in its plan permission mode; `test/factoryDispatch.test.js` checks the planner source). A job's end moves its
 commitment only through `ledger.transition` (actor `factory`) and only from `dispatched`, and
 GitHub reconcile closes only `open` asks, so a merged factory PR is never closed twice. A job id is
-checked against `factoryCore.JOB_ID` before it is typed into a terminal. Any route chooser's answer
-passes `routeCore.guard`. Every job carries a kind (`code` | `research` | `report`) and a runtime
-(`api` | `claude_session`), JOBS-API v1.2; a research/report job needs no repo, delivers `none` (its
+checked against `factoryCore.JOB_ID` before it is typed into a terminal. Every job carries a kind
+(`code` | `research` | `report` | `plan`) and a runtime (`api` | `claude_session`), JOBS-API v1.2;
+whatever a start does not choose comes from the card's dispatch settings (`src/dispatch/settings.ts`:
+the card's stored overrides, else runtime `PA_FACTORY_RUNTIME` = claude_session, mode
+`PA_DISPATCH_MODE` = full, the kind from `factoryCore.inferKind`, the end state from the factory
+app's `delivery.default`). A research/report/plan job needs no repo, delivers `none` (its
 deliverable is the factory's report) and its ask is the operator's own words
 (`factoryCore.researchAsk`, no composing model). A v1 factory refuses the v1.2 flags in its CLI
 parser (`unsupported_option`, before anything is written): a code job on `api` is resent without
 them, anything else fails saying so. A code job may continue an existing branch or PR (`job submit --branch|--pr`,
 `F.BRANCH` checks the name); a factory without the flag refuses it in its parser and the job fails
 saying so — it is never resent without it, which would start fresh work instead. `job resume <id>`
-(`factory.resume`) on a factory without it says the factory must be updated. The factory is the default route once configured
-(`routeCore.defaultVia`; plan mode and `--machine` still mean a Claude session). Every code job is
+(`factory.resume`) on a factory without it says the factory must be updated. Every code job is
 sent with a `--flow-file` (`factoryCore.flowMarkdown`,
 deterministic), since the factory parks a job without a flow; content reaches another machine
 on the writer's stdin (never argv, where `ps` shows it and a large brief overflows the limit), into

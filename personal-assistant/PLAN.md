@@ -274,6 +274,12 @@ uses a deterministic rule (factory for a concrete code change in a registered re
 done-criteria; a Claude session otherwise) behind a seam for a smarter chooser, and every run
 records route and outcome so `pa runs stats` can say which route works for which task.
 
+*Changed 2026-11-09 (decision D28, docs/native/PLAN.md):* the factory is no longer a second target
+but the only one. Every agent session the PA dispatches is a factory job, so it is on Build and
+metered; `--via`, the routing rule, its chooser seam and `--machine` are gone. Plan mode is a
+read-only factory `plan` job (Claude Code in its plan permission mode). Why: sessions started
+outside the factory were invisible on Build and drew on the subscription with nothing recording it.
+
 ---
 
 ## 7. Always-on capture

@@ -25,7 +25,7 @@
       "id": "factory",
       "n": 3,
       "name": "Build (Factory)",
-      "summary": "software-factory: jobs (code, research, report) ticked by factory serve on each stack, on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
+      "summary": "software-factory: jobs (code, research, report, and the read-only plan: Claude Code in its plan permission mode) ticked by factory serve on each stack (every PA dispatch is one, D28), on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
     },
     {
       "id": "sessions",
@@ -963,7 +963,7 @@
       "id": "dispatcher",
       "layer": "dashboard",
       "name": "Dispatcher",
-      "role": "Starts work: a Claude Code session in termhub (own worktree), or a factory job through the JOBS-API. Enforces delivery levels and modes.",
+      "role": "Starts work: every dispatch is a software-factory job through the JOBS-API (decision D28): code, research, report or a read-only plan, on claude_session (credit pool) or api (metered). Resolves each card's dispatch settings and enforces delivery levels.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -973,20 +973,27 @@
         "personal": "In-process on k-911-x17. The factory is this machine's factory serve. The chat uses the same SDK engine as the work stack"
       },
       "details": {
-        "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
-        "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
+        "Routes": "none to pick (D28): every dispatch (pa do, Do, the planner, accepted cards, the chat's factory_start and session_start) is a factory job; PA_DISPATCH_VIA, PA_ROUTE_CHOOSER, --via claude and --machine are gone (refused). Without PA_FACTORY_PATH nothing dispatches",
+        "Card dispatch settings": "src/dispatch/settings.ts. GET /api/commitments/:id/dispatch-settings answers {card, factory, settings: {runtime, mode, delivery, jobKind, app, repo}, source: {each field: given|card|default|inferred|kind|app_default|repo_default|fallback|commitment|repo|none}, why: {jobKind, delivery}, overrides, options: {runtimes, modes, deliveries [{value, plain}], jobKinds, apps [{app, repo, deliveryDefault}]}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as dispatch.card.<id> and answers the GET shape. Defaults: runtime PA_FACTORY_RUNTIME (claude_session; a plan job is claude_session), mode PA_DISPATCH_MODE (full), delivery = your words for this start, else the factory app's delivery.default, else the repo's (pa delivery), else PA_DELIVERY_DEFAULT; research/report/plan deliver none. Job kind: plan mode → plan; else factoryCore.inferKind (deterministic: the planner's kind, then the ask's words)",
+        "Plan mode": "a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
+        "Claude session (legacy)": "startSession: a Claude Code session in its own worktree via termhub POST /api/sessions. No production caller since D28; kept only while the land/drop/remote tests seed runs through it (docs/native/PLAN.md 8.6.3). If called it logs a warning and records an llm_spend row of unknown cost (purpose dispatch-session-unmetered)",
+        "Unmetered starts": "the only agent session the PA still opens outside the factory is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
         "Factory job": "factory serve first (POST 127.0.0.1:7330/api/cli, header X-Factory: 1) when PA_FACTORY_SERVE_URL answers; otherwise `uv run factory job submit --json ...` on PA_FACTORY_MACHINE through termhub's POST /api/exec, or child_process when the machine is empty, local or this host (PYTHONUTF8=1 on Windows). Idempotent on --source pa --external-id",
         "Start path (8.2.2)": "the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow, and serve: the ms factory serve's /api/cli reply already carried, when the submit went through it)",
         "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback. A continuation (factory_continue) gets no delivery instructions: it commits onto the PR or branch and opens no PR, and the PR's review threads are left to the factory, which appends them at submit",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
-        "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
+        "Factory defaults": "PA_FACTORY_RUNTIME claude_session, PA_DISPATCH_MODE full, PA_FACTORY_PIPELINE solo; set PA_FACTORY_RUNTIME=api to put every job not given a runtime on the API models (a plan job stays claude_session unless picked)",
         "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
         "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass goes through factory serve when it is up (warm, well under a second) and falls back to `uv run factory` (about 5 s of Python start-up) when nothing is listening. The sub-second path for a transition is the factory's push (POST /api/factory/events)"
       },
       "env": [
         {
           "name": "PA_FACTORY_RUNTIME",
-          "default": "api"
+          "default": "claude_session"
+        },
+        {
+          "name": "PA_DISPATCH_MODE",
+          "default": "full"
         },
         {
           "name": "PA_FACTORY_PIPELINE",
@@ -1023,6 +1030,8 @@
       ],
       "code": [
         "personal-assistant/src/dispatch/index.ts",
+        "personal-assistant/src/dispatch/settings.ts",
+        "personal-assistant/src/dispatch/route.ts",
         "personal-assistant/src/dispatch/factory.ts",
         "personal-assistant/src/dispatch/factoryCore.ts",
         "personal-assistant/src/dispatch/exec.ts",

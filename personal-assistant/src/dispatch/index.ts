@@ -1,7 +1,10 @@
 'use strict';
 
-// Dispatch: a commitment becomes a git worktree, a brief, and a Claude Code
-// session you can walk into.
+// Dispatch: a commitment becomes a software-factory job (start; decision D28:
+// every agent session the PA starts is a factory job, so it shows on Build and
+// is metered, on the credit pool or the API keys). Runs from before that are
+// Claude Code sessions in a git worktree, and the land / drop / review /
+// reconcile verbs below still manage them.
 //
 // The worktree is not an optimisation. The root CLAUDE.md is explicit that a
 // dirty tree breaks termhub's own updater, and a dispatched agent working
@@ -27,7 +30,7 @@ type StartOptions = {
   repoPath?: string | null;
   machine?: string | null;
   again?: boolean;
-  /** claude | factory | auto (src/dispatch/routeCore.ts) */
+  /** gone (D28): every dispatch is a factory job; anything but `factory` is refused */
   via?: string | null;
   pipeline?: string | null;
   models?: string[] | string | Record<string, string> | null;
@@ -223,43 +226,114 @@ async function briefFor(
 }
 
 /**
- * Starts a run. `via` picks the route (src/dispatch/routeCore.ts): `claude`
- * (a Claude Code session, the default unless PA_DISPATCH_VIA says otherwise),
- * `factory` (a software-factory job, src/dispatch/factory.ts), or `auto` (the
- * routing rule chooses, and says why). `pipeline`, `models`, `done`, `app`,
- * `brief` and `register` only mean something to the factory.
+ * Starts a run: always a software-factory job (src/dispatch/factory.ts;
+ * decision D28). Nothing here starts a Claude Code session of its own: plan
+ * mode is a read-only `plan` job, research and reports are `research`/`report`
+ * jobs, and code is a `code` job in the repo's factory app (registered first
+ * when the factory does not know the repo yet, unless `register` is false).
  *
- * `delivery` is the end state the operator chose (src/dispatch/deliveryCore.ts).
- * Not given: an explicit `mode` maps to one, else the operator's own words in
- * `task`, else the repo's default, else PA_DELIVERY_DEFAULT.
+ * Whatever the caller does not choose comes from the card's dispatch settings
+ * (src/dispatch/settings.ts): its stored overrides, else the defaults —
+ * runtime claude_session, mode full, the job kind read from the ask, the end
+ * state from the factory app's delivery.default.
  *
  * `frozen` (an accepted proposal, src/proposals): app, done-criteria, brief,
  * delivery, pipeline and models are used exactly as the card showed them —
- * nothing is re-chosen or re-derived at accept time.
+ * nothing is re-chosen or re-derived at accept time; a card from before job
+ * kinds is a code job.
  */
-async function start({
+async function start(o: StartOptions): Promise<Json> {
+  const calledAt = Date.now();
+  const {
+    commitmentId = null, task = null, repoPath = null, machine = null, again = false, via = null,
+    pipeline = null, models = null, done = null, routeReason: givenReason = null,
+    deliverySource = null, deliveryPhrase = null, brief = null, briefBy = null, frozen = false, register = true,
+    confirmedUnattended = false, repoVerified = false, title = null, branch: onBranch = null, pr: onPr = null,
+    agent = null, model = null,
+  } = o;
+  const F = require('./factoryCore.ts');
+  const factory = require('./factory.ts');
+  if (via && !['factory', 'auto'].includes(String(via).toLowerCase())) {
+    throw new Error(`there is no route to pick: every dispatch is a software-factory job — drop --via ${via}`);
+  }
+  if (!factory.enabled()) throw new Error('every dispatch is a software-factory job and the factory is not configured — set PA_FACTORY_PATH (see `pa doctor`)');
+  if (machine && !termhub.isLocal(machine)) {
+    throw new Error(`--machine is gone: every run is a factory job and runs on the factory's machine (PA_FACTORY_MACHINE) — drop --machine ${machine}`);
+  }
+  if (agent && agent !== 'claude') throw new Error(`--agent ${agent}: every run is a factory job — its agent is the runtime (claude_session or api)`);
+  const continues = onBranch != null || onPr != null;
+  const given = {
+    jobKind: o.jobKind ? F.jobKind(o.jobKind) : frozen || continues ? 'code' : null,
+    runtime: o.runtime ? F.runtime(o.runtime) : null,
+    mode: o.mode ? resolveMode(o.mode).name : null,
+    delivery: o.delivery ? D.delivery(o.delivery) : null,
+    app: o.app || null,
+    repo: repoPath || null,
+  };
+  const eff = await require('./settings.ts').effective({ commitmentId, task, given });
+  const s = eff.settings;
+  const kind: string = s.jobKind;
+  // `--repo` must be a known project. A card's repo was checked when the card
+  // was made (offer.ts `repoVerifiedAt`) and is not re-judged at accept. A
+  // research/report/plan job only reads: an owner/name it names need not be a
+  // checkout here (the factory reads its own, or the ask just names it).
+  const repo: string | null = repoPath || eff.overrides.repo || null;
+  const readOnlySlug = kind !== 'code' && require('./routeCore.ts').normSlug(repo);
+  if (repo && !repoVerified && !readOnlySlug) await knownRepo(repo);
+  // One live run per commitment. A second Do while the first is still setting
+  // up started a second agent on the same ask.
+  if (commitmentId && !again) {
+    const live: Run | null = await repository.runs.liveForCommitment(commitmentId);
+    if (live) {
+      const where = termhub.isLocal(live.machine) ? '' : ` on ${live.machine}`;
+      throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
+    }
+  }
+  const target = await resolveTarget({ commitmentId, repoPath: repo });
+  const choice: Json = await require('./route.ts').forced({
+    target, mode: s.mode, done, app: s.app, register, exactDone: frozen, jobKind: kind,
+  });
+  const delivery: string = s.delivery;
+  const source: string = eff.source.delivery === 'given' ? deliverySource || 'explicit' : eff.source.delivery;
+  const extraModels = model && s.runtime === 'claude_session' ? [`claude_session=${String(model).replace(/^(anthropic|cli)\//, '')}`] : null;
+  if (model && !extraModels) throw new Error('a bare --model names the Claude model of a claude_session job — on api, give --model persona=provider/model');
+  return factory.start({
+    target, app: choice.app, slug: choice.slug, task, mode: s.mode, pipeline,
+    models: extraModels ? [...modelList(models), ...extraModels] : models,
+    modelsExact: frozen, done: choice.done,
+    routeReason: givenReason || `${choice.reason} (${kind}: ${eff.why.jobKind})`,
+    delivery, deliverySource: source, deliveryPhrase: source === 'explicit' ? deliveryPhrase : eff.phrase,
+    brief, briefBy, confirmedUnattended, again,
+    jobKind: kind, runtime: s.runtime, title, branch: onBranch, pr: onPr, timings: { route: Date.now() - calledAt },
+  });
+}
+
+// `persona=model` entries from a list, a comma list, or a {persona: model} object.
+function modelList(m: StartOptions['models']): string[] {
+  if (!m) return [];
+  if (Array.isArray(m)) return m;
+  if (typeof m === 'string') return m.split(',').map((x) => x.trim()).filter(Boolean);
+  return Object.entries(m).map(([k, v]) => `${k}=${v}`);
+}
+
+/**
+ * LEGACY (no production caller since D28): a Claude Code session in its own
+ * worktree, on this machine or another one's termhub. Kept only while the
+ * land / drop / remote tests seed their runs through it (docs/native/PLAN.md
+ * 8.6.3, "delete startSession"); every dispatch goes through start() above.
+ */
+async function startSession({
   commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false,
   via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
   agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
   brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
   jobKind = null, runtime = null, title = null, branch: onBranch = null, pr: onPr = null,
 }: StartOptions): Promise<Json> {
-  const calledAt = Date.now();
-  // A research or report job exists only on the factory (JOBS-API v1.2).
-  const kind: string = require('./factoryCore.ts').jobKind(jobKind);
-  if (runtime) require('./factoryCore.ts').runtime(runtime);
-  if (kind !== 'code' && via && String(via).toLowerCase() === 'claude') {
-    throw new Error(`a ${kind} job is a factory job — drop --via claude (or use --mode plan for a read-only Claude session)`);
-  }
-  if (kind !== 'code' || runtime) via = via || 'factory';
-  // `--repo` must be a known project. A card's repo was checked when the card
-  // was made (offer.ts `repoVerifiedAt`) and is not re-judged at accept.
-  // A research/report job only reads: an owner/name it names need not be a
-  // checkout here (the factory reads its own, or the ask just names it).
-  const readOnlySlug = kind !== 'code' && require('./routeCore.ts').normSlug(repoPath);
-  if (repoPath && !repoVerified && !readOnlySlug) await knownRepo(repoPath);
-  // One live run per commitment. A second Do while the first is still setting
-  // up (a remote one takes a minute) started a second agent on the same ask.
+  // Not metered: a raw Claude Code session outside the factory. Said loudly
+  // and put on the Meter as a call of unknown cost, never silent.
+  log.warn('a Claude Code session outside the factory (legacy startSession): metered-unknown', { commitmentId, task: task ? String(task).slice(0, 80) : null });
+  await require('../budget.ts').record({ purpose: 'dispatch-session-unmetered', model: model || null, backend: 'claude_session_unmetered', costUsd: null, ok: true }).catch(() => {});
+  if (repoPath && !repoVerified) await knownRepo(repoPath);
   if (commitmentId && !again) {
     const live: Run | null = await repository.runs.liveForCommitment(commitmentId);
     if (live) {
@@ -268,25 +342,7 @@ async function start({
     }
   }
   if (delivery) delivery = D.delivery(delivery);
-  const route: string = require('./routeCore.ts').via(via || require('./routeCore.ts').defaultVia({ configured: config.factory.via, mode: modeName, machine }));
-  let routeReason: string | null = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
-  if (route !== 'claude') {
-    const target = await resolveTarget({ commitmentId, repoPath });
-    const chooser = require('./route.ts');
-    const choice: Json =
-      route === 'factory'
-        ? await chooser.forced({ target, mode: modeName, done, app, register, exactDone: frozen, jobKind: kind })
-        : await chooser.decide({ target, mode: modeName, done });
-    if (choice.route === 'factory') {
-      if (machine) throw new Error('--machine picks where a Claude session runs; the factory runs on PA_FACTORY_MACHINE');
-      return require('./factory.ts').start({
-        target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
-        routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
-        jobKind: kind, runtime, title, branch: onBranch, pr: onPr, timings: { route: Date.now() - calledAt },
-      });
-    }
-    routeReason = givenReason || choice.reason;
-  }
+  let routeReason: string | null = givenReason || 'a Claude session (legacy)';
   if (onBranch != null || onPr != null) throw new Error('continuing an existing branch or PR is a factory job — send it --via factory');
   // The end state, for a Claude session: what the PA does when it ends
   // (src/durable/tasks/runReview.ts), and the session's own mode, enforced in
@@ -569,17 +625,18 @@ const requireConfirmed = D.requireConfirmed;
 
 /**
  * The end state a start would get, before anything is created — so the CLI
- * can show it, and ask, first. Same rules as start (deliveryCore.choose).
+ * and the page can show it, and ask, first. The same resolution as start
+ * (src/dispatch/settings.ts): the caller's choice, the card's, else the
+ * factory app's default. A research/report/plan job delivers `none`.
  */
-async function previewDelivery({ commitmentId = null, task = null, mode = undefined, delivery = null, repoPath = null }: DeliveryAsk): Promise<Chosen> {
-  if (mode && resolveMode(mode).name === 'plan') return { delivery: null, source: null, phrase: null };
-  if (delivery) return { delivery: D.delivery(delivery), source: 'explicit', phrase: null };
-  let slugName: string | null = null;
-  if (!mode && !D.infer(task)) {
-    const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
-    slugName = target ? await require('./route.ts').slugFor(target).catch(() => null) : null;
-  }
-  return require('./delivery.ts').resolve({ mode: mode ? resolveMode(mode).name : null, operatorText: task, slug: slugName });
+async function previewDelivery({ commitmentId = null, task = null, mode = undefined, delivery = null, repoPath = null, jobKind = null, app = null }: DeliveryAsk & { jobKind?: string | null; app?: string | null }): Promise<Chosen & { jobKind: string }> {
+  const F = require('./factoryCore.ts');
+  const eff = await require('./settings.ts').effective({
+    commitmentId, task,
+    given: { mode: mode ? resolveMode(mode).name : null, delivery: delivery ? D.delivery(delivery) : null, jobKind: jobKind ? F.jobKind(jobKind) : null, app, repo: repoPath },
+  });
+  const source = eff.source.delivery === 'given' ? 'explicit' : eff.source.delivery;
+  return { delivery: eff.settings.delivery, source, phrase: eff.phrase, jobKind: eff.settings.jobKind };
 }
 
 /**
@@ -1020,6 +1077,6 @@ async function reconcile(): Promise<{ closed: number; notified: number }> {
 }
 
 module.exports = {
-  start, knownRepo, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
+  start, startSession, knownRepo, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
   worktreeBase, scopeFacts, relatedContext, memoryContext, sessionDelivery, previewDelivery, requireConfirmed, BLOCKED_PUSH_URL,
 };

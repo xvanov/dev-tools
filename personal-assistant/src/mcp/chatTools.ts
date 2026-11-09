@@ -135,14 +135,14 @@ const ACTION_TOOLS = [
   {
     name: 'factory_start',
     description:
-      "Start software-factory work — the user approves each call. From a board card (`card`: its full context becomes the brief, composed server-side) and/or the user's words (`ask`). kind code (default) changes a repo; research/report write a report. Default runtime claude_session; api only when the user asks. `delivery` from their words (\"ready to merge\" → pr). Put requirements like CI green / review passed in `done`. auto_merge and push_to_main become a card instead. Returns the run and job ids and the follow link; a `waiting` field means nothing ticks that app, so the job sits queued — tell the user.",
+      "Start software-factory work — the user approves each call. From a board card (`card`: its full context becomes the brief, composed server-side) and/or the user's words (`ask`). kind code changes a repo; research/report write a report; plan writes a read-only plan. Omit kind to let the assistant decide it from the ask (the card's own choice wins). Default runtime claude_session; api only when the user asks. `delivery` from their words (\"ready to merge\" → pr). Put requirements like CI green / review passed in `done`. auto_merge and push_to_main become a card instead. Returns the run and job ids and the follow link; a `waiting` field means nothing ticks that app, so the job sits queued — tell the user.",
     inputSchema: {
       type: 'object',
       properties: {
         card: { type: 'string', maxLength: 20, description: 'A board card id (commitment).' },
         ask: { type: 'string', maxLength: 4000, description: "The user's own words about what to do, beyond the card." },
         title: { type: 'string', maxLength: 200 },
-        kind: { type: 'string', enum: ['code', 'research', 'report'], default: 'code' },
+        kind: { type: 'string', enum: ['code', 'research', 'report', 'plan'], description: 'Omit: decided from the ask.' },
         repo: { type: 'string', maxLength: 300, description: 'owner/name or a known checkout; defaults to the card\'s repo.' },
         runtime: RUNTIME,
         model: MODEL,
@@ -195,7 +195,7 @@ const ACTION_TOOLS = [
   {
     name: 'session_start',
     description:
-      'Start a Claude Code session in termhub on a repo, in its own worktree and branch, briefed with `prompt` — the user approves each call. For hands-on or exploratory work the user wants to watch or join; `mode: plan` for read-only investigation. Returns the run id and the session link.',
+      'Start Claude Code on a repo, briefed with `prompt` — the user approves each call. Like every dispatch it is a software-factory job on the claude_session runtime (shown on Build, metered on the credit pool), in a termhub session the user can watch; `mode: plan` is a read-only plan job. Returns the run, the job and the follow link.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -436,7 +436,8 @@ function branchName(b: unknown) {
  */
 function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = {}) {
   const F = require('../dispatch/factoryCore.ts');
-  const kind = F.jobKind(args.kind || 'code');
+  // No kind: the start decides it from the ask (src/dispatch/settings.ts).
+  const kind: string | null = args.kind ? F.jobKind(args.kind) : null;
   const runtime = F.runtime(args.runtime || DEFAULT_RUNTIME);
   const commitmentId = card ? card.commitment : null;
   const ask = args.ask ? String(args.ask).trim() : null;
@@ -453,7 +454,7 @@ function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = 
     repoPath: args.repo ? String(args.repo).trim() : null,
     delivery: args.delivery || null,
     pipeline: args.pipeline || null,
-    models: modelOverrides({ runtime, kind, model: args.model }),
+    models: modelOverrides({ runtime, kind: kind || 'code', model: args.model }),
     done: done.length ? done : null,
     register: args.register === true,
   };
@@ -463,7 +464,7 @@ function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = 
     if (!Number.isInteger(n) || n < 1) throw new Error(`"${args.pr}" is not a PR number`);
     o.pr = n;
   }
-  if ((o.branch || o.pr) && kind !== 'code') throw new Error('continuing a branch or PR is a code job');
+  if ((o.branch || o.pr) && kind && kind !== 'code') throw new Error('continuing a branch or PR is a code job');
   if ((o.branch || o.pr) && !o.repoPath) throw new Error('name the repo the branch or PR is on');
   return o;
 }
@@ -698,7 +699,8 @@ async function sessionStartTool(args: Json) {
   const o: Json = {
     commitmentId: card ? card.commitment : null,
     task: prompt,
-    via: 'claude',
+    // A factory job like every dispatch (D28): Claude Code on the subscription.
+    runtime: 'claude_session',
     repoPath: args.repo ? String(args.repo).trim() : null,
     mode: args.mode || undefined,
     delivery: args.mode === 'plan' ? null : args.delivery || null,

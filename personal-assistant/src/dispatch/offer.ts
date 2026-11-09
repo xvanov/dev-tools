@@ -29,9 +29,9 @@ type PrepareOptions = {
   commitmentId?: number | string | null;
   /** the operator's own words (never a third party's) */
   task?: string | null;
-  /** claude | factory | auto */
+  /** gone (D28): only `factory` (or `auto`) is accepted */
   via?: string | null;
-  /** an explicit legacy mode (plan = read-only research) */
+  /** an explicit mode (plan = a read-only plan job) */
   mode?: string | null;
   /** an explicit end state */
   delivery?: string | null;
@@ -44,7 +44,7 @@ type PrepareOptions = {
   repoPath?: string | null;
   /** the planner's kind for the commitment */
   kind?: string | null | undefined;
-  /** register an unknown repo with the factory at accept */
+  /** unused since D28: an unknown repo is always registered at accept */
   register?: boolean;
   /** compose with a model (false: the deterministic brief) */
   useModel?: boolean;
@@ -73,52 +73,53 @@ async function prepare({
 }: PrepareOptions): Promise<Offer> {
   const dispatch = require('./index.ts');
   const route = require('./route.ts');
-  // A research or report job is a factory job (JOBS-API v1.2).
-  const jk = F.jobKind(jobKind);
-  const rt = runtime ? F.runtime(runtime) : null;
-  if (jk !== 'code' && via && String(via).toLowerCase() === 'claude') throw new Error(`a ${jk} job is a factory job — drop --via claude`);
-  if (jk !== 'code' || rt) via = 'factory';
+  // Every offer is a factory job (decision D28): no route to pick.
+  if (via && !['factory', 'auto'].includes(String(via).toLowerCase())) {
+    throw new Error(`there is no route to pick: every dispatch is a software-factory job — drop --via ${via}`);
+  }
+  const given = {
+    jobKind: jobKind ? F.jobKind(jobKind) : null,
+    runtime: runtime ? F.runtime(runtime) : null,
+    mode: mode ? require('./modes.ts').mode(mode).name : null,
+    delivery: delivery ? D.delivery(delivery) : null,
+    app: app || null,
+    repo: repoPath || null,
+  };
+  // The card's kind, runtime and end state: what was asked, else the card's
+  // dispatch settings, else the defaults (src/dispatch/settings.ts).
+  const eff = await require('./settings.ts').effective({ commitmentId, task, given, commitmentKind: kind });
+  const jk: string = eff.settings.jobKind;
+  const rt: string = eff.settings.runtime;
   if (repoPath && !(jk !== 'code' && require('./routeCore.ts').normSlug(repoPath))) await dispatch.knownRepo(repoPath);
   const target: Target = await dispatch.resolveTarget({ commitmentId, repoPath });
   const label: string | null | undefined = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to offer — give a commitment id or a --task');
-  const v = require('./routeCore.ts').via(via || require('./routeCore.ts').defaultVia({ configured: config.factory.via, mode }));
-  const plan = jk === 'code' && mode && String(mode).toLowerCase() === 'plan';
-  // The factory as the default route: a repo it does not know yet is
-  // registered on accept (the card says so) rather than refused — nothing
-  // outward happens before the yes.
-  if (!via && v === 'factory') register = true;
 
   if (jk !== 'code') return prepareResearch({ target, task, title: label, jobKind: jk, runtime: rt, done, app, why, suggestedBy });
 
-  // route.ts's decision, plus `register` when the repo is registered on accept.
+  // The factory app, or — a repo the factory does not know yet — registered on
+  // accept (the card says so): nothing outward happens before the yes.
   let choice: Json;
-  if (plan || v === 'claude') {
-    choice = { route: 'claude', reason: plan ? 'plan mode is read-only; the factory only builds' : 'you chose a Claude session', app: null, done: done || [], slug: await route.slugFor(target).catch(() => null) };
-  } else if (v === 'factory') {
-    // Registration happens at accept, not here: nothing outward before the yes.
-    try {
-      choice = await route.forced({ target, mode: mode || undefined, done, app });
-    } catch (err) {
-      const slug = await route.slugFor(target).catch(() => null);
-      if (!(register && slug && /not registered/.test((err as Error).message))) throw err;
-      choice = { route: 'factory', reason: `you chose the factory; ${slug} is registered with it on accept`, app: null, done: done || require('./routeCore.ts').doneCriteria(target.commitment), slug, register: true };
-    }
-  } else {
-    choice = await route.decide({ target, mode: mode || undefined, done, kind });
+  try {
+    choice = await route.forced({ target, mode: eff.settings.mode, done, app: eff.settings.app });
+  } catch (err) {
+    const slug = await route.slugFor(target).catch(() => null);
+    if (!(slug && /not registered/.test((err as Error).message))) throw err;
+    choice = { route: 'factory', reason: `${slug} is registered with the factory on accept`, app: null, done: done || require('./routeCore.ts').doneCriteria(target.commitment), slug, register: true };
   }
-  const viaFactory = choice.route === 'factory';
 
-  const chosen = plan
-    ? { delivery: null, source: null, phrase: null }
-    : await require('./delivery.ts').resolve({ explicit: delivery, mode: mode || null, operatorText: task, slug: choice.slug });
+  const chosen = {
+    delivery: eff.settings.delivery,
+    source: eff.source.delivery === 'given' ? 'explicit' : eff.source.delivery,
+    phrase: eff.phrase,
+  };
 
   const payload: Payload = {
     frozen: true,
     why: why ? C.clip(why, 500) : null,
     suggestedBy: suggestedBy ? C.clip(suggestedBy, 40) : null,
-    via: choice.route,
-    routeReason: choice.reason,
+    via: 'factory',
+    routeReason: `${choice.reason} (code: ${eff.why.jobKind})`,
     task: task || null,
     repoPath: target.repoPath || null,
     // `--repo` passed the known-project check now; accept trusts this (sql/026 note in AGENT.md).
@@ -129,35 +130,31 @@ async function prepare({
     delivery: chosen.delivery,
     deliverySource: chosen.source,
     deliveryPhrase: chosen.phrase,
-    deliveryPlain: PLAIN(choice.route),
-    mode: plan ? 'plan' : viaFactory ? null : mode || D.modeFor(chosen.delivery),
+    deliveryPlain: PLAIN('factory'),
+    mode: eff.settings.mode,
   };
 
-  if (viaFactory) {
-    const pipe = F.pipeline(pipeline || config.factory.pipeline);
-    const overrides = require('./factory.ts').modelsFor(models);
-    payload.jobKind = 'code';
-    payload.runtime = rt || F.runtime(config.factory.runtime);
-    const c = await require('./compose.ts').compose({
-      target, task, done: choice.done || [], app: choice.app, slug: choice.slug, appPath: choice.appPath || null,
-      delivery: chosen.delivery, pipeline: pipe, useModel,
-    });
-    Object.assign(payload, {
-      app: choice.app,
-      register: Boolean(choice.register),
-      pipeline: pipe,
-      models: overrides,
-      done: c.done,
-      composed: c.composed,
-      briefMeta: { title: label, app: choice.app, slug: choice.slug, pipeline: pipe, by: c.by },
-      brief: c.brief,
-      briefBy: c.by,
-    });
-  }
+  const pipe = F.pipeline(pipeline || config.factory.pipeline);
+  const overrides = require('./factory.ts').modelsFor(models);
+  payload.jobKind = 'code';
+  payload.runtime = rt;
+  const c = await require('./compose.ts').compose({
+    target, task, done: choice.done || [], app: choice.app, slug: choice.slug, appPath: choice.appPath || null,
+    delivery: chosen.delivery, pipeline: pipe, useModel,
+  });
+  Object.assign(payload, {
+    app: choice.app,
+    register: Boolean(choice.register),
+    pipeline: pipe,
+    models: overrides,
+    done: c.done,
+    composed: c.composed,
+    briefMeta: { title: label, app: choice.app, slug: choice.slug, pipeline: pipe, by: c.by },
+    brief: c.brief,
+    briefBy: c.by,
+  });
 
-  const cardTitle = (viaFactory
-    ? `Send to the factory: ${label}`
-    : `Start a ${plan ? 'research' : 'coding'} session on: ${label}`).slice(0, 280);
+  const cardTitle = `Send to the factory: ${label}`.slice(0, 280);
   const body = cardBody({ payload, label: label as string, why, target });
   return { title: cardTitle, body, payload, target };
 }
@@ -190,7 +187,7 @@ async function prepareResearch({
 }): Promise<Offer> {
   const route = require('./route.ts');
   const choice = await route.forced({ target, done, app, jobKind });
-  const rt = runtime || F.runtime(config.factory.runtime);
+  const rt = runtime || F.defaultRuntime(jobKind, config.factory.runtime);
   const criteria: string[] = choice.done || [];
   const brief = F.researchAsk({ kind: jobKind, title, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: choice.slug });
   const payload: Payload = {
@@ -219,7 +216,7 @@ async function prepareResearch({
     brief,
     briefBy: 'research:operator',
   };
-  const verb = jobKind === 'report' ? 'Write a report' : 'Research';
+  const verb = jobKind === 'report' ? 'Write a report' : jobKind === 'plan' ? 'Plan' : 'Research';
   return { title: `${verb} in the factory: ${title}`.slice(0, 280), body: cardBody({ payload, label: title, why, target }), payload, target };
 }
 
@@ -231,7 +228,7 @@ function cardBody({ payload: p, label, why, target }: { payload: Payload; label:
   // as the card's own "End state:" line.
   if (why) L.push(`Planner's note: ${C.clip(why, 500)}`, '');
   if (p.jobKind && p.jobKind !== 'code') {
-    L.push(`End state: a ${p.jobKind === 'report' ? 'written report' : 'research report'} the factory keeps — no code changes, no branch, no PR.`);
+    L.push(`End state: a ${p.jobKind === 'report' ? 'written report' : p.jobKind === 'plan' ? 'plan (read-only)' : 'research report'} the factory keeps — no code changes, no branch, no PR.`);
     L.push(`Route: software factory, ${p.jobKind} job on ${p.runtime === 'claude_session' ? 'a Claude session (subscription)' : 'API models (metered)'}${p.app ? `, reading ${p.slug || p.app}` : p.slug ? ` (${p.slug} is not registered: named in the ask only)` : ', no repo'}`);
     if (p.done.length) {
       L.push(`${p.jobKind === 'report' ? 'It must cover' : 'Questions'}:`);

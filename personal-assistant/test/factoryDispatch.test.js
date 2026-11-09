@@ -137,41 +137,33 @@ const job = (o) => ({ job_id: 'widget:9', source: 'pa', external_id: '7', termin
   for (const state of ['queued', 'in_progress', 'blocked', 'needs_human']) assert.strictEqual(F.commitmentMove(job({ state })), null);
 }
 
-// --- the routing rule ----------------------------------------------------------------
+// --- no routing rule any more (D28): every dispatch is a factory job ----------------
 
 const apps = [{ app: 'widget', repo: 'Acme/Widget', path: '/srv/repos/widget' }, { app: 'docs', repo: 'acme/docs' }];
-const ctx = (o) => ({ factoryEnabled: true, mode: 'mr', kind: 'coding', slug: 'acme/widget', apps, done: ['retries are tested'], ...o });
 {
-  const go = R.chooseRoute(ctx());
-  assert.deepStrictEqual([go.route, go.app], ['factory', 'widget']);
-  assert.match(go.reason, /acme\/widget .*factory app widget.*1 done-criteria/);
-  const why = (o) => R.chooseRoute(ctx(o));
-  assert.match(why({ factoryEnabled: false }).reason, /not configured/);
-  assert.match(why({ mode: 'plan' }).reason, /plan mode/);
-  assert.match(why({ kind: 'investigate' }).reason, /planned as "investigate"/);
-  assert.match(why({ kind: null }).reason, /not planned/);
-  assert.match(why({ slug: null }).reason, /no repository/);
-  assert.match(why({ slug: 'acme/other' }).reason, /not registered/);
-  assert.match(why({ done: [] }).reason, /done-criteria/);
-  for (const o of [{ factoryEnabled: false }, { mode: 'plan' }, { kind: 'investigate' }, { slug: 'acme/other' }, { done: [] }]) {
-    assert.strictEqual(why(o).route, 'claude', JSON.stringify(o));
-  }
+  assert.strictEqual(R.chooseRoute, undefined, 'the claude/factory/auto chooser is gone');
+  assert.strictEqual(R.guard, undefined);
   // The slug matches however it was spelled.
   assert.strictEqual(R.appFor('ACME/widget.git', apps).app, 'widget');
   assert.strictEqual(R.appFor('not a slug', apps), null);
 }
 
-// The guard holds any chooser to the hard limits, whatever it says.
+// The kind of a piece of work, decided from the ask when nobody picked one.
 {
-  const rogue = { route: 'factory', reason: 'the model liked it' };
-  assert.strictEqual(R.guard(rogue, ctx({ mode: 'plan' })).route, 'claude');
-  assert.strictEqual(R.guard(rogue, ctx({ slug: 'acme/other' })).route, 'claude');
-  assert.strictEqual(R.guard(rogue, ctx({ factoryEnabled: false })).route, 'claude');
-  // Softer judgements (kind, done-criteria) are the chooser's to make.
-  const ok = R.guard(rogue, ctx({ kind: 'investigate', done: [] }));
-  assert.deepStrictEqual([ok.route, ok.app, ok.reason], ['factory', 'widget', 'the model liked it']);
-  assert.strictEqual(R.guard({ route: 'teleport' }, ctx()).route, 'claude');
-  assert.strictEqual(R.guard(null, ctx()).route, 'claude');
+  const k = (o) => F.inferKind(o).kind;
+  assert.strictEqual(k({ mode: 'plan', text: 'fix the export' }), 'plan', 'plan mode is a read-only plan job');
+  assert.strictEqual(k({ commitmentKind: 'coding', text: 'why is it slow?' }), 'code', "the planner's kind wins");
+  assert.strictEqual(k({ commitmentKind: 'investigate', text: 'add retries' }), 'research');
+  assert.strictEqual(k({ text: 'Write a summary of the incident for the team' }), 'report');
+  assert.strictEqual(k({ text: 'Fix the flaky export test' }), 'code');
+  assert.strictEqual(k({ text: 'Investigate and fix the flaky export test' }), 'code', 'asked to change something: code');
+  assert.strictEqual(k({ text: 'Why does the nightly build take 40 minutes?' }), 'research');
+  assert.strictEqual(k({ text: 'Find out which service owns the billing webhooks' }), 'research');
+  assert.strictEqual(k({ text: 'the export thing' }), 'code', 'nothing says otherwise: code');
+  assert.strictEqual(k({}), 'code');
+  assert.strictEqual(F.defaultRuntime('plan', 'api'), 'claude_session', 'a plan job is read-only only on claude_session');
+  assert.strictEqual(F.defaultRuntime('code', 'api'), 'api');
+  assert.strictEqual(F.defaultRuntime('code', null), 'claude_session');
 }
 
 assert.deepStrictEqual(R.doneCriteria({ detail: '- retries with backoff\n* a test for the timeout\n1. docs updated\n\n[ ] ok' }), [
@@ -180,9 +172,7 @@ assert.deepStrictEqual(R.doneCriteria({ detail: '- retries with backoff\n* a tes
 assert.deepStrictEqual(R.doneCriteria({ detail: 'One paragraph saying what done means.' }), ['One paragraph saying what done means.']);
 assert.deepStrictEqual(R.doneCriteria({ detail: null }), []);
 assert.deepStrictEqual(R.doneCriteria(null), []);
-assert.strictEqual(R.via(), 'claude');
-assert.strictEqual(R.via('AUTO'), 'auto');
-assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
+assert.strictEqual(R.via, undefined, 'no --via to parse (D28)');
 
 // --- which route works for which task ----------------------------------------------
 
@@ -233,12 +223,13 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
   for (const absent of [/`pa` MCP server/, /\*\*Worktree:\*\*/, /When you are done/, /blocked at the git level/]) assert.doesNotMatch(factory, absent);
 }
 
-// --- the planner never starts a factory job on its own -------------------------------
+// --- the planner only ever starts a read-only plan job on its own ---------------------
 
 {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent', 'planner.ts'), 'utf8');
   const research = src.slice(src.indexOf("mode: 'plan'") - 200, src.indexOf("mode: 'plan'") + 200);
-  assert.match(research, /via: 'claude'/, "the planner's own runs are plan-mode Claude sessions");
+  assert.match(research, /mode: 'plan'/, "the planner's own runs are plan mode: a read-only factory plan job");
+  assert.doesNotMatch(src, /via: 'claude'/, 'no Claude session route');
   assert.strictEqual((src.match(/dispatch'\)\.start\(/g) || []).length, 1, 'one start call, the research one');
 }
 
@@ -376,8 +367,8 @@ async function factoryStart() {
   // Recorded on the run, then the commitment moves only through the ledger.
   const insert = store.queries.find((q) => /insert into run/.test(q.sql));
   assert.match(insert.sql, /'factory'/);
-  // Pipeline solo by default (PA_FACTORY_PIPELINE); kind and runtime on the row (sql/031).
-  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'solo', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }, 'mode', 'code', 'api']);
+  // Pipeline solo by default (PA_FACTORY_PIPELINE); kind and runtime on the row (sql/031); runtime claude_session by default (D28).
+  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'solo', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }, 'mode', 'code', 'claude_session']);
   assert.ok(submit.argv.includes('--kind') && submit.argv.includes('--runtime'), 'v1.2 flags sent');
   assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:017'));
   assert.deepStrictEqual(transitions, [{ commitmentId: 31, to: 'dispatched', actor: 'dispatch', reason: 'run #7: factory job widget:017', from: ['open'] }]);
@@ -414,11 +405,16 @@ async function factoryStart() {
     }
   }
 
-  // Plan mode never reaches the factory or the store.
+  // Plan mode is a read-only plan job (JOBS-API v1.8), on claude_session unless picked.
   calls.length = 0;
-  const before = store.queries.length;
-  await assert.rejects(factory.start({ target, app: 'widget', mode: 'plan' }), /not a factory job/);
-  assert.deepStrictEqual([calls.length, store.queries.length], [0, before]);
+  answers['job submit'] = json({ job_id: 'scratch:r0009', app: null, direction_id: 'r0009', pipeline: null, delivery: 'none', created: true, kind: 'plan', runtime: 'claude_session', warnings: [] });
+  const planned = await factory.start({ target, app: null, mode: 'plan', again: true });
+  const planSubmit = calls.find((c) => c.argv.includes('submit'));
+  assert.ok(planSubmit, 'plan mode reaches the factory');
+  assert.strictEqual(planSubmit.argv[planSubmit.argv.indexOf('--kind') + 1], 'plan');
+  assert.strictEqual(planSubmit.argv[planSubmit.argv.indexOf('--runtime') + 1], 'claude_session');
+  assert.strictEqual(planSubmit.argv[planSubmit.argv.indexOf('--delivery') + 1], 'none');
+  assert.strictEqual(planned.jobKind, 'plan');
 
   // A contract error fails the run, is not retried, and moves no commitment.
   transitions.length = 0;
@@ -589,23 +585,17 @@ async function factoryPoll() {
 
 async function routeDecide() {
   const route = require('../src/dispatch/route.ts');
-  const { config } = require('../src/config.ts');
   answers = { 'app list': json({ apps: [{ app: 'widget', repo: 'acme/widget', path: '/srv/repos/widget' }] }) };
   const target = { commitment: { id: 40, kind: 'coding', detail: '- retries tested' }, project: { gitlab_path: 'acme/widget' }, repoPath: null };
-  const auto = await route.decide({ target, mode: 'branch' });
-  assert.deepStrictEqual([auto.route, auto.app, auto.done], ['factory', 'widget', ['retries tested']]);
-  assert.strictEqual((await route.decide({ target, mode: 'plan' })).route, 'claude');
-  // A registered chooser is held to the guard.
-  route.CHOOSERS.rogue = () => ({ route: 'factory', reason: 'trust me' });
-  config.factory.chooser = 'rogue';
-  assert.strictEqual((await route.decide({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' })).route, 'claude');
-  assert.strictEqual((await route.decide({ target: { ...target, commitment: { id: 41, kind: 'investigate' } }, mode: 'mr' })).reason, 'trust me');
-  route.CHOOSERS.broken = () => { throw new Error('model down'); };
-  config.factory.chooser = 'broken';
-  assert.strictEqual((await route.decide({ target, mode: 'mr' })).route, 'factory', 'a failing chooser falls back to the rule');
-  config.factory.chooser = 'rule';
-  // --via factory refuses plainly what it cannot do.
-  await assert.rejects(route.forced({ target, mode: 'plan' }), /plan mode/);
+  // No chooser any more (D28): forced is the one way in.
+  assert.deepStrictEqual([route.decide, route.CHOOSERS, route.decideFor], [undefined, undefined, undefined]);
+  const code = await route.forced({ target, mode: 'branch' });
+  assert.deepStrictEqual([code.route, code.app, code.done], ['factory', 'widget', ['retries tested']]);
+  // Plan mode is a read-only plan job: it reads the registered checkout, needs none.
+  const plan = await route.forced({ target, mode: 'plan' });
+  assert.deepStrictEqual([plan.route, plan.app], ['factory', 'widget']);
+  assert.match(plan.reason, /a plan job/);
+  assert.strictEqual((await route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'plan' })).app, null, 'a plan job needs no registered repo');
   await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), /not registered.*--register.*pa factory add acme\/elsewhere/);
   // A setup step on you, with its fix: the dashboard offers "register it and send?".
   await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), (err) => {

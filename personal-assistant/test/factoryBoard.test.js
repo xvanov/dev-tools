@@ -15,28 +15,26 @@ process.env.PA_FACTORY_PATH = '/srv/factory-checkout';
 process.env.PA_FACTORY_MACHINE = '';
 process.env.PA_FACTORY_UV = '/home/tester/.local/bin/uv';
 process.env.PA_WORKTREES_ROOT = tmp;
-delete process.env.PA_DISPATCH_VIA;
 delete process.env.PA_FACTORY_PIPELINE;
+delete process.env.PA_FACTORY_RUNTIME;
+delete process.env.PA_DISPATCH_MODE;
 
 const F = require('../src/dispatch/factoryCore.ts');
 const R = require('../src/dispatch/routeCore.ts');
 const { config } = require('../src/config.ts');
 
-// --- config: the factory is the default route once configured; solo pipeline ----
+// --- config: no route to pick (D28); solo pipeline; claude_session, mode full -----
 
-assert.strictEqual(config.factory.via, 'factory', 'PA_FACTORY_PATH set, PA_DISPATCH_VIA unset: the factory');
+assert.strictEqual(config.factory.via, undefined, 'PA_DISPATCH_VIA is gone: every dispatch is a factory job');
+assert.strictEqual(config.factory.chooser, undefined, 'PA_ROUTE_CHOOSER is gone');
+assert.strictEqual(R.defaultVia, undefined);
 assert.strictEqual(config.factory.pipeline, 'solo');
-assert.strictEqual(config.factory.runtime, 'api');
-assert.strictEqual(R.defaultVia({ configured: 'factory' }), 'factory');
-assert.strictEqual(R.defaultVia({ configured: 'factory', mode: 'plan' }), 'claude', 'plan mode is read-only: a Claude session');
-assert.strictEqual(R.defaultVia({ configured: 'factory', machine: 'lab' }), 'claude', '--machine picks a Claude session');
-assert.strictEqual(R.defaultVia({ configured: 'claude' }), 'claude');
-assert.strictEqual(R.defaultVia({ configured: 'auto', mode: 'mr' }), 'auto');
-assert.strictEqual(R.defaultVia({}), 'claude');
+assert.strictEqual(config.factory.runtime, 'claude_session');
+assert.strictEqual(config.factory.mode, 'full');
 
 // --- kinds and runtimes ---------------------------------------------------------
 
-assert.deepStrictEqual(F.KINDS, ['code', 'research', 'report']);
+assert.deepStrictEqual(F.KINDS, ['code', 'research', 'report', 'plan']);
 assert.strictEqual(F.jobKind(), 'code');
 assert.strictEqual(F.jobKind('Research'), 'research');
 assert.throws(() => F.jobKind('poem'), /unknown kind/);
@@ -77,7 +75,7 @@ assert.throws(() => F.uvBinary('uv & calc'), /PA_FACTORY_UV/);
   assert.match(ask, /Repository: acme\/widget \(read it; change nothing\)\./);
   assert.match(ask, /## Questions it must answer\n\n- what changed\n- how to fix\n$/);
   assert.match(F.researchAsk({ kind: 'report', title: 'Q3 summary' }), /^# Write: Q3 summary\n[\s\S]*The ask\n\nQ3 summary\n$/);
-  assert.throws(() => F.researchAsk({ kind: 'code', title: 'x' }), /research and report/);
+  assert.throws(() => F.researchAsk({ kind: 'code', title: 'x' }), /research, report and plan/);
   assert.doesNotMatch(F.researchAsk({ kind: 'research', title: 't', ask: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789 here' }), /ghp_abcdefghijklmnop/, 'secrets redacted');
 }
 
@@ -299,7 +297,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     calls = [];
     answer = (argv) => (isV1(argv) ? V1_REFUSAL : json({ job_id: 'widget:030', app: 'widget', pipeline: 'solo', delivery: 'draft_pr', created: true, warnings: [] }));
     require('../src/dispatch/compose.ts')._setModel(async () => JSON.stringify({ goal: 'g', done: [], constraints: [], decisions: [], facts: [], reuse: [], questions: [] }));
-    const r = await factory.start({ target, app: 'widget', task: 'Add retries to the export', delivery: 'draft_pr' });
+    const r = await factory.start({ target, app: 'widget', task: 'Add retries to the export', delivery: 'draft_pr', runtime: 'api' });
     const submits = calls.filter((c) => c.argv.includes('submit'));
     assert.strictEqual(submits.length, 2, 'once with the v1.2 flags, once without');
     assert.ok(isV1(submits[0].argv) && !isV1(submits[1].argv));
@@ -336,7 +334,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     calls = [];
     store.queries = [];
     answer = (argv) => (isV1(argv) ? V1_REFUSAL : json({ job_id: 'x:1', created: true }));
-    await assert.rejects(factory.start({ target, task: 'Why is the export slow?', jobKind: 'research' }), /research job on the api runtime needs it/);
+    await assert.rejects(factory.start({ target, task: 'Why is the export slow?', jobKind: 'research' }), /research job on the claude_session runtime needs it/);
     assert.strictEqual(calls.filter((c) => c.argv.includes('submit')).length, 1, 'not resent without the kind');
     assert.ok(store.queries.some((q) => /update run set status = 'failed'/.test(q.sql)), 'the run is failed, not left starting');
   }
@@ -446,14 +444,14 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.deepStrictEqual([r.title, r.task, r.jobKind, r.runtime, r.repoPath, r.delivery, r.done, r.register, r.via],
       ['Export latency', 'Why slow?', 'research', 'claude_session', null, null, ['what changed', 'how to fix'], false, 'factory']);
     const c = P.newJob({ title: 'Add retries', kind: 'code', repo: 'acme/widget', delivery: 'pr' });
-    assert.deepStrictEqual([c.task, c.delivery, c.register, c.runtime], ['Add retries', 'pr', true, 'api']);
+    assert.deepStrictEqual([c.task, c.delivery, c.register, c.runtime], ['Add retries', 'pr', true, 'claude_session']);
     assert.throws(() => P.newJob({ title: 'x', kind: 'code' }), (e) => e.status === 400 && /needs a repo/.test(e.message));
     assert.throws(() => P.newJob({ title: 'x', kind: 'research', delivery: 'pr' }), /end state is none/);
     assert.throws(() => P.newJob({ title: 'x', kind: 'research', repo: '/home/me/../etc' }), /owner\/name/);
     assert.throws(() => P.newJob({ title: '', kind: 'research' }), /title/);
     assert.throws(() => P.newJob({ title: 'x', kind: 'poem' }), (e) => e.status === 400);
     assert.throws(() => P.newJob({ title: 'x', kind: 'code', repo: 'a/b', delivery: 'yolo' }), /unknown delivery/);
-    assert.deepStrictEqual(P.pickers().kinds.map((k) => k.value), ['code', 'research', 'report']);
+    assert.deepStrictEqual(P.pickers().kinds.map((k) => k.value), ['code', 'research', 'report', 'plan']);
 
     stub('budget.ts', { async status() { return { today: 0.42, cap: 5 }; } });
     const server = require('../src/dashboard/server.ts');

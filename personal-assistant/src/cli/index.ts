@@ -48,14 +48,13 @@ const HELP = `pa — your context layer
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
-    pa do <id> [--mode m] [--repo p] dispatch a commitment: the software factory once configured, else a Claude Code session
-                     [--machine name]  …a Claude session in another machine's termhub (PA_MACHINES)
-                     [--via claude|factory|auto]  pick the route; auto picks and says why
-                     [--kind code|research|report] [--runtime api|claude_session]  factory: what kind of work, who does it
-                     [--delivery none|branch|draft_pr|pr|auto_merge|push_to_main]  the end state (both routes)
-                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a] [--register]  factory only
-                     [--preview]  print the route, end state and the brief that would be sent; start nothing
-                     [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
+    pa do <id> [--mode m] [--repo p] dispatch a commitment: always a software-factory job (no route to pick)
+                     [--kind code|research|report|plan]  unset: decided from the ask (the card's choice wins)
+                     [--runtime claude_session|api]  unset: PA_FACTORY_RUNTIME (claude_session)
+                     [--delivery none|branch|draft_pr|pr|auto_merge|push_to_main]  unset: the factory app's default
+                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a] [--register]
+                     [--model m]  the Claude model of a claude_session job
+                     [--preview]  print the job, end state and the brief that would be sent; start nothing
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa task add "<what>" [--due when] [--for person] [--owed-to-me]  a task because you asked for it
     pa policy [close [--teams] [--apply]]  which sources create tasks; close cards the policy would not have made
@@ -194,12 +193,12 @@ function dispatchFlags(commitmentId: any, task: any, flags: any, lists: any) {
     delivery: str('delivery'),
     pipeline: str('pipeline'),
     // --model is shared: persona=model pairs are factory route overrides,
-    // a bare model picks the agent's model for a Claude/opencode run.
+    // a bare model names the Claude model of a claude_session job.
     models: models.filter((m: any) => String(m).includes('=')).length ? models.filter((m: any) => String(m).includes('=')) : null,
     done: lists.done || null,
     app: str('app'),
     register: flagBool(flags, 'register'),
-    // JOBS-API v1.2: code | research | report, and api | claude_session.
+    // JOBS-API v1.2: code | research | report | plan, and api | claude_session.
     jobKind: str('kind'),
     runtime: str('runtime'),
     title: str('title'),
@@ -569,7 +568,7 @@ const commands: Json = {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--kind k] [--runtime r] | pa do --task "..."');
     const o: any = dispatchFlags(commitmentId, task, flags, lists);
     if (flagBool(flags, 'preview')) {
       // Composing is a model call made ahead of any decision: under the daily budget.
@@ -581,8 +580,8 @@ const commands: Json = {
     // main with no human step after it starts only on a terminal yes; asked
     // for by the chat (or any non-interactive caller) it becomes a card.
     const D = require('../dispatch/deliveryCore.ts');
-    const kind = require('../dispatch/factoryCore.ts').jobKind(o.jobKind);
-    const pre = kind !== 'code' ? { delivery: 'none', source: 'kind' } : await dispatch.previewDelivery(o);
+    const pre = await dispatch.previewDelivery(o);
+    const kind: string = pre.jobKind;
     if (kind !== 'code') out(`a ${kind} job: the factory writes a report — no code changes, no branch, no PR`);
     out(pre.delivery ? `end state: ${pre.delivery} — ${D.describe(pre.delivery)} (${D.sourceLine(pre.source, pre.phrase)})` : 'end state: none — read-only');
     const hint = !o.delivery ? D.unattendedHint(task) : null;
@@ -602,8 +601,6 @@ const commands: Json = {
       o.confirmedUnattended = true;
     }
 
-    const machine = o.machine;
-    if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
     const result = await dispatch.start(o);
     const end = (r: any, route: any) => r.delivery
       ? `${r.delivery} — ${D.describe(r.delivery, { route })} (${D.sourceLine(r.deliverySource, r.deliveryPhrase)})`
@@ -745,7 +742,7 @@ const commands: Json = {
     if (sub === 'submit') {
       const title = flags.title && flags.title !== true ? String(flags.title) : null;
       const ask = flags.ask && flags.ask !== true ? String(flags.ask) : null;
-      if (!title && !ask) return fail('usage: pa factory submit --title "…" --ask "…" [--kind code|research|report] [--runtime api|claude_session] [--repo owner/name] [--delivery level] [--done "…"]… [--card]');
+      if (!title && !ask) return fail('usage: pa factory submit --title "…" --ask "…" [--kind code|research|report|plan] [--runtime api|claude_session] [--repo owner/name] [--delivery level] [--done "…"]… [--card]');
       const o: Json = { ...dispatchFlags(null, ask || title, flags, lists), via: 'factory', title: title || null };
       const kind = F.jobKind(o.jobKind);
       if (kind === 'code' || flagBool(flags, 'card')) {
@@ -1560,7 +1557,7 @@ const commands: Json = {
         try {
           const where = factory.machine() || 'this machine';
           const apps = await factory.apps({ fresh: true });
-          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a: any) => a.repo || a.app).slice(0, 6).join(', ')} · default --via ${config.factory.via} · pipeline ${config.factory.pipeline} · runtime ${config.factory.runtime}`);
+          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a: any) => a.repo || a.app).slice(0, 6).join(', ')} · every dispatch · pipeline ${config.factory.pipeline} · runtime ${config.factory.runtime}`);
         } catch (err: any) {
           mark(false, 'factory', `${err.message.slice(0, 160)}${/exit 127|ENOENT/.test(err.message) ? ' — set PA_FACTORY_UV to the full path of uv there' : ''}`);
         }

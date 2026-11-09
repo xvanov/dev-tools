@@ -16,7 +16,7 @@
     ['delivered', 'Delivered'],
     ['ended', 'Failed / cancelled'],
   ];
-  var KIND = { code: 'code', research: 'research', report: 'report' };
+  var KIND = { code: 'code', research: 'research', report: 'report', plan: 'plan' };
   var RUNTIME = { api: 'API', claude_session: 'Claude session' };
   var data = null;
   var busyForm = false;

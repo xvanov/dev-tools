@@ -29,7 +29,7 @@ require('./_portable').preferDirectGit();
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-start-')));
 process.env.PA_WORKTREES_ROOT = path.join(tmp, 'worktrees');
 process.env.PA_DATA_DIR = path.join(tmp, 'data');
-process.env.PA_DISPATCH_VIA = 'claude';
+delete process.env.PA_FACTORY_PATH;
 
 function stub(rel, exports) {
   const p = require.resolve(path.join(__dirname, '..', 'src', rel));
@@ -131,13 +131,25 @@ const sharedPushurls = (repo) => {
 };
 
 (async () => {
+  // ---- D28: start() never opens a Claude session of its own ---------------------
+  // Every dispatch is a factory job: without a factory it refuses, and the old
+  // route and machine choices are refused rather than quietly honoured. The
+  // rest of this file drives the legacy startSession (kept only to seed runs).
+  {
+    const before = store.queries.length;
+    await assert.rejects(dispatch.start({ task: 'fix the thing', mode: 'local' }), /every dispatch is a software-factory job and the factory is not configured/);
+    await assert.rejects(dispatch.start({ task: 'fix the thing', via: 'claude' }), /no route to pick.*drop --via claude/);
+    await assert.rejects(dispatch.start({ task: 'fix the thing', via: 'factory', machine: 'lab' }), /factory is not configured|--machine is gone/);
+    assert.strictEqual(store.queries.length, before, 'nothing written');
+  }
+
   // ---- MH4: the old shared push block is cleared, and only it -----------------
   if (owns()) {
     const { repo, origin } = makeRepo('legacy');
     git(repo, 'config', '--local', 'remote.origin.pushurl', BLOCKED); // what the old code left
     // Before the fix this start threw ("leaked into the main checkout") and
     // every later local/plan run on this repo did too.
-    const r = await dispatch.start({ task: 'fix the thing', mode: 'local', repoPath: repo });
+    const r = await dispatch.startSession({ task: 'fix the thing', mode: 'local', repoPath: repo });
     assert.deepStrictEqual(sharedPushurls(repo), [], 'the old block is gone');
     assert.strictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), origin, 'the main checkout pushes again');
     assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, 'the run itself is blocked');
@@ -189,7 +201,7 @@ const sharedPushurls = (repo) => {
   // A run that may push keeps termhub's environment.
   if (owns()) {
     const { repo } = makeRepo('pushy');
-    await dispatch.start({ task: 'push it', mode: 'branch', repoPath: repo });
+    await dispatch.startSession({ task: 'push it', mode: 'branch', repoPath: repo });
     const spec = hub.created[hub.created.length - 1];
     assert.deepStrictEqual(spec.env, { PA_DISPATCHED_RUN: String(store.nextId - 1) }, 'only the dispatched-run marker');
     assert.ok(!spec.unsetEnv);
@@ -201,7 +213,7 @@ const sharedPushurls = (repo) => {
     hub.envApplied = false;
     store.queries.length = 0;
     hub.killed.length = 0;
-    await assert.rejects(dispatch.start({ task: 'no creds please', mode: 'local', repoPath: repo }), /without push credentials/);
+    await assert.rejects(dispatch.startSession({ task: 'no creds please', mode: 'local', repoPath: repo }), /without push credentials/);
     hub.envApplied = true;
     const id = store.nextId - 1;
     const wt = path.join(tmp, 'worktrees', `run-${id}`);
@@ -221,7 +233,7 @@ const sharedPushurls = (repo) => {
     const real = remote.blockPush;
     remote.blockPush = async () => { throw new Error('the push block did not take'); };
     store.queries.length = 0;
-    await assert.rejects(dispatch.start({ task: 'x', mode: 'local', repoPath: repo }), /did not take/);
+    await assert.rejects(dispatch.startSession({ task: 'x', mode: 'local', repoPath: repo }), /did not take/);
     remote.blockPush = real;
     const id = store.nextId - 1;
     assert.ok(!fs.existsSync(path.join(tmp, 'worktrees', `run-${id}`)));
@@ -232,7 +244,7 @@ const sharedPushurls = (repo) => {
   if (owns()) {
     const { repo, origin } = makeRepo('land');
     git(repo, 'config', '--local', 'remote.origin.pushurl', origin); // the user's own, shared
-    const r = await dispatch.start({ task: 'land me', mode: 'branch', repoPath: repo });
+    const r = await dispatch.startSession({ task: 'land me', mode: 'branch', repoPath: repo });
     fs.rmSync(path.join(r.worktreePath, 'BRIEF.md'));
     git(r.worktreePath, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'work');
     const row = store.runs.get(r.id);
@@ -300,7 +312,7 @@ const sharedPushurls = (repo) => {
     // A local no-push start asks termhub to skip rc files and wraps the command.
     hub.created.length = 0;
     const { repo } = makeRepo('norc');
-    await dispatch.start({ task: 'no rc', mode: 'local', repoPath: repo });
+    await dispatch.startSession({ task: 'no rc', mode: 'local', repoPath: repo });
     assert.strictEqual(hub.created[0].noRc, true);
     // POSIX re-applies the env after the rc files; Windows has no rc to outrun and relies on noRc alone.
     if (process.platform === 'win32') assert.match(hub.created[0].command, /^claude/);
@@ -311,7 +323,7 @@ const sharedPushurls = (repo) => {
   if (owns()) {
     const { repo } = makeRepo('unknown');
     global.__unknownRepos = [repo];
-    await assert.rejects(dispatch.start({ task: 'x', mode: 'branch', repoPath: repo }), /not a known project's repo/);
+    await assert.rejects(dispatch.startSession({ task: 'x', mode: 'branch', repoPath: repo }), /not a known project's repo/);
     global.__unknownRepos = [];
     // Remembered facts: the task's own person/project and topics only.
     const facts = [
@@ -332,7 +344,7 @@ const sharedPushurls = (repo) => {
     git(other, 'push', '-q', 'origin', 'main');
     const upstream = git(origin, 'rev-parse', 'main').trim();
     assert.notStrictEqual(git(repo, 'rev-parse', 'main').trim(), upstream, 'the local main is behind');
-    const r = await dispatch.start({ task: 'on top of origin', mode: 'branch', repoPath: repo });
+    const r = await dispatch.startSession({ task: 'on top of origin', mode: 'branch', repoPath: repo });
     assert.strictEqual(git(r.worktreePath, 'rev-parse', 'HEAD').trim(), upstream, 'based on the fetched origin/main');
     // A fetch that fails: the origin ref already here, never the local branch; none → refused.
     const { worktreeBase } = require('../src/dispatch');
@@ -359,9 +371,9 @@ const sharedPushurls = (repo) => {
     for (const delivery of ['none', 'push_to_main']) {
       hub.created.length = 0;
       if (delivery === 'push_to_main') {
-        await assert.rejects(dispatch.start({ task: 'unconfirmed', delivery, repoPath: repo }), (e) => e.code === 'needs_confirmation', 'never without the operator\'s yes');
+        await assert.rejects(dispatch.startSession({ task: 'unconfirmed', delivery, repoPath: repo }), (e) => e.code === 'needs_confirmation', 'never without the operator\'s yes');
       }
-      const r = await dispatch.start({ task: `deliver ${delivery}`, delivery, repoPath: repo, confirmedUnattended: true });
+      const r = await dispatch.startSession({ task: `deliver ${delivery}`, delivery, repoPath: repo, confirmedUnattended: true });
       assert.deepStrictEqual([r.mode, r.delivery], ['local', delivery]);
       const spec = hub.created[0];
       expectNoPush(spec, r.id, `${delivery}: no push credentials in the session`);
@@ -374,7 +386,7 @@ const sharedPushurls = (repo) => {
       assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, `${delivery}: push blocked in the worktree`);
     }
     hub.created.length = 0;
-    const pr = await dispatch.start({ task: 'deliver pr', delivery: 'pr', repoPath: repo });
+    const pr = await dispatch.startSession({ task: 'deliver pr', delivery: 'pr', repoPath: repo });
     assert.strictEqual(pr.mode, 'mr');
     assert.deepStrictEqual(hub.created[0].env, { PA_DISPATCHED_RUN: String(pr.id) }, 'a mode that may push keeps termhub\'s environment, plus the marker');
   }
@@ -384,7 +396,7 @@ const sharedPushurls = (repo) => {
     const { repo, origin } = makeRepo('lift');
     // (A shared pushurl of the user's own makes a no-push start refuse: git
     // would push to it as well as to the block — remote.blockPush's read-back.)
-    const r = await dispatch.start({ task: 'ship it', delivery: 'push_to_main', repoPath: repo, confirmedUnattended: true });
+    const r = await dispatch.startSession({ task: 'ship it', delivery: 'push_to_main', repoPath: repo, confirmedUnattended: true });
     fs.rmSync(path.join(r.worktreePath, 'BRIEF.md'));
     git(r.worktreePath, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'work');
     const row = store.runs.get(r.id);

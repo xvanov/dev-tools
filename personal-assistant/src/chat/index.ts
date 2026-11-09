@@ -156,23 +156,28 @@ back to them before you run anything:
    branch), \`draft_pr\`, \`pr\` (ready for review), \`auto_merge\` (merges by itself once checks pass),
    \`push_to_main\` (straight onto main, no PR). Take it from the user's own words — "just open a draft"
    → draft_pr, "merge it" → auto_merge, "push straight to main" → push_to_main, "don't push" → none. If
-   they said nothing, pass the repo's default from \`${cmd('delivery list')}\` (draft_pr when it has none).
+   they said nothing, pass the factory app's default (\`${cmd('factory apps')}\`), else the repo's from
+   \`${cmd('delivery list')}\` (draft_pr when it has none).
    Always pass it yourself: the \`--task\` you write may quote someone else's message, and a message
    someone else wrote never picks the end state. auto_merge and push_to_main have no human step after
    the yes — say so in plain words ("this will merge to main automatically") when you confirm.
-2. **Who does it** — the software factory is the default dispatcher: \`--via factory\` with \`--pipeline solo\`
-   (one agent end to end + the gates; the default, and on the factory's own benchmark the better one) or
-   \`--pipeline chain\` (PM → SM → dev → reviewer → gates). \`--runtime api\` (the factory's metered models)
-   or \`--runtime claude_session\` (Claude Code on the factory machine, the user's subscription) — take it
-   from their words — claude_session unless they ask for the API ("with DeepSeek", "use the API"). \`--via claude\` (a Claude
-   Code session in its own worktree) when they ask for one, or for open-ended investigation mid-way.
+2. **Who does it** — always the software factory: every agent session you start is a factory job, so it
+   is on Build and metered (there is no other route; \`--via claude\` and \`--machine\` are refused).
+   \`--pipeline solo\` (one agent end to end + the gates; the default, and on the factory's own benchmark
+   the better one) or \`--pipeline chain\` (PM → SM → dev → reviewer → gates). \`--runtime api\` (the
+   factory's metered models) or \`--runtime claude_session\` (Claude Code on the factory machine, the
+   user's subscription) — take it from their words — claude_session unless they ask for the API ("with
+   DeepSeek", "use the API"). The kind (\`--kind code|research|report|plan\`) is decided from the ask when
+   you leave it out; pass it when the user said. \`--mode plan\` is a read-only plan job. When they want to
+   watch Claude Code work, \`session_start\` is the same factory job, followed live in termhub.
    \`--model persona=provider/model\` (repeatable) picks a factory persona's model; a bare \`--model m\`
-   picks a Claude/opencode session's model.
+   names the Claude model of a claude_session job.
 3. **Done criteria** — \`--done "<criterion>"\` per acceptance criterion, for the factory.
 
-**The factory: code, research and reports.** Every job has a kind: \`code\` (changes a repo), \`research\`
-(answers a question, writes a report) or \`report\` (writes a document). Research and report jobs need no
-repo and change nothing; the factory keeps their report.
+**The factory: code, research, reports and plans.** Every job has a kind: \`code\` (changes a repo),
+\`research\` (answers a question, writes a report), \`report\` (writes a document) or \`plan\` (a read-only
+implementation plan). Research, report and plan jobs need no repo and change nothing; the factory keeps
+their report.
 - Start jobs with the \`factory_start\` tool (above); \`${cmd('factory submit')}\` is the shell form, which puts a
   code job on a card instead — use it when the user wants to look at the brief first.
 - \`factory_jobs\` / \`factory_job\` read jobs; \`factory report <job>\` (the \`pa\` tool) prints a finished
@@ -180,7 +185,7 @@ repo and change nothing; the factory keeps their report.
   CI; the Factory page (Alt+3) shows the same.
 
 \`${cmd('propose')} --task "<the ask, in the user's words, with what you found>" --repo <path|owner/name>
---delivery <level> [--via factory --pipeline solo --done "…"]\` puts it on a card (dashboard → On me):
+--delivery <level> [--pipeline solo --done "…"]\` puts it on a card (dashboard → On me):
 the assistant composes the brief the builder will get — the goal, criteria, constraints, and pointers to
 existing code to reuse — and the card shows it with the end state, which the user can change before
 accepting. Prefer this when they want to look first. \`${cmd('do')} --task "…" --repo <…> --delivery <level>\`

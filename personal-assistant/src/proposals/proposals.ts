@@ -64,13 +64,14 @@ const HANDLERS = {
         commitmentId: p.commitment_id,
         task: pl.task || null,
         repoPath: pl.repoPath || null,
-        via: pl.via === 'factory' ? 'factory' : 'claude',
-        mode: pl.via === 'factory' ? undefined : (changed ? undefined : pl.mode) || undefined,
+        // Every start is a factory job (D28). A card made for a Claude session
+        // (before D28) runs as a code job in its mode; plan stays a plan job.
+        mode: (changed ? undefined : pl.mode) || undefined,
         delivery: delivery || undefined,
         deliverySource: changed ? 'explicit' : pl.deliverySource || null,
         deliveryPhrase: changed ? null : pl.deliveryPhrase || null,
         app: pl.app || null,
-        register: Boolean(pl.register),
+        register: pl.via === 'factory' ? Boolean(pl.register) : true,
         done: Array.isArray(pl.done) ? pl.done : [],
         pipeline: pl.pipeline || null,
         models: pl.models || null,
@@ -89,14 +90,11 @@ const HANDLERS = {
       });
       return describeStart(run);
     }
-    const via = pl.via === 'factory' ? 'factory' : 'claude';
-
     const run = await require('../dispatch').start({
       commitmentId: p.commitment_id,
       mode: pl.mode || undefined,
       repoPath: pl.repoPath || null,
       repoVerified: true,
-      via,
       routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
     });
     return describeStart(run);

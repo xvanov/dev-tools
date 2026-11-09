@@ -206,7 +206,9 @@ function sourceLine(source: string | null | undefined, phrase: string | null = n
     case 'mode': return 'from the mode you gave';
     case 'inferred': return phrase ? `from your words: "${phrase}"` : 'from your words';
     case 'repo_default': return `the default for ${slug || 'this repo'} (pa delivery set)`;
-    case 'kind': return 'a research or report job delivers its report only';
+    case 'app_default': return 'the factory app\'s default (delivery.default)';
+    case 'card': return 'chosen on the card';
+    case 'kind': return 'a research, report or plan job delivers its report only';
     default: return 'the assistant\'s default (PA_DELIVERY_DEFAULT)';
   }
 }

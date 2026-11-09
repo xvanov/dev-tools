@@ -494,21 +494,20 @@ const config = {
     // `factory serve`'s localhost API (plan 2.1), tried first when the factory
     // is on this machine; empty disables it (every call spawns the CLI).
     serveUrl: env('PA_FACTORY_SERVE_URL', 'http://127.0.0.1:7330'),
-    // `pa do`'s route when --via is not given: claude | factory | auto.
-    // Unset: the factory once it is configured (it dispatches and tracks all
-    // work: code, research, reports), else a Claude session.
-    via: env('PA_DISPATCH_VIA', '') || (env('PA_FACTORY_PATH', '') ? 'factory' : 'claude'),
+    // There is no route to pick (decision D28): every dispatch is a factory
+    // job, so PA_DISPATCH_VIA and PA_ROUTE_CHOOSER are gone.
     // chain | solo | auto (the factory decides). Solo by default: on the
     // factory's own benchmark one agent beat the role chain.
     pipeline: env('PA_FACTORY_PIPELINE', 'solo'),
-    // A job's runtime when none is picked: api (the factory's metered model
-    // routing) | claude_session (Claude Code on the factory machine, the
-    // operator's subscription). JOBS-API v1.2.
-    runtime: env('PA_FACTORY_RUNTIME', 'api'),
+    // A job's runtime when none is picked: claude_session (Claude Code on the
+    // factory machine, the operator's subscription: the credit pool) | api (the
+    // factory's metered model routing). JOBS-API v1.2. A plan job is always
+    // claude_session unless picked (factoryCore.defaultRuntime).
+    runtime: env('PA_FACTORY_RUNTIME', 'claude_session'),
+    // The mode a card's dispatch starts in when nobody picked one (src/dispatch/settings.ts).
+    mode: env('PA_DISPATCH_MODE', 'full'),
     // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
     models: env('PA_FACTORY_MODELS', ''),
-    // How `auto` picks: `rule` (src/dispatch/routeCore.ts). The seam for others.
-    chooser: env('PA_ROUTE_CHOOSER', 'rule'),
     // The worker's factory pass (src/dispatch/factoryPace.ts): every
     // pollSeconds when nothing moves, every activePollSeconds while a job is
     // queued, triaging or in progress, and at once when a local factory writes

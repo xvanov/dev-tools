@@ -509,7 +509,7 @@ function link(url, text) {
 // Where a run can go and in which mode (GET api/machines), loaded once. A
 // commitment's context is fetched when asked for and kept open across the
 // page's refreshes, so reading it is not interrupted.
-let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local', routes: ['claude'], defaultRoute: 'claude' };
+let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local', routes: ['factory'], defaultRoute: 'factory' };
 fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
 const openBlockers = new Set();
@@ -655,8 +655,9 @@ function cardSource(x, wanted) {
 // question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
 // Where the work goes. Its end state is the end-state picker's (unpicked: the
 // repo's default); a mode changed from its default maps to one instead (local
-// → nothing pushed, branch → a branch, mr/full → a draft PR). plan is never a
-// factory job, and auto falls back to a Claude session for it.
+// → nothing pushed, branch → a branch, mr/full → a draft PR). Every Do is a
+// factory job (D28): there is no route or machine to pick, and plan is a
+// read-only plan job. A card's stored choices: api/commitments/<id>/dispatch-settings.
 const ROUTE_HELP = {
   claude: 'Claude session',
   factory: 'software factory',
@@ -677,17 +678,17 @@ function commitmentCard(c) {
   const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
   const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
   // The end state (src/dispatch/deliveryCore.ts). Unpicked: the repo's default.
-  const deliveryPick = picker([{ value: '', label: 'end state: the repo\'s default' },
+  const deliveryPick = picker([{ value: '', label: 'end state: the factory app\'s default' },
     ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
   // On the factory route: what kind of work, and who does it (JOBS-API v1.2).
   // A research or report job delivers a report: no end state, no mode, no repo needed.
-  const kindPick = picker((MACHINES.kinds || []).map((k) => ({ value: k.value, label: k.label })), 'code');
+  const kindPick = picker([{ value: '', label: 'kind: decided from the ask' }, ...(MACHINES.kinds || []).map((k) => ({ value: k.value, label: k.label }))], '');
   const runtimePick = picker((MACHINES.runtimes || []).map((r) => ({ value: r.value, label: r.label })), MACHINES.defaultRuntime || 'api');
   const factoryOnly = () => {
     const f = routePick.value === 'factory';
     kindPick.hidden = !f || !(MACHINES.kinds || []).length;
     runtimePick.hidden = !f || !(MACHINES.runtimes || []).length;
-    const report = f && kindPick.value !== 'code';
+    const report = f && Boolean(kindPick.value) && kindPick.value !== 'code';
     modePick.hidden = report;
     deliveryPick.hidden = report;
     machinePick.hidden = f;
@@ -750,13 +751,13 @@ function commitmentCard(c) {
     try {
       // A mode left at its default is not a choice: the end state decides then.
       const onFactory = routePick.value === 'factory';
-      const kind = onFactory && !kindPick.hidden ? kindPick.value : null;
+      const kind = onFactory && !kindPick.hidden && kindPick.value ? kindPick.value : null;
       const report = kind && kind !== 'code';
       const mode = !report && modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
       // The level this will resolve to (a repo default included), shown and
       // confirmed here when nothing human follows it; the server checks the
       // page sent back exactly that level. A research/report job has none.
-      const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
+      const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(kind ? { kind } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
       const pre = report ? { unattended: false } : await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
       let confirmedLevel = null;
       if (pre.unattended) {
@@ -765,7 +766,7 @@ function commitmentCard(c) {
       }
       const send = (register) => post(`api/commitments/${c.id}/dispatch`, {
         machine: onFactory ? null : machinePick.value || null, mode, via: routePick.value, delivery: report ? null : deliveryPick.value || null, confirmedLevel,
-        kind, runtime: onFactory && !runtimePick.hidden ? runtimePick.value : null, ...(register ? { register: true } : {}),
+        kind, runtime: onFactory && !runtimePick.hidden && runtimePick.value !== MACHINES.defaultRuntime ? runtimePick.value : null, ...(register ? { register: true } : {}),
       });
       // A repo the factory does not know yet is a setup step on you, with
       // its fix (src/dispatch/route.ts): one click registers it and sends.

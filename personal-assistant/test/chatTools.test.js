@@ -118,7 +118,8 @@ async function main() {
     const o = T.factoryPlan({ ask: 'Add retries to the export', repo: 'acme/widget', delivery: 'pr', done: ['CI green', ' ', 'PR ready to merge'] });
     assert.strictEqual(o.runtime, 'claude_session', 'the user\'s default: Claude Code on the subscription');
     assert.strictEqual(o.via, 'factory');
-    assert.strictEqual(o.jobKind, 'code');
+    assert.strictEqual(o.jobKind, null, 'no kind given: the start decides it from the ask (D28)');
+    assert.strictEqual(T.factoryPlan({ ask: 'x', kind: 'plan' }).jobKind, 'plan');
     assert.deepStrictEqual(o.done, ['CI green', 'PR ready to merge']);
     assert.strictEqual(o.models, null);
     const c = T.factoryPlan({}, { card: { commitment: 412 } });
@@ -225,7 +226,8 @@ async function main() {
     preview = 'draft_pr';
     await T.handle('session_start', { repo: 'acme/widget', prompt: 'Look into the flaky export test', mode: 'plan' });
     const s = started[started.length - 1];
-    assert.strictEqual(s.via, 'claude');
+    assert.strictEqual(s.via, undefined, 'no route: a factory job like every dispatch (D28)');
+    assert.strictEqual(s.runtime, 'claude_session', 'Claude Code on the subscription, metered on the credit pool');
     assert.strictEqual(s.mode, 'plan');
     assert.strictEqual(s.delivery, null, 'plan delivers nothing');
     await assert.rejects(() => T.handle('factory_cancel', { job: 'not a job' }), /not a factory job id/);

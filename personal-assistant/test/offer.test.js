@@ -186,13 +186,21 @@ const proposals = require('../src/proposals');
   assert.strictEqual(world.proposals.find((p) => p.id === row2.id).answer, 'delivery=push_to_main');
   await assert.rejects(proposals.decide(99, { accept: true, delivery: 'yolo' }), /unknown delivery/);
 
-  // A Claude-session offer carries its delivery and the mode that enforces it.
-  const session = await offer.prepare({ commitmentId: 31, via: 'claude', delivery: 'pr' });
-  assert.deepStrictEqual([session.payload.via, session.payload.delivery, session.payload.mode, session.payload.brief], ['claude', 'pr', 'mr', undefined]);
-  assert.match(session.body, /Route: Claude session \(mode mr\)/);
-  const research = await offer.prepare({ commitmentId: 31, via: 'claude', mode: 'plan' });
-  assert.deepStrictEqual([research.payload.delivery, research.payload.mode], [null, 'plan']);
-  assert.match(research.body, /read-only research/);
+  // No Claude-session offer any more (D28): --via claude is refused, and plan
+  // mode is a read-only factory plan job on claude_session.
+  await assert.rejects(offer.prepare({ commitmentId: 31, via: 'claude', delivery: 'pr' }), /no route to pick/);
+  const research = await offer.prepare({ commitmentId: 31, mode: 'plan' });
+  assert.deepStrictEqual([research.payload.via, research.payload.jobKind, research.payload.runtime, research.payload.delivery], ['factory', 'plan', 'claude_session', 'none']);
+  assert.match(research.title, /^Plan in the factory: /);
+  assert.match(research.body, /End state: a plan \(read-only\) the factory keeps/);
+  // The factory app's delivery.default is the end state when nothing else is said.
+  const appsBefore = apps;
+  apps = [{ app: 'widget', repo: 'acme/widget', delivery: { default: 'branch' } }];
+  await require('../src/dispatch/factory.ts').forgetApps();
+  const byApp = await offer.prepare({ commitmentId: 31, useModel: false });
+  assert.deepStrictEqual([byApp.payload.delivery, byApp.payload.deliverySource, byApp.payload.mode], ['branch', 'app_default', 'full']);
+  apps = appsBefore;
+  await require('../src/dispatch/factory.ts').forgetApps();
 
   // #1 + page token: the dashboard confirms only the level the page showed, with its token.
   {
@@ -291,10 +299,10 @@ const proposals = require('../src/proposals');
     global.__unknownRepos = ['/gone/repo'];
     await assert.rejects(proposals.decide(old.id, { accept: true }), /not a known project — decline it and offer it again.*pa projects sync/);
     global.__unknownRepos = [];
-    const fresh = await offer.prepare({ commitmentId: 31, via: 'claude', delivery: 'pr' });
+    const fresh = await offer.prepare({ commitmentId: 31, delivery: 'pr', useModel: false });
     assert.ok(fresh.payload.repoVerifiedAt === null || typeof fresh.payload.repoVerifiedAt === 'string');
     global.__unknownRepos = ['/x'];
-    await assert.rejects(offer.prepare({ commitmentId: 31, via: 'claude', repoPath: '/x' }), /not a known project's repo/);
+    await assert.rejects(offer.prepare({ commitmentId: 31, repoPath: '/x', useModel: false }), /not a known project's repo/);
     global.__unknownRepos = [];
   }
 

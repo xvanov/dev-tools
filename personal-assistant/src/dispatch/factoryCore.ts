@@ -92,8 +92,10 @@ function uvBinary(uv: string | null | undefined): string {
 // code      a direction → stories → PRs at the job's delivery level (v1's only kind)
 // research  answer a question; the deliverable is a report the factory keeps
 // report    write a document; same deliverable, same rules
-// A research/report job delivers `none` (no branch, no PR) and needs no repo.
-const KINDS = ['code', 'research', 'report'];
+// plan      read-only: an implementation plan, change nothing (JOBS-API v1.8;
+//           on claude_session Claude Code runs in its plan permission mode)
+// A research/report/plan job delivers `none` (no branch, no PR) and needs no repo.
+const KINDS = ['code', 'research', 'report', 'plan'];
 // api             the factory's own model routing (LiteLLM, API keys: metered)
 // claude_session  Claude Code on the factory machine (the operator's subscription)
 const RUNTIMES = ['api', 'claude_session'];
@@ -111,6 +113,43 @@ function runtime(name: string | null | undefined): string {
   return v;
 }
 
+// The kind of a piece of work when nobody picked one (decision D28: every
+// dispatch is a factory job, and the kind is decided from the ask). Pure and
+// deterministic, so a card shows the same kind every time it is read: plan
+// mode is a plan job; the planner's kind wins over the words (coding → code,
+// investigate → research); then the words: asked to write a document → report,
+// asked to change something → code, a question or "find out" → research.
+// Anything else is code, the factory's ordinary job.
+const REPORT_WORDS = /\b(?:write|draft|prepare|put together|produce|compile)\b[^.?!\n]{0,40}\b(?:report|summary|write-?up|document|doc|memo|overview|proposal|rfc|post|notes)\b|^\s*(?:summari[sz]e|document)\b/i;
+const CODE_VERBS = 'fix|implement|add|build|change|refactor|remove|delete|update|migrate|rename|bump|upgrade|make|wire|ship|support|port|replace|deploy|land';
+// "Fix the export", "please add retries", "… and fix it": an order to change something.
+const CODE_ORDER = new RegExp(`^\\s*(?:please\\s+)?(?:${CODE_VERBS})\\b|\\b(?:and|then)\\s+(?:${CODE_VERBS})\\b`, 'i');
+const CODE_WORDS = new RegExp(`\\b(?:${CODE_VERBS})\\b`, 'i');
+const RESEARCH_WORDS = /\b(?:investigate|look into|find out|figure out|research|explore|analy[sz]e|compare|evaluate|understand|diagnose|root[- ]cause|explain)\b|^\s*(?:why|how (?:does|do|is|are|come|did)|what|which|where|who|is there|are there|does|do we|can we|could we|should we)\b|\?\s*$/i;
+
+function inferKind({ text = null, commitmentKind = null, mode = null }: { text?: string | null; commitmentKind?: string | null; mode?: string | null } = {}): { kind: string; reason: string } {
+  if (String(mode || '').toLowerCase() === 'plan') return { kind: 'plan', reason: 'plan mode is read-only' };
+  if (commitmentKind === 'coding') return { kind: 'code', reason: 'planned as a code change' };
+  if (commitmentKind === 'investigate') return { kind: 'research', reason: 'planned as an investigation' };
+  const t = String(text || '').trim();
+  if (REPORT_WORDS.test(t)) return { kind: 'report', reason: 'the ask is to write a document' };
+  if (CODE_ORDER.test(t)) return { kind: 'code', reason: 'the ask is to change something' };
+  // A question ("why does the build …?") names code words as nouns: still a question.
+  if (RESEARCH_WORDS.test(t)) return { kind: 'research', reason: 'the ask is a question to answer' };
+  if (CODE_WORDS.test(t)) return { kind: 'code', reason: 'the ask is to change something' };
+  return { kind: 'code', reason: t ? 'nothing in the ask says otherwise' : 'no ask text' };
+}
+
+/**
+ * The runtime when none was picked: PA_FACTORY_RUNTIME (claude_session unless
+ * set). A plan job is claude_session whatever the default: only there is its
+ * read-only limit Claude Code's own (plan permission mode); on api it is a
+ * throwaway clone.
+ */
+function defaultRuntime(kind: string | null | undefined, configured: string | null | undefined): string {
+  return jobKind(kind) === 'plan' ? 'claude_session' : runtime(configured || 'claude_session');
+}
+
 /**
  * The ask for a research/report job: the operator's own words and the
  * questions it must answer. No composing model — the ask is short, the user's,
@@ -119,13 +158,15 @@ function runtime(name: string | null | undefined): string {
 function researchAsk({ kind, title, ask = null, done = [], repo = null }: { kind: string; title: string; ask?: string | null; done?: string[] | null; repo?: string | null }): string {
   const { redactSecrets } = require('./composeCore.ts');
   const k = jobKind(kind);
-  if (k === 'code') throw new Error('researchAsk is for research and report jobs');
+  if (k === 'code') throw new Error('researchAsk is for research, report and plan jobs');
   const lines = [
-    `# ${k === 'report' ? 'Write' : 'Research'}: ${clip(redactSecrets(title), 200)}`,
+    `# ${k === 'report' ? 'Write' : k === 'plan' ? 'Plan' : 'Research'}: ${clip(redactSecrets(title), 200)}`,
     '',
     k === 'report'
       ? 'Write the document asked for below as markdown. It is the deliverable: no code changes, no branch, no PR.'
-      : 'Investigate the question below and answer it in a markdown report: what you found, the evidence (files, links, commands run), and what you are unsure of. No code changes, no branch, no PR.',
+      : k === 'plan'
+        ? 'Read the code and write an implementation plan for the ask below, with a sketch of the diff: the files to change, the approach, the risks and how to test it. Read-only: change no file, no branch, no PR.'
+        : 'Investigate the question below and answer it in a markdown report: what you found, the evidence (files, links, commands run), and what you are unsure of. No code changes, no branch, no PR.',
     '',
     '## The ask',
     '',
@@ -857,6 +898,8 @@ module.exports = {
   RUNTIMES,
   jobKind,
   runtime,
+  inferKind,
+  defaultRuntime,
   researchAsk,
   reportArgv,
   cancelArgv,

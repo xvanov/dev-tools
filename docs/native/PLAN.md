@@ -53,6 +53,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D24 | 2026-11-08 | **Retire Postgres and WSL now** | After a static copy of each: Postgres's last state as an encrypted `.pabak` per stack, the WSL distro as an encrypted export. Then the work laptop's Ubuntu distro is unregistered and the personal stack's `pa_personal` database dropped (its Postgres server stays: other software uses it). Supersedes D20's "kept registered". |
 | D25 | 2026-11-08 | **Exit 4's in-process front is deferred** until after the owner's testing (Exit E, Exit 8) | Each stack keeps `jarvisd front` as its own process. The design stays in JARVISD.md ("Design: the in-process front"); its privilege risk is gone since the work stack's pa-worker task runs with limited rights. Exit 8 does not wait on it. |
 | D26 | 2026-11-08 | **Subscription workflows may cost up to $0.05 a job** | research and review-fix run their agent on the claude.ai subscription, but the factory's planning steps (pm, sm) are metered on DeepSeek-V4-Flash and its docs step (tech_writer) on Kimi-K2.7-Code, about $0.01-0.03 a job (review-fix re-review: $0.027). The owner raised their ceiling from $0 to $0.05 rather than move those steps onto the subscription. |
+| D28 | 2026-11-09 | **Every agent session the PA dispatches goes through the software factory**; no route choice | The owner's call. So each one is on Build and metered: on `claude_session` through the credit pool (`llm_spend`), on `api` through the API keys. Plan mode becomes a read-only factory `plan` job (Claude Code's plan permission mode, JOBS-API v1.8); `--via`, `PA_DISPATCH_VIA`, the routing rule and `--machine` go. A card's dispatch defaults: runtime `claude_session`, mode `full`, the end state from the factory app's `delivery.default`, the job kind decided from the ask (overridable per card). Item 8.6. |
 | D27 | 2026-11-08 | **Latency targets are reset from measurements** once the current 8.4 fixes land | Several targets do not fit this laptop (a job start in < 1 s when one GitHub round trip is ~1 s; whats-on's first audio in 0.7 s). After the fixes, the lead measures each hop on an idle machine, proposes the new target per hop in the Map with the measurement, and the owner sees the numbers; the reviewers then score against those. |
 
 ## Prerequisites (before phase 0)
@@ -1881,6 +1882,35 @@ not in the Map is not done, and a new one gets added there first.
   postgres; CI's contract job still runs it) and is not the store on either stack. Edges and
   the teams-ask step point at `sqlite-store`. The store dot pings whichever store `PA_DB`
   selects; factory-api's dot probes local `factory serve`.
+- [ ] **8.6 Every PA dispatch through the factory (D28).**
+  - [x] **8.6.1 A read-only `plan` job kind** (6b58269): `factory job submit --kind plan`; on
+    `claude_session` Claude Code starts with `--permission-mode plan` instead of skipping
+    permissions, and the factory saves the plan (the last `ExitPlanMode` plan, else the final
+    message) as the report. JOBS-API v1.8.
+  - [x] **8.6.2 No route choice in the PA**: `dispatch.start` is always a factory job (plan mode →
+    `plan`; the planner, accepted cards, the chat's `factory_start`/`session_start`, Do, `pa do`);
+    `PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `routeCore.chooseRoute/guard/defaultVia`,
+    `route.decide`, `--via claude` and `--machine` are gone. Card dispatch settings
+    (`src/dispatch/settings.ts`, `GET/POST /api/commitments/:id/dispatch-settings`): runtime
+    claude_session, mode full, the end state from the factory app's `delivery.default`, the kind
+    from the ask (`factoryCore.inferKind`), each overridable per card. Landed in the commit after
+    6b58269 (see `git log -- personal-assistant/src/dispatch/settings.ts`).
+  - [ ] **8.6.3 Delete `dispatch.startSession` and `startRemote`.** No production caller since
+    8.6.2; `test/dispatchStart.test.js` (and the remote tests) still seed their runs through it.
+    Rebase those tests on seeded run rows, then delete both with `sessionDelivery`, the
+    `PA_SANDBOX` plan-session wrapper and the Claude-session branch of `cli do`'s output. Until
+    then a call logs a warning and records an `llm_spend` row of unknown cost
+    (`dispatch-session-unmetered`).
+  - [ ] **8.6.4 The Plan card UI on the dispatch settings API** (another agent): runtime, mode,
+    end state, job kind, app/repo pickers that read and write
+    `/api/commitments/:id/dispatch-settings`; drop the route and machine pickers and `/api/machines`'
+    `routes`/`defaultRoute`/`machines` fields once nothing reads them.
+  - [ ] **8.6.5 Meter the dashboard's "resume a Claude session"** (`cards.openSession`,
+    `claude --resume`). It reopens an existing interactive session, which the factory has no job
+    shape for; today it is logged and recorded in `llm_spend` with cost unknown
+    (`session-resume-unmetered`). Needs either a factory "interactive session" job kind that
+    adopts an existing Claude session id, or reading the resumed session's usage from its
+    transcript (`~/.claude/projects/**.jsonl`) when it ends.
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
   stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
   `research` and `whats-on` run live.

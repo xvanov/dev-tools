@@ -26,6 +26,7 @@ type State = { commitments?: Row[]; selfNotes?: { items?: Row[] }[]; needsYou?: 
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const L = require('./links.ts');
+const log = require('../log.ts').logger('cards');
 
 function hubs() {
   const machines: Record<string, unknown> = {};
@@ -215,6 +216,11 @@ async function openSession(itemId: number | string) {
   const run = await repo.runs.modeByWorktree(info.cwd).catch(() => null);
   const mayPush = !run || require('../dispatch/modes.ts').mode(run.mode).mayPush;
   const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote.ts').createNoPushSession(hub, spec, machine);
+  // Resuming an existing Claude Code session is not a factory job (D28 covers
+  // new dispatches): its usage is not metered. Logged and put on the Meter as a
+  // call of unknown cost, never silent.
+  log.warn('resumed a Claude Code session outside the factory: metered-unknown', { item: Number(itemId), machine });
+  await require('../budget.ts').record({ purpose: 'session-resume-unmetered', model: null, backend: 'claude_session_unmetered', costUsd: null, ok: true }).catch(() => {});
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };
 }
 

@@ -596,8 +596,8 @@ pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed
 pa land 7                       push, and open a draft PR (gh) if the mode allows
-pa do 959 --via factory --delivery auto_merge --pipeline solo   end state + pipeline, chosen by you
-pa propose 959 --via factory    the same on a card: brief, end state and criteria shown before the yes
+pa do 959 --delivery auto_merge --pipeline solo   end state + pipeline, chosen by you
+pa propose 959                  the same on a card: brief, end state and criteria shown before the yes
 pa delivery set acme/widget pr  a repo's default end state when you say nothing
 pa drop 7                       kill the session, remove the worktree
 
@@ -826,6 +826,10 @@ pa meeting undo <debrief-id> <n>
 
 ### Runs on another machine
 
+**Gone since D28** (every dispatch is a factory job on the factory's machine, `PA_FACTORY_MACHINE`;
+`--machine` is refused). What follows describes the runs started that way before, which `pa drop`,
+`pa attach` and the reconcile pass still manage.
+
 Some work belongs on a particular machine — the VM that runs the service, holds the OneDrive
 sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
 **Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
@@ -877,22 +881,28 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 ### Runs in the software factory
 
 The software factory (PM → SM → dev → reviewer → merge gates, its own repo) dispatches and tracks
-all work once it is configured: code, research and reports. `pa do 959` sends the ask there as a
-job (the default route, `PA_DISPATCH_VIA`, is the factory once `PA_FACTORY_PATH` is set; plan mode
-and `--machine` still mean a Claude session); `--via claude` starts a Claude session as before;
-`--via auto` lets the routing rule choose and prints why. The dashboard grows route, kind and
-runtime pickers beside **Do** once the factory is configured. The PA never imports factory code: it
+all work: code, research, reports and read-only plans. Every agent session the PA dispatches is a
+factory job (decision D28), so it shows on Build and is metered; there is no route to pick
+(`PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `--via claude` and `--machine` are gone), and without
+`PA_FACTORY_PATH` nothing dispatches. `pa do 959` sends the ask as a job. What a start does not
+choose comes from the card's dispatch settings (`GET`/`POST /api/commitments/<id>/dispatch-settings`,
+`src/dispatch/settings.ts`): runtime `PA_FACTORY_RUNTIME` (claude_session), mode `PA_DISPATCH_MODE`
+(full), the job kind decided from the ask, the end state from the factory app's `delivery.default`.
+Plan mode is a read-only `plan` job: Claude Code runs in its plan permission mode and the factory
+keeps the plan as the job's report (JOBS-API v1.8). The PA never imports factory code: it
 runs `uv run factory job …` (`PA_FACTORY_UV` for the full path of `uv`, since termhub's exec has no
 login shell) in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine
 (`PA_FACTORY_MACHINE`, a `PA_MACHINES` name, or empty for this one) and reads the one JSON object
 each command prints — the contract is the factory's `docs/JOBS-API.md`.
 
-- **Kind and runtime per job** (JOBS-API v1.2). `--kind code|research|report` (default code): a
-  research job answers a question and a report job writes a document; both deliver a markdown
+- **Kind and runtime per job** (JOBS-API v1.2). `--kind code|research|report|plan` (unset: decided
+  from the ask, `factoryCore.inferKind`): a research job answers a question, a report job writes a
+  document and a plan job writes a read-only implementation plan; all deliver a markdown
   report the factory keeps (`pa factory report <job>`), need no repo (`--repo owner/name` makes the
   factory read it when registered, else the ask names it), deliver `none`, and send your own words
   as the ask — no composed brief. `--runtime api|claude_session` (default `PA_FACTORY_RUNTIME`,
-  api): the factory's metered model routing, or Claude Code on the factory machine on your
+  claude_session; set it to `api` to put every job not given a runtime on the API models, a plan
+  job excepted): the factory's metered model routing, or Claude Code on the factory machine on your
   subscription (each such run is a live termhub session there). Both are recorded on the run
   (sql/031). A factory still on v1 refuses the new flags: a code job on `api` is resent without
   them; anything else fails saying the factory needs updating.
@@ -904,12 +914,14 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   `--delivery` or the card's pick; an explicit `--mode` (local → none, branch → branch, mr/full →
   draft_pr); your own words in `--task` ("just open a draft", "merge it", "push straight to main",
   "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
-  <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). The same vocabulary
-  drives a Claude session: its worktree runs in the mode that level maps to (push_to_main runs as
+  <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). Since D28 the order is
+  (`src/dispatch/settings.ts`): `--delivery` or the start's pick; the card's stored pick; your own
+  words in `--task`; the factory app's `delivery.default`; the repo's default; `PA_DELIVERY_DEFAULT`.
+  A mode (default `full`) no longer picks the level. Before D28 the same vocabulary drove a Claude
+  session: its worktree runs in the mode that level maps to (push_to_main runs as
   `local` — no push credentials in its environment and its push blocked, which stops an accident; an
   agent running as your OS user can still restore them from disk, so the real boundary is a separate
-  OS user, not set up yet — `pa doctor` says so) and run review does the rest. `plan` is never
-  a factory job.
+  OS user, not set up yet — `pa doctor` says so) and run review does the rest.
 - **The ask is a composed brief** (`src/dispatch/compose.ts`, rules in `composeCore.js`): a model
   (`PA_COMPOSE_MODEL`, any text-capable provider; a bare Claude model with no `ANTHROPIC_API_KEY`
   would cost ~4 s of `claude -p` startup, so set `PA_COMPOSE_FALLBACK_MODEL=azure/<deployment>` — used
@@ -975,8 +987,8 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
   delivers and is steered on its own side.
 
-**Telling the PA chat**: it picks the end state from what you said, the route (`--via claude`, or
-`--via factory --pipeline chain|solo`) and models, and either starts it (`pa do`, behind a permission
+**Telling the PA chat**: it picks the end state from what you said, the kind, pipeline and
+models, and either starts it (`pa do`, behind a permission
 prompt; or the `factory_start` / `session_start` tools below) or puts it on a card (`pa propose`,
 which starts nothing). Accepting a card from the chat
 (`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
@@ -990,7 +1002,8 @@ subscription-equivalent, report excerpt, follow link) and `sessions` (termhub). 
 call: `factory_start` (from a card and/or your words; the brief is composed server-side from the
 card's context; runtime `claude_session` unless you ask for the API or name an API model; the end state
 from your words), `factory_continue` (a new job on an existing `--branch` / `--pr`), `factory_resume`,
-`factory_cancel`, `factory_approve` and `session_start` (a Claude session in its own worktree). They
+`factory_cancel`, `factory_approve` and `session_start` (Claude Code briefed with your prompt: a
+`claude_session` factory job like any other, `mode: plan` a read-only plan job). They
 are `pa do` / `pa factory …` in-process — an end state that merges or pushes to main still becomes a
 card. "What are my tasks today?" → `board`; "start on that one, PR ready to merge, CI green" →
 `factory_start {card, delivery: pr, done: [...]}` → one prompt in termhub.
@@ -1003,13 +1016,11 @@ starts one — and starts a **research or report** job at once only when you ask
 (else `--card`); `pa factory cancel <job>` (a PA run's job is dropped through `pa drop`) and `pa
 factory approve <job>` (only the `factory approve-direction` the job's own warning names).
 
-**The routing rule** (`src/dispatch/routeCore.ts`, pure and tested) sends work to the factory only
-when all hold: the factory is configured, the mode changes code, the planner judged the ask
-*coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.
-Anything else — investigate, ambiguous, `plan`, an unknown or unregistered repo, nothing to check
-the result against — is a Claude session. `PA_ROUTE_CHOOSER` picks a different chooser registered
-in `src/dispatch/route.ts` (the seam for an LLM or evidence-based one); whatever it says is held to
-the hard limits (configured, not `plan`, registered repo).
+**No routing rule any more** (D28): every dispatch is a factory job. The job kind is decided from
+the ask (`factoryCore.inferKind`, deterministic: plan mode is `plan`; the planner's *coding* is
+`code` and *investigate* is `research`; then the words — write a document → `report`, change
+something → `code`, a question → `research`; else `code`), and a code job's repo the factory does
+not know yet is registered with it first (`factory app add`).
 
 **Which route works** is measured: every run records its route, the reason, the ask's kind, and its
 outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs add pipeline, delivery, models,

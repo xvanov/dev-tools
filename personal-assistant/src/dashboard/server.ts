@@ -273,7 +273,13 @@ const ROUTES: Route[] = [
       const q = url.searchParams;
       const delivery = q.get('delivery') || null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
-      const r = await require('../dispatch').previewDelivery({ commitmentId: Number(m?.[1]), mode: q.get('mode') || undefined, delivery });
+      let jobKind: string | null = null;
+      try {
+        jobKind = q.get('kind') ? require('../dispatch/factoryCore.ts').jobKind(q.get('kind')) : null;
+      } catch (e) {
+        return send(res, 400, { error: (e as HttpError).message });
+      }
+      const r = await require('../dispatch').previewDelivery({ commitmentId: Number(m?.[1]), mode: q.get('mode') || undefined, delivery, jobKind });
       return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
     },
   },
@@ -307,13 +313,14 @@ const ROUTES: Route[] = [
     path: '/api/machines',
     handle: ({ res, send }) =>
       send(res, 200, {
-        machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
+        // Every run goes to the factory's machine (D28): no machine to pick.
+        machines: [{ name: '', label: 'the factory' }],
         modes: Object.keys(require('../dispatch/modes.ts').MODES),
-        defaultMode: require('../dispatch/modes.ts').mode().name,
-        // Where the work goes: a Claude session, the software factory, or let
-        // the routing rule pick (src/dispatch/routeCore.ts). Factory only when configured.
-        routes: require('../dispatch/factory.ts').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
-        defaultRoute: require('../dispatch/factory.ts').enabled() ? config.factory.via : 'claude',
+        defaultMode: require('../dispatch/modes.ts').mode(config.factory.mode).name,
+        // No route to pick (D28): every dispatch is a factory job. Kept for the
+        // page until its Plan card reads /api/commitments/<id>/dispatch-settings.
+        routes: ['factory'],
+        defaultRoute: 'factory',
         // The end states the operator may pick on Do (src/dispatch/deliveryCore.ts);
         // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
         deliveries: require('../dispatch/deliveryCore.ts').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore.ts').describe(d) })),
@@ -546,6 +553,34 @@ const ROUTES: Route[] = [
       return send(res, 200, { open: d.open, web: d.web, original: d.original || null, prefilled: d.prefilled, how: d.how, body: d.draft.body });
     },
   },
+  // A card's dispatch settings (src/dispatch/settings.ts): the resolved
+  // runtime, mode, end state, job kind and app/repo, where each came from, and
+  // the options. POST {field: value | null} stores the card's overrides (null
+  // clears one) and answers the same shape. Do (POST …/dispatch) starts with them.
+  {
+    method: 'GET',
+    path: /^\/api\/commitments\/(\d+)\/dispatch-settings$/,
+    handle: async ({ res, m, send }) => {
+      try {
+        return send(res, 200, await require('../dispatch/settings.ts').forCard(Number(m?.[1])));
+      } catch (e) {
+        return send(res, /no commitment/.test((e as HttpError).message) ? 404 : 400, { error: (e as HttpError).message });
+      }
+    },
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/dispatch-settings$/,
+    handle: async (c) => {
+      const { res, m, send } = c;
+      const body = await c.body();
+      try {
+        return send(res, 200, await require('../dispatch/settings.ts').setForCard(Number(m?.[1]), body));
+      } catch (e) {
+        return send(res, /no commitment/.test((e as HttpError).message) ? 404 : 400, { error: (e as HttpError).message });
+      }
+    },
+  },
   {
     method: 'POST',
     path: /^\/api\/commitments\/(\d+)\/dispatch$/,
@@ -556,7 +591,8 @@ const ROUTES: Route[] = [
       const D = require('../dispatch/deliveryCore.ts');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
-      // JOBS-API v1.2, on the factory route only: what kind of work, who does it.
+      // JOBS-API v1.2: what kind of work, who does it. Unsent: the card's
+      // dispatch settings, else the defaults (src/dispatch/settings.ts).
       const F = require('../dispatch/factoryCore.ts');
       let jobKind = null;
       let runtime = null;
@@ -566,12 +602,10 @@ const ROUTES: Route[] = [
       } catch (e) {
         return send(res, 400, { error: (e as HttpError).message });
       }
-      // A research/report job delivers its report only: nothing to confirm.
-      const resolved = jobKind && jobKind !== 'code'
-        ? { delivery: 'none' }
-        // What the start will resolve to — a repo default included. Confirmed only
-        // when the page showed exactly that level and sent it back, with its token.
-        : await dispatch.previewDelivery({ commitmentId: Number(m?.[1]), mode: body.mode || undefined, delivery });
+      // What the start will resolve to — the card's level or the factory app's
+      // default included; a research/report/plan job delivers `none`. Confirmed
+      // only when the page showed exactly that level and sent it back, with its token.
+      const resolved = await dispatch.previewDelivery({ commitmentId: Number(m?.[1]), mode: body.mode || undefined, delivery, jobKind });
       const confirmed = D.unattended(resolved.delivery) && body.confirmedLevel === resolved.delivery && pageTokenOk(req);
       if (D.unattended(resolved.delivery) && !confirmed) {
         return send(res, 409, {
@@ -585,13 +619,11 @@ const ROUTES: Route[] = [
         run = await dispatch.start({
           commitmentId: Number(m?.[1]),
           mode: body.mode || undefined,
-          machine: body.machine ? String(body.machine) : null,
-          via: body.via ? String(body.via) : null,
           // The level the page confirmed, pinned: a repo default changing in
           // between cannot swap in another one.
-          delivery: jobKind && jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
+          delivery: resolved.jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
           confirmedUnattended: confirmed,
-          jobKind,
+          jobKind: jobKind || resolved.jobKind,
           runtime,
           // The page asked "register it and send?" and you said yes (below).
           register: body.register === true,

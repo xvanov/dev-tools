@@ -1,7 +1,7 @@
 'use strict';
 
-// The software factory as a dispatch target: a commitment becomes a factory
-// job instead of a Claude Code session (route `factory`, src/dispatch/routeCore.ts).
+// The software factory as THE dispatch target (decision D28): every commitment
+// the PA dispatches becomes a factory job (src/dispatch/index.ts start).
 //
 // The one interface is the factory's job contract (software-factory
 // docs/JOBS-API.md, v1). This file never imports factory code or reads its
@@ -23,8 +23,8 @@
 //                  merged into factory_board at once, for the live feed; a
 //                  pushed end settles its run through apply (settlePushed)
 //
-// Every job carries a kind (code | research | report) and a runtime (api |
-// claude_session), JOBS-API v1.2. A research/report job needs no repo and
+// Every job carries a kind (code | research | report | plan) and a runtime (api |
+// claude_session), JOBS-API v1.2 (plan: v1.8). A research/report/plan job needs no repo and
 // delivers `none`: its deliverable is a report the factory keeps. A v1
 // factory refuses the v1.2 flags; a code job on the api runtime is resent
 // without them (submit), anything else fails saying the factory is too old.
@@ -457,11 +457,9 @@ async function start({
   const ms: Record<string, number> = { ...(timings || {}) };
   let mark = Date.now();
   const lap = (name: string) => { const now = Date.now(); ms[name] = (ms[name] || 0) + now - mark; mark = now; };
-  const kind = F.jobKind(jobKind);
+  // Plan mode is the read-only plan job (JOBS-API v1.8), never a code job.
+  const kind = F.jobKind(modeName && resolveMode(modeName).name === 'plan' && F.jobKind(jobKind) === 'code' ? 'plan' : jobKind);
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
-  if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {
-    throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude), or make it a research job (--kind research)');
-  }
   const where = machine();
   const commitmentId = target.commitment ? Number(target.commitment.id) : null;
   const label: string = title || task || target.commitment?.summary;
@@ -483,7 +481,7 @@ async function start({
   }
   // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
   // a claude_session job runs on the api runtime instead. Off by default.
-  const picked = await require('../claudePool.ts').route(F.runtime(runtime || config.factory.runtime));
+  const picked = await require('../claudePool.ts').route(runtime ? F.runtime(runtime) : F.defaultRuntime(kind, config.factory.runtime));
   const rt = picked.runtime;
   if (picked.fellBack) log.warn('dispatching on the api runtime', { reason: picked.reason });
   const chosen: { delivery: string; source: string; phrase: string | null } = kind !== 'code'

@@ -58,10 +58,11 @@ async function act(p: Json) {
     });
     if (ok) {
       try {
-        // Always a Claude session: plan mode is read-only, and the factory
-        // only builds — nothing the planner starts alone may change code.
+        // Always plan mode: a read-only factory plan job (JOBS-API v1.8; on
+        // claude_session Claude Code's own plan permission mode) — nothing the
+        // planner starts alone may change code.
         const run = await require('../dispatch').start({
-          commitmentId: c.id, task: p.brief, mode: 'plan', via: 'claude', routeReason: 'planner research run (read-only)',
+          commitmentId: c.id, task: p.brief, mode: 'plan', routeReason: 'planner research run (read-only)',
         });
         plan.researchRunId = Number(run.id);
         await require('../notify').notify({
@@ -94,7 +95,6 @@ async function act(p: Json) {
     const o = {
       commitmentId: c.id,
       kind: p.kind,
-      via: plan.mode === 'plan' ? 'claude' : 'auto',
       mode: plan.mode === 'plan' ? 'plan' : null,
       useModel,
       why: p.brief,
@@ -102,11 +102,11 @@ async function act(p: Json) {
       expiresAt: new Date(Date.now() + 5 * 86400_000),
     };
     const row = await offer.propose(o).catch(async (err: any) => {
-      // A route or composition failure still leaves an offer: a Claude session.
-      log.warn('offer not prepared; offering a Claude session', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
-      return offer.propose({ ...o, via: 'claude' }).catch(() => null);
+      // A composition failure still leaves an offer, with the deterministic brief.
+      log.warn('offer not prepared; offering it without the composing model', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
+      return offer.propose({ ...o, useModel: false }).catch(() => null);
     });
-    plan.route = row?.payload?.via || 'claude';
+    plan.route = row?.payload?.via || 'factory';
     plan.routeReason = row?.payload?.routeReason || null;
     plan.mode = row?.payload?.mode || plan.mode || null;
     plan.delivery = row?.payload?.delivery || null;

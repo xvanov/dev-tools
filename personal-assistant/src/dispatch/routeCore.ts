@@ -1,59 +1,24 @@
 'use strict';
 
-// Which route a piece of work takes: a Claude Code session (the dispatcher's
-// own worktree + termhub session) or the software factory (a job: PM → SM →
-// dev → reviewer → gates, src/dispatch/factory.ts). Pure, like plannerCore:
-// the impure half (src/dispatch/route.ts) gathers the facts and calls this.
-//
-// The rule, v1 — deterministic on purpose, so it can be tested and so the
-// measured outcomes (sql/024, `pa runs stats`) are of a rule you can name:
-//
-//   factory  when ALL hold: the factory is configured; the mode changes code
-//            (not `plan`); the ask is a concrete code change (`kind` coding,
-//            from the planner); its repo is registered with the factory
-//            (`factory app list`); and it has done-criteria the factory can
-//            be held to.
-//   claude   otherwise — investigate, ambiguous, plan mode, unknown or
-//            unregistered repo, or nothing to check the result against.
-//
-// The seam for something smarter (an LLM, or a chooser that reads the
-// outcomes table): any chooser returns {route, reason}, and `guard` holds its
-// answer to the hard limits below whatever it says. Register it in
-// src/dispatch/route.ts; the guard stays here.
+// Pure helpers for where a piece of work goes. There is no route to choose
+// any more (decision D28, docs/native/PLAN.md): every dispatch is a software-
+// factory job (src/dispatch/factory.ts), so the old claude/factory/auto rule
+// (chooseRoute, guard, PA_DISPATCH_VIA, PA_ROUTE_CHOOSER) is gone. What is
+// left: a repo's owner/name, the registered factory app for it, the
+// done-criteria a commitment states, and the measured outcomes per route ×
+// kind (`pa runs stats`; older runs carry route `claude`).
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 /** A `factory app list` row: JSON from the factory CLI. */
 type FactoryApp = { app: string; repo?: string | null; [k: string]: unknown };
-type Choice = { route: string; reason: string; app: string | null };
-type RouteCtx = { factoryEnabled: boolean; mode: string; kind?: string | null; slug: string | null; apps: FactoryApp[]; done: string[] };
 type StatsRow = { route?: string | null; kind?: string | null; outcome?: string | null; status?: string | null; cost_usd?: unknown };
 type RouteStats = { route: string; kind: string; runs: number; delivered: number; merged: number; failed: number; dropped: number; open: number; successRate: number | null; costUsd: number | null; costPerSuccess: number | null };
 
 const ROUTES = ['claude', 'factory'];
-const VIAS = ['claude', 'factory', 'auto'];
 const OUTCOMES = ['delivered', 'merged', 'failed', 'dropped'];
 
 const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-
-function via(name: string | null | undefined): string {
-  const v = String(name || 'claude').toLowerCase();
-  if (!VIAS.includes(v)) throw new Error(`unknown route "${name}" — --via one of: ${VIAS.join(', ')}`);
-  return v;
-}
-
-/**
- * Pure. The route when the caller named none: PA_DISPATCH_VIA (which itself
- * defaults to the factory once one is configured). A default is not a choice,
- * so it yields where the factory cannot do what was asked: plan mode (read-only
- * — a Claude session), or a run pinned to a machine (`--machine` picks where a
- * Claude session runs; the factory runs on its own).
- */
-function defaultVia({ configured = 'claude', mode = null, machine = null }: { configured?: string | null; mode?: string | null; machine?: string | null } = {}): string {
-  const v = via(configured || 'claude');
-  if (v !== 'claude' && (String(mode || '').toLowerCase() === 'plan' || machine)) return 'claude';
-  return v;
-}
 
 function normSlug(s: string | null | undefined): string | null {
   const t = String(s || '').trim().replace(/\.git$/i, '').toLowerCase();
@@ -83,50 +48,6 @@ function doneCriteria(commitment: { detail?: string | null } | null | undefined)
     .filter((l) => l.length >= 3)
     .map((l) => (l.length > 500 ? `${l.slice(0, 499)}…` : l))
     .slice(0, 8);
-}
-
-const claude = (reason: string): Choice => ({ route: 'claude', reason, app: null });
-
-/**
- * @param {object} ctx
- * @param {boolean} ctx.factoryEnabled
- * @param {string}  ctx.mode    resolved PA mode name
- * @param {string|null} ctx.kind  commitment.kind (the planner's), null if not planned
- * @param {string|null} ctx.slug  owner/repo of the work's repository
- * @param {Array}   ctx.apps    `factory app list` rows
- * @param {Array<string>} ctx.done  done-criteria
- * @returns {{route, reason, app}}
- */
-function chooseRoute(ctx: RouteCtx): Choice {
-  if (!ctx.factoryEnabled) return claude('the factory is not configured (PA_FACTORY_PATH)');
-  if (ctx.mode === 'plan') return claude('plan mode is read-only; the factory only builds');
-  if (ctx.kind !== 'coding') {
-    return claude(ctx.kind ? `planned as "${ctx.kind}", not a concrete code change` : 'not known to be a code change (not planned yet)');
-  }
-  if (!ctx.slug) return claude('no repository known for it');
-  const app = appFor(ctx.slug, ctx.apps);
-  if (!app) return claude(`${ctx.slug} is not registered with the factory`);
-  if (!(ctx.done || []).length) return claude('no stated done-criteria to hold the factory to');
-  return {
-    route: 'factory',
-    reason: `a code change in ${normSlug(ctx.slug)} (factory app ${app.app}) with ${ctx.done.length} done-criteria`,
-    app: app.app,
-  };
-}
-
-/**
- * Holds any chooser's answer to what may never be crossed: no factory job
- * without a configured factory, in plan mode, or for a repo it has not
- * registered. Anything else a chooser decides stands.
- */
-function guard(choice: { route?: string; reason?: unknown } | null | undefined, ctx: RouteCtx): Choice {
-  const reason = choice?.reason ? String(choice.reason).slice(0, 300) : null;
-  if (choice?.route !== 'factory') return claude(reason || 'a Claude session');
-  if (!ctx.factoryEnabled) return claude('the factory is not configured (PA_FACTORY_PATH)');
-  if (ctx.mode === 'plan') return claude('plan mode is read-only; the factory only builds');
-  const app = appFor(ctx.slug, ctx.apps);
-  if (!app) return claude(ctx.slug ? `${ctx.slug} is not registered with the factory` : 'no repository known for it');
-  return { route: 'factory', reason: reason || 'factory', app: app.app };
 }
 
 /**
@@ -176,4 +97,4 @@ function summarize(rows: StatsRow[] | null | undefined): RouteStats[] {
     .sort((a, b) => a.route.localeCompare(b.route) || b.runs - a.runs || a.kind.localeCompare(b.kind));
 }
 
-module.exports = { ROUTES, VIAS, OUTCOMES, via, defaultVia, normSlug, appFor, doneCriteria, chooseRoute, guard, summarize };
+module.exports = { ROUTES, OUTCOMES, normSlug, appFor, doneCriteria, summarize };

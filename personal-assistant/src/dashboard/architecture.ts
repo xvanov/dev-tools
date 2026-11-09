@@ -177,7 +177,8 @@ function liveConfig(cfg: Row = config) {
     fastModel: pick(cfg, 'fastLane.model') || null,
     fastFallback: pick(cfg, 'fastLane.fallback') || null,
     distillModel: pick(cfg, 'anthropic.model') || null,
-    dispatchVia: pick(cfg, 'factory.via') || null,
+    // No route to pick (D28): every dispatch is a factory job.
+    dispatchVia: pick(cfg, 'factory.path') ? 'factory (always)' : 'not configured',
     factoryMachine: pick(cfg, 'factory.machine') || (pick(cfg, 'factory.path') ? 'this machine' : null),
     factoryPath: pick(cfg, 'factory.path') || null,
     factoryRuntime: pick(cfg, 'factory.runtime') || null,
