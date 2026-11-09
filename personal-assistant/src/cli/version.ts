@@ -2,9 +2,10 @@
 
 // `pa version`: print the commit served by the running worker.
 //
-// Calls GET /api/version on the dashboard; falls back to `git rev-parse --short
-// HEAD` from the current checkout when the dashboard cannot be reached or does
-// not answer. The output indicates which source supplied the value.
+// Calls GET /api/version on the dashboard (dashboard/server.ts:290); falls back
+// to `git rev-parse --short HEAD` from the current checkout when the dashboard
+// cannot be reached or does not answer. The output indicates which source
+// supplied the value.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -39,6 +40,8 @@ function make(out: any, fail: any) {
       const config = require('../config.ts').config;
 
       // 1. Try the dashboard.
+      //    GET /api/version → { commit: string } (dashboard/server.ts:290).
+      //    Raw http.get follows the same pattern as e2e/deployTest.ts:93.
       let dashboardCommit: string | null = null;
       try {
         dashboardCommit = await dashboardVersion(config);
@@ -46,7 +49,8 @@ function make(out: any, fail: any) {
         // Dashboard unreachable or not answering — fall through to git.
       }
 
-      // 2. Git fallback.
+      // 2. Git fallback (--short matches the story spec; the dashboard server
+      //    itself uses the full hash at dashboard/server.ts:618).
       let gitCommit: string | null = null;
       if (!dashboardCommit) {
         try {

@@ -7,11 +7,12 @@ const assert = require('node:assert');
 const { formatVersion } = require('../src/cli/version.ts');
 
 test('formatVersion: dashboard success path', () => {
+  // Dashboard commit available — prefer it, output with source indicator.
   const result = formatVersion('abc1234', 'def5678');
   assert.strictEqual(result, 'dashboard: abc1234');
 });
 
-test('formatVersion: dashboard success ignores git when both available', () => {
+test('formatVersion: dashboard success with git null', () => {
   const result = formatVersion('abc1234', null);
   assert.strictEqual(result, 'dashboard: abc1234');
 });
@@ -34,16 +35,4 @@ test('formatVersion: unknown when both are null', () => {
 test('formatVersion: unknown when both are empty strings', () => {
   const result = formatVersion('', '');
   assert.strictEqual(result, 'version unknown (dashboard unreachable, git unavailable)');
-});
-
-test('formatVersion: output format contains source indicator for dashboard', () => {
-  const result = formatVersion('abc1234', null);
-  assert.ok(result.startsWith('dashboard: '));
-  assert.ok(result.includes('abc1234'));
-});
-
-test('formatVersion: output format contains source indicator for git', () => {
-  const result = formatVersion(null, 'def5678');
-  assert.ok(result.startsWith('git: '));
-  assert.ok(result.includes('def5678'));
 });
