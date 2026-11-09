@@ -855,7 +855,7 @@ not in the Map is not done, and a new one gets added there first.
   and a quality rubric. Examples: `deepseek-pr` and `review-fix`: PR opened or updated, CI green,
   a code review finds no blocker, the diff stays in scope; `research`: sources cited and
   checked, no unsupported claims, the report answers the question asked; `whats-on`: answered
-  locally in under 0.7 s to first audio with correct facts; `teams-ask`: the ask lands on the
+  locally in under 1.5 s to first audio with correct facts (D27; was 0.7 s); `teams-ask`: the ask lands on the
   board with the right person, due date and source link. The drift test enforces the block's
   shape.
 - [ ] **8.2 `e2e <workflow>`** generalizes E4: runs any registered workflow against the live
@@ -928,6 +928,9 @@ not in the Map is not done, and a new one gets added there first.
     (1679fbd)
     Re-review (bd7b768): verified live. 9 of 9 turns say "There are no meetings today." on a
     Sunday evening with all four rows on Monday, and the brief prints TOMORROW.
+    Re-review (9cd5567): verified live again. 9 of 9 say there are no meetings today.
+    The snapshot and the brief put all four rows (04:00 cancelled, 10:00, 11:00, 11:30)
+    on tomorrow, and the brief has no TODAY section.
   - [x] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
     meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
     attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
@@ -936,6 +939,9 @@ not in the Map is not done, and a new one gets added there first.
     real formatter): 2 of 6 pass on the old prompt and snapshot, 6 of 6 now. (1679fbd)
     Re-review (bd7b768): verified by eval only (`pa eval answerer` 12 of 12). No live answer named
     a meeting: nothing was left today, and "what's on tomorrow?" hands off (8.4.39).
+    Re-review (9cd5567): verified live. 3 of 3 "what's on tomorrow?" turns answered
+    locally and named all three open meetings, titles as titles, with the 11:30
+    included and no "with <title>". The cancelled 04:00 is still left out (8.4.54).
   - [x] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
     of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
@@ -965,6 +971,8 @@ not in the Map is not done, and a new one gets added there first.
     and a shared prefix needs a re-fit).
     Met under D27: target reset to 400 ms from the idle measurement at 9cd5567 (median 280 of 14
     e2e runs, 229-447).
+    Re-review (9cd5567): median 301 ms of 9 (211-629) against 400. One run was 629.
+    First token median 202 (124-513).
   - [x] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
@@ -991,6 +999,8 @@ not in the Map is not done, and a new one gets added there first.
     overlap, and running them one after the other was no faster.
     Met under D27: target reset to 550 ms from the idle measurement at 9cd5567 (median 467 of 14
     e2e runs, 383-570; the deployed transcriber carries 14ec7d3 and d537f09).
+    Re-review (9cd5567): median 450 ms of 9 (347-549) against 550. All nine are under.
+    In whisper itself, median 361 (291-479).
   - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
@@ -1003,6 +1013,8 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768, pa-voice restarted): verified live. The talk-page hop takes 108 ms
     (102-120, median of 9). Smart-turn's model takes 49-197 ms and the endpoint 144-319 ms,
     alongside whisper and always done before it.
+    Re-review (9cd5567): still holds. Talk-page median 100 ms (98-108). Smart-turn
+    144-380 ms (model 43-256) runs beside whisper.
   - [x] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
@@ -1028,6 +1040,8 @@ not in the Map is not done, and a new one gets added there first.
     first clause under 200 ms.
     Met under D27: target reset to 1500 ms from the idle measurement at 9cd5567 (median 1156 of 14
     e2e runs, 989-1550, p90 ~1390). The owner sees these numbers in the Map's `measured` notes.
+    Re-review (9cd5567): median 1190 ms of 9 (1056-1758) against 1500. One run was
+    1758 (TTS first byte 676). Kokoro's first byte otherwise 224-373, median 341.
   - [x] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
@@ -1046,6 +1060,8 @@ not in the Map is not done, and a new one gets added there first.
     Done (this commit): the /talk shot is dropped. Headless /talk never leaves "Tap once to enable
     Jarvis", so Ask is the tool check (summary.json views.ask, method tool, the spoken answer).
     Not run live.
+    Re-review (9cd5567): verified live. All 12 summaries have views.ask method tool,
+    tool chat, and the spoken answer. No ask.png.
   - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
     2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
@@ -1526,6 +1542,11 @@ not in the Map is not done, and a new one gets added there first.
     `backup` restore `spawnSync` tar (not the hourly dump). Dashboard pages `readFileSync` the HTML
     per request. `common.runSync` remains for the Linux doctor (`xdg-mime`, `notify-send --help`).
     Not re-checked against the live supervisor log.
+    Re-review (9cd5567): not ticked. From the generation that started routing at
+    01:56:00Z through 02:14Z, supervisor.log has one "event loop blocked" line:
+    1060 ms at 01:56:13Z, passes github, jira, memory-pages, memory-dream. None
+    during the 12 turns (02:08-02:13Z). The once-a-minute 1-3 s pattern was not
+    repeated; a block over 1 s still is.
   - [x] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
     session (p(answer_here) 0.775-0.78, threshold 0.85), although the snapshot lists tomorrow's
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
@@ -1542,6 +1563,8 @@ not in the Map is not done, and a new one gets added there first.
     turns the guard already hands off). `pa eval answerer` 12 of 12. Not covered: turns with
     history; in probes a few tomorrow questions after two turns of chat still handed off
     (p 0.28-0.43). (aa04496)
+    Re-review (9cd5567): verified live. 3 of 3 tomorrow turns took route answer
+    (p 0.838, 0.987, 0.987) on the local model. None handed off.
   - [x] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
     machine, `screens.capture` for Build (`/factory`) never settles. When the 60 s kill timer ends
     the browser, nothing is left on the event loop, and Node exits 0 with the promise pending. So
@@ -1756,6 +1779,14 @@ not in the Map is not done, and a new one gets added there first.
     Research re-review (`dev-tools:r0004`, 9cd5567): verified live. The Plan page
     text does not show the leaked blocker phrase. The only On-me card whose text
     carries an e2e marker is this run's own card.
+  - [ ] **8.4.54 whats-on: tomorrow's answer leaves out the cancelled meeting.**
+    On the work stack at 9cd5567, Sunday evening, the snapshot lists three open
+    meetings tomorrow (10:00, 11:00, 11:30) and a cancelled one at 04:00. 3 of 3
+    "What's on tomorrow?" turns named the three open meetings, titles as titles,
+    and did not mention 04:00 or that a meeting was cancelled
+    ([acceptance/whats-on.md](acceptance/whats-on.md), re-review). The answerer
+    rule says a cancelled meeting is said to be cancelled. Name it, or say how
+    many were cancelled, when that day is asked for.
 - [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
   checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
   backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`

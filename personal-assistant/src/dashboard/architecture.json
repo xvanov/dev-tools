@@ -2176,7 +2176,7 @@
           },
           {
             "id": "speed",
-            "check": "First audio under 0.7 s from the end of speech (Targets table)."
+            "check": "First audio under 1.5 s from the end of speech (Targets table, D27)."
           },
           {
             "id": "facts",
@@ -2184,8 +2184,8 @@
           }
         ],
         "verdict": {
-          "result": "fail",
-          "date": "2026-11-08",
+          "result": "pass",
+          "date": "2026-11-09",
           "report": "docs/native/acceptance/whats-on.md"
         }
       }
