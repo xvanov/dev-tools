@@ -2066,6 +2066,41 @@ def _block_solo_oracle_leak(
     )
 
 
+def _block_gate_tools_missing(
+    story: StoryRecord,
+    missing: dict[str, list[str]],
+    *,
+    db: Path,
+    software_factory_root: Path,
+) -> HandlerResult:
+    """Refuse a dev dispatch whose gates need a binary that is not on PATH.
+
+    ``gates.requires`` (``factory/gate_model.py``). Consumes no dev retry (the
+    dev never ran); routes to the human-visible blocked sink with
+    ``gate test needs lychee, not on PATH``.
+    """
+    from factory.gate_model import tools_message
+
+    story.state = advance(story, EVENT_DEV_EXHAUSTED).value
+    story.error = (
+        f"{tools_message(missing)} (gates.requires): install it on the factory "
+        "machine or change the gate, then resume the job"
+    )[:500]
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "gate_tools_missing",
+        {"missing": missing, "dev_retries_preserved": story.dev_retries},
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    return HandlerResult(
+        next_state=StoryState(story.state),
+        payload={"test_run_passed": False, "gate_tools_missing": missing},
+        error=story.error,
+    )
+
+
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
 # with the IDENTICAL normalized failure signature (the same assertions/errors,
 # volatile bits stripped) the model is stuck on something more attempts won't
@@ -2844,6 +2879,17 @@ def _handle_dev_once(
         # SOLO pipeline (factory/chain/solo.py): one long conversation with the
         # gate's verdict fed back INTO it, a no-progress abort, and the solo
         # brief. Read from the spawn stamp only.
+        # A gate that needs a binary not on PATH (``gates.requires``) cannot go
+        # green whatever the dev does: block up front with that reason rather
+        # than burn dev rounds on a red that names no code.
+        from factory.gate_model import missing_tools as _gate_missing_tools
+
+        _gate_missing = _gate_missing_tools(app_config)
+        if _gate_missing:
+            return _block_gate_tools_missing(
+                story, _gate_missing, db=db, software_factory_root=software_factory_root
+            )
+
         solo_kwargs: dict[str, Any] = {}
         if _solo.is_solo(story):
             _scope_text = _solo.story_scope_text(story_file_path_obj, dev_direction)

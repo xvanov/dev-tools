@@ -666,6 +666,7 @@ def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             errors="replace",
             check=False,
             timeout=timeout_s,
@@ -894,7 +895,9 @@ def measure(
             status=STATUS_NO_REPO, reason="no local checkout to measure", head_sha=head_sha
         )
     repo_root = Path(repo_root)
-    if not test_command:
+    from factory.gate_model import is_none
+
+    if not test_command or is_none(test_command):
         return MutationReport(
             status=STATUS_NO_TEST_COMMAND,
             reason="no test_command configured",

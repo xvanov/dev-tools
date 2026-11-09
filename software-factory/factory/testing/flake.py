@@ -131,6 +131,8 @@ def make_subprocess_runner(
                 cwd=str(cwd) if cwd is not None else None,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as e:
@@ -141,7 +143,7 @@ def make_subprocess_runner(
 
             out = _to_text(e.stdout) + _to_text(e.stderr)
             return TestRunResult(exit_code=124, failed_tests=[], output=out[-8000:])
-        output = (proc.stdout + proc.stderr)[-8000:]
+        output = ((proc.stdout or "") + (proc.stderr or ""))[-8000:]
         return TestRunResult(
             exit_code=proc.returncode,
             failed_tests=parse_failed_tests(proc.stdout + proc.stderr),

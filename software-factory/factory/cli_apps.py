@@ -38,6 +38,9 @@ from factory.app_config import (
 from factory.app_detect import GATE_KEYS, Detection, detect
 from factory.context.canonical_paths import DEFAULT_CONTEXT_DIR
 from factory.delivery import NEW_APP_DEFAULT, DeliveryConfig, DeliveryLevel, parse_level
+from factory.gate_model import NONE, normalize_requires, readiness
+from factory.gate_model import field_name as gate_field_name
+from factory.gate_model import short_name as gate_short_name
 
 _FACTORY_ROOT = Path(__file__).resolve().parent.parent
 
@@ -131,6 +134,7 @@ def render_config(
     delivery: DeliveryConfig,
     detection: Detection,
     pipeline_default: str = "chain",
+    requires: dict[str, list[str]] | None = None,
 ) -> str:
     """The commented ``config.yaml`` text. Round-trips through ``AppConfig``."""
     lines = [
@@ -153,7 +157,11 @@ def render_config(
         "# The pipeline a job runs when it names none (or `auto`): chain | solo | auto.",
         f"pipeline_default: {pipeline_default}",
         "",
-        "# Gate commands. EMPTY means NOT CONFIGURED — never 'passing'.",
+        "# Gate commands: a shell command, `none` (the repo has no such check:",
+        "# skipped, reported 'not configured: skipped'), or EMPTY = NOT CONFIGURED",
+        "# yet — never 'passing'. A code job on an app whose test gate is EMPTY",
+        "# (and whose repo has no tests/) is refused at submit. Set them with",
+        '# `factory app set <app> --gate test="<cmd>"` / `--gate test=none`.',
         "# Only test_command is executed by the chain (dev sandbox + tests-green);",
         "# lint/format/typecheck are recorded for the pre-PR ruff check and for",
         "# humans, and are enforced only by the repo's own required CI checks.",
@@ -166,7 +174,15 @@ def render_config(
             lines.append(f"  {gate}: {_q(cmd)}")
         else:
             lines.append(f"  # NOT DETECTED ({_GATE_WHY_EMPTY[gate]}) — fill in by hand.")
+            sug = detection.suggested.get(gate)
+            if sug:
+                lines.append(f"  # suggested ({sug['source']}): {sug['command']}")
+                if sug.get("requires"):
+                    lines.append(f"  #   needs on PATH: {', '.join(sug['requires'])}")
             lines.append(f'  {gate}: ""')
+    if requires:
+        lines.append("  # Executables each gate needs on PATH, checked before a job runs.")
+        lines.append(f"  requires: {json.dumps(requires)}")
     lines.append('  coverage_command: ""')
     if detection.smoke_command:
         lines += [
@@ -253,7 +269,7 @@ def _set_block_child(text: str, block: str, key: str, value: str) -> str:
             return text  # flow / inline form: let the caller fall back
         sep = "" if not text or text.endswith("\n") else "\n"
         return f"{text}{sep}{block}:\n  {key}: {value}\n"
-    indent = "  "
+    indent: str | None = None
     end = start + 1
     while end < len(lines):
         ln = lines[end]
@@ -270,12 +286,18 @@ def _set_block_child(text: str, block: str, key: str, value: str) -> str:
     for i in range(start + 1, end):
         ln = lines[i]
         if ln.strip() and not ln.lstrip().startswith("#") and ln[0].isspace():
-            indent = ln[: len(ln) - len(ln.lstrip())]
+            # The block's own children share the FIRST child's indent; a deeper
+            # line belongs to a nested mapping and is never the key we want.
+            here = ln[: len(ln) - len(ln.lstrip())]
+            if indent is None:
+                indent = here
+            if here != indent:
+                continue
             m = child.match(ln)
-            if m and len(m.group("ind")) == len(indent):
+            if m:
                 lines[i] = f"{indent}{key}: {value}{m.group('tail') or ''}{m.group('nl')}"
                 return "".join(lines)
-    lines.insert(start + 1, f"{indent}{key}: {value}\n")
+    lines.insert(start + 1, f"{indent or '  '}{key}: {value}\n")
     return "".join(lines)
 
 
@@ -285,8 +307,15 @@ def set_app(
     app: str,
     delivery_default: str | None = None,
     pipeline_default: str | None = None,
+    gates: dict[str, str] | None = None,
+    requires: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    """Change an app's default delivery level and/or default pipeline.
+    """Change an app's default delivery level, default pipeline and/or gates.
+
+    ``gates``: ``{gate: command}`` keyed by short (``test``) or field name
+    (``test_command``); the command ``none`` means the repo has no such check,
+    ``""`` un-sets the gate. ``requires``: ``{gate: [tool, ...]}`` replaces that
+    gate's list (an empty list removes it).
 
     Edits only the affected lines of ``apps/<app>/config.yaml`` (comments and
     every other key survive). If the file's layout defeats the line edit, the
@@ -304,8 +333,13 @@ def set_app(
     except ValueError as exc:
         raise AppAddError("invalid_delivery", str(exc)) from exc
     pipeline = _parse_pipeline(pipeline_default)
-    if level is None and pipeline is None:
-        raise AppAddError("nothing_to_set", "pass --delivery-default and/or --pipeline-default")
+    gate_values = _parse_gates(gates)
+    req_updates = _parse_requires(requires)
+    if level is None and pipeline is None and not gate_values and not requires:
+        raise AppAddError(
+            "nothing_to_set",
+            "pass --delivery-default, --pipeline-default, --gate and/or --requires",
+        )
 
     text = cfg_path.read_text(encoding="utf-8")
     try:
@@ -326,6 +360,24 @@ def set_app(
     if pipeline is not None:
         expected["pipeline_default"] = pipeline
         new_text = _set_top_scalar(new_text, "pipeline_default", pipeline)
+    if gate_values or req_updates:
+        gblock = expected.get("gates")
+        if gblock is not None and not isinstance(gblock, dict):
+            raise AppAddError("invalid_config", f"{cfg_path}: gates must be a mapping")
+        gblock = dict(gblock or {})
+        for fld, cmd in gate_values.items():
+            gblock[fld] = cmd
+            new_text = _set_block_child(new_text, "gates", fld, _q(cmd))
+        if req_updates:
+            try:
+                merged = normalize_requires(gblock.get("requires"))
+            except ValueError as exc:
+                raise AppAddError("invalid_config", f"{cfg_path}: {exc}") from exc
+            merged.update(req_updates)
+            merged = {k: v for k, v in merged.items() if v}
+            gblock["requires"] = merged
+            new_text = _set_block_child(new_text, "gates", "requires", json.dumps(merged))
+        expected["gates"] = gblock
 
     try:
         AppConfig.model_validate(expected)
@@ -344,6 +396,10 @@ def set_app(
         for f, before, after in (
             ("delivery.default", _delivery_default(raw), _delivery_default(expected)),
             ("pipeline_default", raw.get("pipeline_default"), expected.get("pipeline_default")),
+            *(
+                (f"gates.{fld}", _gate_raw(raw, fld), _gate_raw(expected, fld))
+                for fld in (*GATE_KEYS, "requires")
+            ),
         )
         if before != after
     ]
@@ -353,11 +409,14 @@ def set_app(
         tmp.replace(cfg_path)
 
     cfg = load_app_config(app, root)
+    ready = readiness(cfg, resolve_app_repo_path(cfg, root))
     return {
         "app": app,
         "config_path": str(cfg_path.resolve()),
         "delivery": {"default": cfg.delivery.default.value},
         "pipeline_default": cfg.pipeline_default,
+        "gates": ready["gates"],
+        "readiness": _readiness_view(ready),
         "changed": changed,
         "comments_preserved": preserved,
     }
@@ -366,6 +425,69 @@ def set_app(
 def _delivery_default(raw: dict[str, Any]) -> Any:
     block = raw.get("delivery")
     return block.get("default") if isinstance(block, dict) else None
+
+
+def _gate_raw(raw: dict[str, Any], fld: str) -> Any:
+    block = raw.get("gates")
+    if not isinstance(block, dict):
+        return None
+    if fld == "requires":
+        try:
+            return normalize_requires(block.get("requires")) or None
+        except ValueError:
+            return block.get("requires")
+    return block.get(fld) or None
+
+
+def _parse_gates(gates: dict[str, str] | None) -> dict[str, str]:
+    """``{gate: cmd}`` -> ``{field: cmd}``; :class:`AppAddError` on a bad one."""
+    out: dict[str, str] = {}
+    for name, cmd in (gates or {}).items():
+        try:
+            fld = gate_field_name(name)
+        except ValueError as exc:
+            raise AppAddError("invalid_gate", str(exc)) from exc
+        value = str(cmd if cmd is not None else "").strip()
+        if "\n" in value or "\r" in value:
+            raise AppAddError("invalid_gate", f"gate {name}: one line only (join with &&)")
+        out[fld] = NONE if value.lower() == NONE else value
+    return out
+
+
+def _parse_requires(requires: dict[str, Any] | None) -> dict[str, list[str]]:
+    """``{gate: tools}`` -> ``{short gate: [tool, ...]}`` (``[]`` = remove)."""
+    out: dict[str, list[str]] = {}
+    for name, tools in (requires or {}).items():
+        try:
+            short = gate_short_name(name)
+            out[short] = normalize_requires({short: tools}).get(short, [])
+        except ValueError as exc:
+            raise AppAddError("invalid_requires", str(exc)) from exc
+    return out
+
+
+def _readiness_view(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": r["status"],
+        "unset": r["unset"],
+        "missing_tools": r["missing_tools"],
+        "blocking": r["blocking"],
+        "warnings": r["warnings"],
+    }
+
+
+def _assignments(values: list[str] | None, flag: str) -> dict[str, str]:
+    """``["test=npm test", ...]`` -> ``{"test": "npm test"}``."""
+    out: dict[str, str] = {}
+    for v in values or []:
+        if "=" not in v:
+            raise AppAddError(
+                "invalid_gate" if flag == "--gate" else "invalid_requires",
+                f"{flag} wants NAME=VALUE, got {v!r}",
+            )
+        k, _, val = v.partition("=")
+        out[k.strip()] = val
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -383,12 +505,16 @@ def add_app(
     pipeline_default: str | None = None,
     force: bool = False,
     enable_tick: bool = False,
+    gates: dict[str, str] | None = None,
+    requires: dict[str, Any] | None = None,
     runner: Runner = _run,
 ) -> dict[str, Any]:
     """Register ``repo`` as an app under ``root``; returns the success shape.
 
-    Raises :class:`AppAddError` on every refusal, before anything is written
-    (except ``enable_tick_failed``, which by construction comes after).
+    ``gates`` / ``requires`` (as in :func:`set_app`) override detection: the
+    confirmed values a human chose. Raises :class:`AppAddError` on every
+    refusal, before anything is written (except ``enable_tick_failed``, which
+    by construction comes after).
     """
     repo = repo.strip().removeprefix("https://github.com/").removesuffix(".git").strip("/")
     if not _REPO_RE.match(repo):
@@ -404,6 +530,8 @@ def add_app(
     except ValueError as exc:
         raise AppAddError("invalid_delivery", str(exc)) from exc
     pipeline = _parse_pipeline(pipeline_default) or "chain"
+    gate_values = _parse_gates(gates)
+    req_values = {k: v for k, v in _parse_requires(requires).items() if v}
 
     app_dir = root / "apps" / app
     cfg_path = app_dir / "config.yaml"
@@ -442,6 +570,12 @@ def add_app(
         cloned = True
 
     detection = detect(clone_path)
+    for fld, gate_cmd in gate_values.items():
+        if gate_cmd:
+            detection.gates[fld] = gate_cmd
+            detection.sources[fld] = "confirmed with --gate"
+        else:
+            detection.gates.pop(fld, None)
     text = render_config(
         name=app,
         repo=repo,
@@ -450,9 +584,10 @@ def add_app(
         delivery=delivery,
         detection=detection,
         pipeline_default=pipeline,
+        requires=req_values,
     )
     # Never write a config the loader would reject.
-    AppConfig.model_validate(yaml.safe_load(text))
+    cfg = AppConfig.model_validate(yaml.safe_load(text))
 
     app_dir.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(text, encoding="utf-8")
@@ -460,15 +595,21 @@ def add_app(
     # The context loader reads <repo>/<context_dir>/; an empty dir is invisible to git.
     (clone_path / DEFAULT_CONTEXT_DIR).mkdir(exist_ok=True)
 
+    ready = readiness(cfg, clone_path)
     result: dict[str, Any] = {
         "app": app,
         "repo": repo,
         "path": str(clone_path.resolve()),
         "config_path": str(cfg_path.resolve()),
         "gates": {k: detection.gates.get(k, "") for k in GATE_KEYS},
+        "requires": req_values,
         "delivery": {"default": delivery.default.value},
         "pipeline_default": pipeline,
         "missing_gates": detection.missing,
+        "suggested_gates": detection.suggested,
+        "docs_only": detection.docs_only,
+        "ci": detection.ci,
+        "readiness": _readiness_view(ready),
         "toolchains": detection.toolchains,
         "smoke_command": detection.smoke_command,
         "notes": detection.notes,
@@ -489,6 +630,8 @@ def add_app(
 
 
 def list_registered_apps(root: Path, *, coverage: Any = None) -> list[dict[str, Any]]:
+    """One row per app. Cheap: a config parse, a PATH lookup per required tool
+    and a stat of the checkout (no detection), so ``app list`` stays fast."""
     if coverage is None:
         from factory.scheduler.coverage import read_coverage
 
@@ -501,17 +644,58 @@ def list_registered_apps(root: Path, *, coverage: Any = None) -> list[dict[str, 
         except Exception as exc:  # noqa: BLE001 — one broken config must not hide the rest
             rows.append({"app": app, "error": f"{type(exc).__name__}: {exc}"})
             continue
+        path = resolve_app_repo_path(cfg, root)
+        ready = readiness(cfg, path)
         rows.append(
             {
                 "app": app,
                 "repo": cfg.repo,
-                "path": str(resolve_app_repo_path(cfg, root)),
+                "path": str(path),
                 "delivery": {"default": cfg.delivery.default.value},
                 "pipeline_default": cfg.pipeline_default,
                 "ticked": coverage.ticked(app),  # v1.6
+                "gates": ready["gates"],
+                "readiness": _readiness_view(ready),
             }
         )
     return rows
+
+
+def show_app(root: Path, app: str) -> dict[str, Any]:
+    """One app with its gates, readiness and detection's suggestions.
+
+    Runs detection on the checkout (read-only file reads), so the suggestions
+    reflect the repo as it is now, including its CI workflows.
+    """
+    if not _NAME_RE.match(app):
+        raise AppAddError("invalid_name", f"app name {app!r} must match {_NAME_RE.pattern}")
+    cfg_path = root / "apps" / app / "config.yaml"
+    if not cfg_path.is_file():
+        raise AppAddError("unknown_app", f"no app {app!r} ({cfg_path} does not exist)")
+    try:
+        cfg = load_app_config(app, root)
+    except Exception as exc:  # noqa: BLE001
+        raise AppAddError("invalid_config", f"{cfg_path} does not load: {exc}") from exc
+    path = resolve_app_repo_path(cfg, root)
+    ready = readiness(cfg, path)
+    det = detect(path) if path.is_dir() else None
+    return {
+        "app": app,
+        "repo": cfg.repo,
+        "path": str(path),
+        "path_exists": path.is_dir(),
+        "config_path": str(cfg_path.resolve()),
+        "delivery": {"default": cfg.delivery.default.value},
+        "pipeline_default": cfg.pipeline_default,
+        "gates": ready["gates"],
+        "readiness": _readiness_view(ready),
+        "detected": {k: det.gates.get(k, "") for k in GATE_KEYS} if det else {},
+        "suggested_gates": det.suggested if det else {},
+        "docs_only": det.docs_only if det else False,
+        "ci": det.ci if det else [],
+        "toolchains": det.toolchains if det else [],
+        "notes": det.notes if det else ["the checkout is missing: nothing to detect"],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -529,6 +713,34 @@ def _fail(json_out: bool, code: str, message: str) -> NoReturn:
 
 _LEVELS = ", ".join(lvl.value for lvl in DeliveryLevel)
 _PIPELINES = ", ".join(PIPELINE_NAMES)
+_GATE_HELP = (
+    "NAME=COMMAND, repeatable. NAME is lint | format_check | type_check | test. "
+    "COMMAND `none` = the repo has no such check (skipped); empty = not configured."
+)
+_REQUIRES_HELP = (
+    "NAME=tool1,tool2, repeatable: executables the gate needs on PATH (docker, lychee); "
+    "checked before a job runs. Empty removes the list."
+)
+
+
+def _echo_gates(res: dict[str, Any]) -> None:
+    for short, info in (res.get("gates") or {}).items():
+        st = info.get("state")
+        shown = (
+            info.get("command")
+            if st == "command"
+            else ("none (skipped)" if st == "none" else "(EMPTY — not configured)")
+        )
+        req = f"  requires: {', '.join(info['requires'])}" if info.get("requires") else ""
+        miss = f"  MISSING: {', '.join(info['missing'])}" if info.get("missing") else ""
+        typer.echo(f"  {short}: {shown}{req}{miss}")
+    r = res.get("readiness") or {}
+    if r:
+        typer.echo(f"  readiness: {r.get('status')}")
+        if r.get("blocking"):
+            typer.echo(f"  BLOCKS code jobs: {r['blocking']}")
+        for w in r.get("warnings") or []:
+            typer.echo(f"  warning: {w}")
 
 
 @apps_app.command("add")
@@ -548,6 +760,8 @@ def add_cmd(
         "--pipeline-default",
         help=f"Pipeline for jobs that name none (default chain). One of: {_PIPELINES}.",
     ),
+    gate: list[str] | None = typer.Option(None, "--gate", help=_GATE_HELP),
+    requires: list[str] | None = typer.Option(None, "--requires", help=_REQUIRES_HELP),
     force: bool = typer.Option(
         False, "--force", help="Overwrite an existing config / accept a mismatched clone."
     ),
@@ -569,6 +783,8 @@ def add_cmd(
             pipeline_default=pipeline_default,
             force=force,
             enable_tick=enable_tick,
+            gates=_assignments(gate, "--gate"),
+            requires=_assignments(requires, "--requires"),
             runner=_run,  # module global, looked up per call (patchable)
         )
     except AppAddError as exc:
@@ -579,14 +795,18 @@ def add_cmd(
     typer.echo(f"Registered app {res['app']} ({res['repo']}) -> {res['config_path']}")
     typer.echo(f"  source: {res['path']}{' (cloned)' if res['cloned'] else ''}")
     typer.echo(f"  toolchains: {', '.join(res['toolchains']) or 'none detected'}")
-    for gate, cmd in res["gates"].items():
-        typer.echo(f"  {gate}: {cmd or '(EMPTY — not configured)'}")
+    for gate_key, cmd in res["gates"].items():
+        typer.echo(f"  {gate_key}: {cmd or '(EMPTY — not configured)'}")
     typer.echo(f"  delivery default: {res['delivery']['default']}")
     typer.echo(f"  pipeline default: {res['pipeline_default']}")
     if res["missing_gates"]:
         typer.echo("  MISSING gates (fill in by hand): " + ", ".join(res["missing_gates"]))
+    for gate_key, sug in res["suggested_gates"].items():
+        typer.echo(f"  suggested {gate_key}: {sug['command']}  ({sug['source']})")
     for note in res["notes"]:
         typer.echo(f"  note: {note}")
+    if res["readiness"].get("blocking"):
+        typer.echo(f"  BLOCKS code jobs: {res['readiness']['blocking']}")
     if res["tick"]["enabled"]:
         typer.echo(f"  enabled {res['tick']['unit']}")
     else:
@@ -609,15 +829,19 @@ def set_cmd(
         "--pipeline-default",
         help=f"Pipeline for jobs that name none. One of: {_PIPELINES}.",
     ),
+    gate: list[str] | None = typer.Option(None, "--gate", help=_GATE_HELP),
+    requires: list[str] | None = typer.Option(None, "--requires", help=_REQUIRES_HELP),
     json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
 ) -> None:
-    """Change an app's default delivery level / pipeline (edits config.yaml in place)."""
+    """Change an app's defaults and gates (edits config.yaml in place)."""
     try:
         res = set_app(
             root=_FACTORY_ROOT,
             app=app,
             delivery_default=delivery_default,
             pipeline_default=pipeline_default,
+            gates=_assignments(gate, "--gate"),
+            requires=_assignments(requires, "--requires"),  # type: ignore[arg-type]
         )
     except AppAddError as exc:
         _fail(json_out, exc.code, exc.message)
@@ -627,16 +851,39 @@ def set_cmd(
     typer.echo(f"{res['app']}: {res['config_path']}")
     typer.echo(f"  delivery default: {res['delivery']['default']}")
     typer.echo(f"  pipeline default: {res['pipeline_default']}")
+    _echo_gates(res)
     typer.echo(f"  changed: {', '.join(res['changed']) or 'nothing (already set)'}")
     if not res["comments_preserved"]:
         typer.echo("  note: the file was re-written from parsed YAML; its comments were lost")
+
+
+@apps_app.command("show")
+def show_cmd(
+    app: str = typer.Argument(..., help="Registered app name (apps/<app>/)."),
+    json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
+) -> None:
+    """One app: gates, readiness, and the gates detection suggests (incl. its CI)."""
+    try:
+        res = show_app(_FACTORY_ROOT, app)
+    except AppAddError as exc:
+        _fail(json_out, exc.code, exc.message)
+    if json_out:
+        typer.echo(json.dumps(res))
+        return
+    typer.echo(f"{res['app']}: {res['repo']}  path={res['path']}")
+    typer.echo(f"  delivery={res['delivery']['default']}  pipeline={res['pipeline_default']}")
+    _echo_gates(res)
+    for gate_key, sug in res["suggested_gates"].items():
+        typer.echo(f"  suggested {gate_key}: {sug['command']}  ({sug['source']})")
+    for note in res["notes"]:
+        typer.echo(f"  note: {note}")
 
 
 @apps_app.command("list")
 def list_cmd(
     json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
 ) -> None:
-    """List registered apps with repo, path, default delivery level and pipeline."""
+    """List registered apps with repo, path, defaults and gate readiness."""
     rows = list_registered_apps(_FACTORY_ROOT)
     if json_out:
         typer.echo(json.dumps({"apps": rows}))
@@ -650,5 +897,6 @@ def list_cmd(
             continue
         typer.echo(
             f"{r['app']}: {r['repo']}  path={r['path']}  "
-            f"delivery={r['delivery']['default']}  pipeline={r['pipeline_default']}"
+            f"delivery={r['delivery']['default']}  pipeline={r['pipeline_default']}  "
+            f"gates={r['readiness']['status']}"
         )

@@ -36,7 +36,7 @@ from typing import Any
 
 import yaml
 
-from factory.app_config import AppConfig, load_app_config
+from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
 from factory.delivery import effective_level, parse_level
 from factory.directions.approval import APPROVAL_KEY
 from factory.directions.creator import _build_direction_md, _write_initial_state_yaml
@@ -401,6 +401,16 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             if existing_task is not None:
                 return _task_result(existing_task, created=False)
 
+        # The app's gates (factory/gate_model.py): an unset test gate on a repo
+        # the default pytest cannot run, or a gate whose required binary is not
+        # on PATH, would make the job dead on arrival. Refuse it now, naming
+        # the fix, instead of failing it at the first gate.
+        from factory.gate_model import submit_check
+
+        gate_refusal, gate_warnings = submit_check(cfg, resolve_app_repo_path(cfg, root))
+        if gate_refusal is not None:
+            raise JobError(*gate_refusal)
+
         if pickup is not None:
             busy = _branch_busy(root, app, pickup.branch)
             if busy:
@@ -492,6 +502,7 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
     result["warnings"] = (
         list(routing.warnings)
         + (list(pickup.warnings) if pickup is not None else [])
+        + list(gate_warnings)
         + result["warnings"]
     )
     # Tell a running `factory serve` to tick this app now, not in <= 5 min.

@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 GATE_KEYS: tuple[str, ...] = (
     "lint_command",
     "format_check_command",
@@ -70,6 +72,14 @@ class Detection:
     sources: dict[str, str] = field(default_factory=dict)
     smoke_command: str | None = None
     notes: list[str] = field(default_factory=list)
+    #: The repo is documentation: no toolchain, and docs outnumber code files.
+    docs_only: bool = False
+    #: Gate commands mirrored from the repo's CI workflows (``ci_suggestions``).
+    ci: list[dict[str, Any]] = field(default_factory=list)
+    #: Per gate field, a proposal for a gate detection left EMPTY:
+    #: ``{command, source, requires}`` (``command`` may be ``none``). Never
+    #: written to the config by ``app add``; a human confirms it.
+    suggested: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def missing(self) -> list[str]:
@@ -449,6 +459,365 @@ def _detect_dir(d: Path) -> list[tuple[str, dict[str, str], list[str]]]:
 
 
 # --------------------------------------------------------------------------- #
+# docs-only repos
+# --------------------------------------------------------------------------- #
+
+_DOC_EXT = {".md", ".mdx", ".markdown", ".rst", ".adoc", ".txt"}
+_CODE_EXT = {
+    ".py",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".cs",
+    ".fs",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".swift",
+    ".scala",
+    ".sh",
+    ".ps1",
+}
+_WALK_CAP = 5000
+
+
+def count_doc_and_code(repo: Path) -> tuple[int, int]:
+    """(doc files, code files) under ``repo``, skipping vendored/build dirs."""
+    docs = code = seen = 0
+    stack = [Path(repo)]
+    while stack and seen < _WALK_CAP:
+        d = stack.pop()
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for p in entries:
+            if p.is_dir():
+                if p.name not in _SKIP_DIRS - {"docs"} and not p.name.startswith("."):
+                    stack.append(p)
+                continue
+            seen += 1
+            ext = p.suffix.lower()
+            if ext in _DOC_EXT:
+                docs += 1
+            elif ext in _CODE_EXT:
+                code += 1
+    return docs, code
+
+
+def is_docs_only(repo: Path) -> bool:
+    """Mostly documentation: at least 3 doc files and 4x as many as code files."""
+    docs, code = count_doc_and_code(repo)
+    return docs >= 3 and docs >= 4 * code
+
+
+# --------------------------------------------------------------------------- #
+# CI workflows -> suggested gates
+# --------------------------------------------------------------------------- #
+
+# First match wins, in this order: a `prettier --check` is a format check even
+# though "check" also smells of lint.
+_CI_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "format_check_command",
+        re.compile(
+            r"prettier\b.*--check|format[:_-]check|fmt[:_-]check|check[:_-]format|"
+            r"black\b.*--check|ruff\s+format\b.*--check|gofmt\b|cargo\s+fmt\b|"
+            r"dotnet\s+format\b.*verify|csharpier\b.*check|pint\b.*--test|spotlessCheck|spotless:check"
+        ),
+    ),
+    (
+        "type_check_command",
+        re.compile(r"\btsc\b|type[:_-]?check|check[:_-]types|\bmypy\b|\bpyright\b|cargo\s+check\b"),
+    ),
+    (
+        "test_command",
+        re.compile(
+            # ``test``/``coverage`` only as the verb (``npm test``, ``yarn run
+            # test:unit``), never as an argument (``yarn check src tests``).
+            r"\blychee\b|markdown-link-check|^(?:\S+\s+){0,2}(?:tests?|coverage)(?::\S+)?(?:\s|$)|"
+            r"pytest|\bjest\b|vitest|mocha|rspec|phpunit|\bpest\b|go\s+test\b|cargo\s+test\b|"
+            r"dotnet\s+test\b"
+        ),
+    ),
+    (
+        "lint_command",
+        re.compile(
+            r"^(?:\S+\s+){0,2}lint(?::\S+)?(?:\s|$)|eslint|ruff\s+check|flake8|clippy|golangci|markdownlint|\bvale\b|"
+            r"shellcheck|hadolint|actionlint|gitleaks|yamllint|codespell|cspell|rubocop|phpcs"
+        ),
+    ),
+)
+
+# Lines that prepare the environment; kept (in order) as a prefix of the job's
+# gate commands, because gates run in a fresh worktree with nothing installed.
+_CI_SETUP = re.compile(
+    r"^(corepack\s+enable|npm\s+(ci|install)\b|yarn(\s+install)?(\s+--\S+)*$|pnpm\s+install|"
+    r"bun\s+install|uv\s+sync|poetry\s+install|pip\s+install|python3?\s+-m\s+pip\s+install|"
+    r"bundle\s+install|composer\s+install|dotnet\s+(restore|tool\s+restore)|go\s+mod\s+download)"
+)
+
+# A gate command's first word that is a separately installed tool: declared as
+# ``requires`` so a machine without it is told so up front.
+_KNOWN_TOOLS = {
+    "docker",
+    "lychee",
+    "gitleaks",
+    "markdownlint",
+    "markdownlint-cli2",
+    "vale",
+    "shellcheck",
+    "hadolint",
+    "actionlint",
+    "yamllint",
+    "codespell",
+    "cspell",
+    "typos",
+    "node",
+    "npm",
+    "npx",
+    "yarn",
+    "pnpm",
+    "bun",
+    "deno",
+    "uv",
+    "poetry",
+    "python",
+    "python3",
+    "go",
+    "cargo",
+    "dotnet",
+    "mvn",
+    "gradle",
+    "bundle",
+    "composer",
+    "make",
+    "terraform",
+    "helm",
+    "corepack",
+}
+
+# Known GitHub Actions that wrap a CLI: action -> (gate, command builder, tool).
+_ACTION_GATES: dict[str, tuple[str, str, str]] = {
+    "lycheeverse/lychee-action": ("test_command", "lychee {args}", "lychee"),
+    "davidanson/markdownlint-cli2-action": (
+        "lint_command",
+        "markdownlint-cli2 {globs}",
+        "markdownlint-cli2",
+    ),
+    "gitleaks/gitleaks-action": ("lint_command", "gitleaks detect --no-banner", "gitleaks"),
+}
+
+
+def _tools_in(cmd: str) -> list[str]:
+    out: list[str] = []
+    for seg in re.split(r"&&|\|\||;|\|", cmd):
+        words = seg.strip().lstrip("(").split()
+        if words and words[0] in _KNOWN_TOOLS and words[0] not in out:
+            out.append(words[0])
+    return out
+
+
+def _classify(cmd: str) -> str | None:
+    if "${{" in cmd or "$CI_" in cmd:
+        return None  # needs the CI's own expressions/variables
+    for gate, pat in _CI_RULES:
+        if pat.search(cmd):
+            return gate
+    return None
+
+
+def _join_lines(text: str) -> list[str]:
+    """A `run:` block as commands: continuation lines joined, comments dropped."""
+    out: list[str] = []
+    buf = ""
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            buf += line[:-1].strip() + " "
+            continue
+        out.append((buf + line).strip())
+        buf = ""
+    if buf.strip():
+        out.append(buf.strip())
+    return out
+
+
+def _in_dir(cmd: str, workdir: str | None) -> str:
+    wd = (workdir or "").strip().strip("./") if workdir else ""
+    if not wd or "${{" in wd:
+        return cmd
+    return f"(cd {wd} && {cmd})"
+
+
+def _job_suggestions(source: str, steps: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
+    """``steps``: (command, working dir) in order. Setup lines become a prefix."""
+    found: list[dict[str, Any]] = []
+    setup: dict[str | None, list[str]] = {}
+    for cmd, wd in steps:
+        if _CI_SETUP.match(cmd):
+            setup.setdefault(wd, []).append(cmd)
+            continue
+        gate = _classify(cmd)
+        if gate is None:
+            continue
+        full = " && ".join([*setup.get(wd, []), cmd])
+        found.append(
+            {
+                "gate": gate,
+                "command": _in_dir(full, wd),
+                "requires": _tools_in(full),
+                "source": source,
+            }
+        )
+    return found
+
+
+def _github_ci(repo: Path) -> list[dict[str, Any]]:
+    wf_dir = repo / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for wf in sorted([*wf_dir.glob("*.yml"), *wf_dir.glob("*.yaml")]):
+        try:
+            data = yaml.safe_load(_read(wf)) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        default_wd = ((data.get("defaults") or {}).get("run") or {}).get("working-directory")
+        jobs = data.get("jobs") or {}
+        if not isinstance(jobs, dict):
+            continue
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            job_wd = ((job.get("defaults") or {}).get("run") or {}).get("working-directory")
+            steps: list[tuple[str, str | None]] = []
+            actions: list[dict[str, Any]] = []
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                uses = str(step.get("uses") or "").split("@", 1)[0].lower()
+                if uses in _ACTION_GATES:
+                    gate, tmpl, tool = _ACTION_GATES[uses]
+                    with_ = step.get("with") or {}
+                    args = str(with_.get("args") or ".").replace("\n", " ").strip()
+                    globs = str(with_.get("globs") or '"**/*.md"').replace("\n", " ").strip()
+                    cmd = tmpl.format(args=args, globs=globs)
+                    if "${{" not in cmd:
+                        actions.append(
+                            {
+                                "gate": gate,
+                                "command": cmd,
+                                "requires": [tool],
+                                "source": f"{wf.name} job {job_name} ({uses})",
+                            }
+                        )
+                    continue
+                if "run" in step:
+                    wd = step.get("working-directory") or job_wd or default_wd
+                    steps.extend((c, wd) for c in _join_lines(step["run"]))
+            out.extend(actions)
+            out.extend(_job_suggestions(f"{wf.name} job {job_name}", steps))
+    return out
+
+
+_GITLAB_RESERVED = {
+    "stages",
+    "variables",
+    "default",
+    "include",
+    "workflow",
+    "image",
+    "services",
+    "before_script",
+    "after_script",
+    "cache",
+    "pages",
+}
+
+
+def _gitlab_ci(repo: Path) -> list[dict[str, Any]]:
+    path = repo / ".gitlab-ci.yml"
+    if not path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(_read(path)) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    def _lines(v: Any) -> list[str]:
+        if isinstance(v, str):
+            return _join_lines(v)
+        if isinstance(v, list):
+            return [ln for item in v for ln in _join_lines(str(item))]
+        return []
+
+    default = data.get("default") if isinstance(data.get("default"), dict) else {}
+    global_before = _lines(data.get("before_script") or (default or {}).get("before_script"))
+    out: list[dict[str, Any]] = []
+    for name, job in data.items():
+        if name in _GITLAB_RESERVED or str(name).startswith(".") or not isinstance(job, dict):
+            continue
+        before = _lines(job["before_script"]) if "before_script" in job else global_before
+        steps: list[tuple[str, str | None]] = [
+            (c, None) for c in [*before, *_lines(job.get("script"))]
+        ]
+        out.extend(_job_suggestions(f".gitlab-ci.yml job {name}", steps))
+    return out
+
+
+def ci_suggestions(repo: Path) -> list[dict[str, Any]]:
+    """Gate commands mirrored from the repo's CI (GitHub Actions, GitLab CI).
+
+    Each: ``{gate, command, requires, source}``. Read-only and best effort: a
+    workflow that does not parse contributes nothing.
+    """
+    repo = Path(repo)
+    return [*_github_ci(repo), *_gitlab_ci(repo)]
+
+
+def _suggest(out: Detection, repo: Path) -> None:
+    out.ci = ci_suggestions(repo)
+    by_gate: dict[str, list[dict[str, Any]]] = {}
+    for s in out.ci:
+        by_gate.setdefault(s["gate"], []).append(s)
+    for gate in GATE_KEYS:
+        if out.gates.get(gate):
+            continue
+        hits = by_gate.get(gate) or []
+        if hits:
+            cmds = list(dict.fromkeys(h["command"] for h in hits))
+            req = list(dict.fromkeys(t for h in hits for t in h["requires"]))
+            out.suggested[gate] = {
+                "command": " && ".join(cmds),
+                "requires": req,
+                "source": "CI: " + "; ".join(dict.fromkeys(h["source"] for h in hits)),
+            }
+        elif out.docs_only:
+            out.suggested[gate] = {
+                "command": "none",
+                "requires": [],
+                "source": "docs-only repo: no such check found",
+            }
+
+
+# --------------------------------------------------------------------------- #
 # public entry point
 # --------------------------------------------------------------------------- #
 
@@ -524,11 +893,20 @@ def detect(repo: Path) -> Detection:
         )
 
     if not out.toolchains:
-        out.notes.append(
-            "no supported toolchain recognised (make, python, node/ts, go, rust, .net, "
-            "jvm, ruby, php): every gate is EMPTY — fill them in by hand before "
-            "submitting jobs, or the test gate can never go green"
-        )
+        out.docs_only = is_docs_only(repo) if repo.is_dir() else False
+        if out.docs_only:
+            out.notes.append(
+                "docs-only repo (documentation outnumbers code, no toolchain): gates are "
+                "EMPTY; the suggestions mirror its CI, else `none` (skipped). Confirm "
+                "them (`factory app set <app> --gate test=none` …) before submitting jobs"
+            )
+        else:
+            out.notes.append(
+                "no supported toolchain recognised (make, python, node/ts, go, rust, .net, "
+                "jvm, ruby, php): every gate is EMPTY — set them (`factory app set <app> "
+                '--gate test="<cmd>"`, or `--gate test=none` for a repo with no tests) '
+                "before submitting jobs"
+            )
 
     # A template-derived repo bootstraps its own deps; every gate needs it in a
     # fresh worktree (see apps/template-probe/config.yaml).
@@ -537,4 +915,6 @@ def detect(repo: Path) -> Detection:
             out.gates[gate] = f"bash scripts/ensure-deps.sh && {out.gates[gate]}"
         out.notes.append("scripts/ensure-deps.sh found: every gate is prefixed with it")
 
+    if repo.is_dir():
+        _suggest(out, repo)
     return out

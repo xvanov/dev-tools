@@ -1,17 +1,38 @@
-# App registration — `factory app add` / `app set` / `app list`
+# App registration — `factory app add` / `app set` / `app show` / `app list`
 
 ## Overview
 
 Registers any GitHub repo as a factory app: writes `apps/<app>/config.yaml`,
 creates `apps/<app>/directions/`, and (optionally) enables the tick timer.
 The contract the personal assistant builds against is `docs/JOBS-API.md`.
+The PA dashboard's Build page has a Repos section on top of these verbs.
 
 | File | Role |
 |------|------|
-| `factory/app_detect.py` | Pure, read-only toolchain detection → proposed gate commands |
-| `factory/cli_apps.py` | `add_app()` / `set_app()` / `list_registered_apps()` + the `factory app` Typer sub-app |
+| `factory/app_detect.py` | Pure, read-only toolchain detection → proposed gate commands; docs-only + CI-workflow suggestions |
+| `factory/gate_model.py` | Gate states (command / `none` / unset), `requires`, readiness, the submit check |
+| `factory/cli_apps.py` | `add_app()` / `set_app()` / `show_app()` / `list_registered_apps()` + the `factory app` Typer sub-app |
 | `factory/cli.py` | Registration line only (`app.add_typer(apps_app, name="app")`) |
 | `tests/test_cli_app_add.py` | Fixture repos per toolchain, refusal paths, JSON shapes |
+| `tests/test_gate_model.py` | Gate states, runners, submit refusal, `app set --gate`, CI + docs-only detection |
+
+## The gate model
+
+A gate field is a shell command, `none` (the repo has no such check: skipped,
+reported `not configured: skipped`, never passing), or empty (not configured
+yet). `gates.requires: {test: [lychee]}` lists binaries a gate needs on PATH.
+
+- `runner._run_pytest`, the solo gate and `tests-green` treat `none` as skipped.
+  The solo gate still requires a non-empty change. `static_gate_commands` drops
+  a `none` lint/format/type gate.
+- Missing required binaries: submit refuses (`gate_requirements_missing`); the
+  dev handler blocks the story before the run (`gate_tools_missing` event, no
+  dev retry spent); `tests-green` fails with `gate test needs X, not on PATH`.
+- An empty test gate on a repo with no `tests/` is refused at submit
+  (`gates_not_configured`) with the `app set` command that fixes it.
+- Gate output is decoded as UTF-8 with replacement everywhere a gate runs
+  (`_run_pytest`, `evaluator._run_command`, flake reruns, mutation): Windows'
+  cp1252 default crashed on lychee's emoji and left `stdout` None.
 
 Detection is deterministic. It makes no model calls. The `onboarder` persona
 is not used: it writes `context/` docs, not gate commands.
@@ -45,15 +66,25 @@ is not used: it writes `context/` docs, not gate commands.
 missing_gates, toolchains, smoke_command, notes, cloned, tick}`. Failure, exit 1:
 `{"error": "<code>", "message": "..."}`.
 
+
 ## `app set <app>`
 
-Changes `delivery.default` and/or `pipeline_default` of an existing app, so the
-assistant can change a repo's defaults after registration.
+Changes `delivery.default`, `pipeline_default` and/or gates of an existing app,
+so the assistant (and the dashboard's Repos section) can change a repo's
+settings after registration.
 
-- At least one of `--delivery-default` / `--pipeline-default` (`nothing_to_set`).
+- At least one of `--delivery-default` / `--pipeline-default` / `--gate` /
+  `--requires` (`nothing_to_set`).
+- `--gate NAME=COMMAND` (repeatable; NAME `lint|format_check|type_check|test`
+  or the field name): COMMAND `none` = no such check, empty = unset. One line
+  only (`invalid_gate`). `--requires NAME=tool,tool` replaces that gate's list;
+  empty removes it (`invalid_requires` for a non-executable name).
 - Edits only the affected lines: `delivery:` → its `default:` child (added if
-  absent; the block is added if absent), and the top-level `pipeline_default:`
-  line (appended if absent). Trailing comments on those lines survive.
+  absent; the block is added if absent), the top-level `pipeline_default:`
+  line (appended if absent), and `gates:` → each `<field>:` child and one
+  flow-style `requires: {...}` line. A child is matched only at the block's own
+  indent, never inside a nested mapping (`acceptance_boot`). Trailing comments
+  on those lines survive.
 - The edit is parsed back and compared with the intended mapping. If the layout
   defeated the line edit (flow style `delivery: {…}`, an empty value), the file
   is re-dumped from parsed YAML and `comments_preserved` is `false`.
@@ -62,12 +93,17 @@ assistant can change a repo's defaults after registration.
 - Written atomically (temp file + rename).
 
 `--json` success: `{app, config_path, delivery: {default}, pipeline_default,
-changed: ["delivery.default", "pipeline_default"], comments_preserved}`.
+gates, readiness, changed: ["delivery.default", "gates.test_command", …],
+comments_preserved}`.
 
-## `app list`
+## `app show <app>` / `app list`
 
-`{"apps": [{app, repo, path, delivery: {default}, pipeline_default}]}`. A config
-that fails to load is a row `{app, error}`; it never hides the others.
+`show`: one app with `gates`, `readiness`, and detection's `suggested_gates`,
+`docs_only`, `ci` for its checkout (file reads only).
+
+`list`: `{"apps": [{app, repo, path, delivery: {default}, pipeline_default,
+ticked, gates, readiness}]}`. No detection, so it stays fast. A config that
+fails to load is a row `{app, error}`; it never hides the others.
 
 ## Detection rules
 
@@ -102,24 +138,46 @@ Smoke: `make smoke` or `scripts/smoke.sh` fills `smoke_command`, but
 `smoke_harness_ready` stays `false`. Flipping it makes `smoke-green` a
 required gate.
 
+
+### Suggestions: docs-only repos and CI
+
+For a gate detection left empty, `suggested_gates` proposes one. Suggestions
+are written to the config only as `# suggested (...)` comments; a human
+confirms them (`--gate`, or the dashboard's Repos form, which prefills them).
+
+1. **CI** (`.github/workflows/*.yml`, `.gitlab-ci.yml`): each `run:` / `script:`
+   line is classified by the tool or verb it runs (`prettier --check` → format,
+   `tsc`/`mypy` → type check, `npm test`/`pytest`/`lychee` → test, `eslint`/
+   `gitleaks`/`markdownlint` → lint). A word like `tests` counts only as the
+   verb, never as an argument. Setup lines (`npm ci`, `uv sync`, …) of the same
+   job are kept as a prefix, since gates run in a fresh worktree. A
+   `working-directory` wraps the command in `(cd <dir> && …)`. Known actions
+   (`lycheeverse/lychee-action`, `markdownlint-cli2-action`, `gitleaks-action`)
+   become their CLI. Lines using `${{ }}` or `$CI_` are skipped. Known tools
+   (`docker`, `lychee`, `npm`, `uv`, …) become `requires`. Several hits for one
+   gate are joined with `&&`.
+2. **Docs-only** (no toolchain, ≥ 3 doc files and ≥ 4× as many docs as code
+   files): every remaining gate is suggested as `none`.
+
 ## Empty gates — what they mean to the chain
 
 An undetected gate is written as `""` with a `NOT DETECTED` comment. It is
 listed in `missing_gates`.
 
-- **`test_command`** is the only gate command the chain runs. If it is empty:
+- **`test_command`** is the gate every pipeline runs. If it is empty:
+  - Submit refuses a code job (`gates_not_configured`) when the checkout has no
+    `tests/` (or root `test_*.py`); with one, it warns.
   - The dev sandbox's `_run_pytest` falls back to `python -m pytest` when a
     `tests/` dir exists. Otherwise it returns failed (`no tests directory`).
   - The `tests-green` merge gate falls back to the live CI state. With no CI
     state, it fails.
 
-  Either way the story blocks. It never passes on an empty command. This is
-  fail-safe, but a repo with no detectable test runner cannot converge until
-  someone fills in the gate.
-- **`lint_command` / `format_check_command` / `type_check_command`** are never
-  executed by the chain. The pre-PR ruff check only reads them to decide
-  whether ruff applies. Empty or filled, they block nothing. These checks are
-  enforced only by the repo's own required CI checks.
+  It never passes on an empty command. A repo with no tests sets
+  `test_command: none` instead.
+- **`lint_command` / `format_check_command` / `type_check_command`** are run
+  in-conversation by the solo pipeline (a red that is new vs the base commit
+  blocks). The chain's merge gates do not run them; the pre-PR ruff check only
+  reads them to decide whether ruff applies. `none` or empty: not run.
 
 ## Known gaps
 

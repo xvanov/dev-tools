@@ -171,6 +171,10 @@ def _run_command(cmd: str, cwd: Path | None) -> tuple[int, str]:
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,
             text=True,
+            # UTF-8 with replacement: on Windows the default cp1252 decode of a
+            # gate that prints emoji (lychee) crashed and left stdout None.
+            encoding="utf-8",
+            errors="replace",
             timeout=600,
         )
     except subprocess.TimeoutExpired as e:
@@ -179,7 +183,7 @@ def _run_command(cmd: str, cwd: Path | None) -> tuple[int, str]:
             o.decode(errors="replace") if isinstance(o, bytes) else o for o in out
         )[-4000:]
         return 124, f"command timed out after 600s: {cmd}\n{tail}"
-    return proc.returncode, (proc.stdout + proc.stderr)[-4000:]
+    return proc.returncode, ((proc.stdout or "") + (proc.stderr or ""))[-4000:]
 
 
 # --------------------------------------------------------------------------- #

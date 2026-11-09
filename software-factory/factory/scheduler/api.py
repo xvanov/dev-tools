@@ -63,12 +63,18 @@ MAX_BODY = 1_000_000
 #: Verbs the API runs. ``job follow`` streams forever and stays CLI-only.
 _ALLOWED: dict[str, set[str] | None] = {
     "job": {"submit", "status", "list", "cancel", "resume", "report", "dispatch"},
-    "app": None,  # every app verb (add, set, list)
+    "app": None,  # every app verb (add, set, show, list)
 }
 
 _CLI_LOCK = threading.Lock()
 #: Verbs that change nothing: run concurrently (each with its own capture).
-_READ_ONLY = (["job", "status"], ["job", "list"], ["job", "report"], ["app", "list"])
+_READ_ONLY = (
+    ["job", "status"],
+    ["job", "list"],
+    ["job", "report"],
+    ["app", "list"],
+    ["app", "show"],
+)
 
 
 def allowed(argv: list[str]) -> bool:

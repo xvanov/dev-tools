@@ -1676,8 +1676,18 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
     """
     import subprocess
 
+    from factory.gate_model import is_none, skipped_reason
+
+    if is_none(test_command):
+        # The operator said this repo has no tests (``gates.test_command: none``).
+        # Skipped, and the output says so; callers that report checks mark it
+        # skipped, never "passing".
+        return (True, skipped_reason("gates.test_command"))
+
     test_env = _isolated_test_env()
 
+    # UTF-8 with replacement: a gate that prints emoji (lychee) crashed the
+    # cp1252 reader thread on Windows and left ``stdout`` None.
     if test_command:
         try:
             result = subprocess.run(
@@ -1686,6 +1696,8 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
                 cwd=str(repo_path),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 timeout=600,
                 env=test_env,
@@ -1694,7 +1706,7 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
             return (False, f"test_command invocation failed: {exc}")
         return (
             result.returncode == 0,
-            _strip_bootstrap_noise(result.stdout + "\n" + result.stderr),
+            _strip_bootstrap_noise((result.stdout or "") + "\n" + (result.stderr or "")),
         )
 
     if not (repo_path / "tests").exists() and not list(repo_path.glob("test_*.py")):
@@ -1705,6 +1717,8 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
             cwd=str(repo_path),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=300,
             env=test_env,
@@ -1713,7 +1727,7 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
         return (False, f"pytest invocation failed: {exc}")
     return (
         result.returncode == 0,
-        _strip_bootstrap_noise(result.stdout + "\n" + result.stderr),
+        _strip_bootstrap_noise((result.stdout or "") + "\n" + (result.stderr or "")),
     )
 
 

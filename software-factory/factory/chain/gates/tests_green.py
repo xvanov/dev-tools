@@ -10,6 +10,10 @@ that no longer reflects the code being merged.
 
 Resolution order:
 
+* ``gates.test_command: none`` (the repo has no tests, ``factory/gate_model.py``):
+  non-blocking, reported as ``not configured: skipped`` with ``skipped: true``.
+  A ``gates.requires.test`` binary missing from PATH blocks with that reason.
+
 * REAL-RUN (``dry_run=False`` and a story worktree is checked out): re-run the
   app's ``gates.test_command`` in that worktree; pass IFF it exits 0. This is
   the authoritative signal. When no ``test_command`` is configured, fall back
@@ -69,8 +73,28 @@ def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
     # ------------------------------------------------------------------ #
     # REAL-RUN: re-derive truth against the actual checked-out code.
     # ------------------------------------------------------------------ #
+    from factory.gate_model import is_none, missing_tools, skipped_reason, tools_message
+
+    if is_none(app_config.gates.test_command):
+        # ``gates.test_command: none``: the operator declared that this repo has
+        # no tests. Non-blocking, and labelled skipped, never "passing".
+        return GateResult(
+            label=label,
+            passed=True,
+            reason=skipped_reason("gates.test_command"),
+            details={"skipped": True, "authoritative": True},
+        )
+
     if not pr.dry_run and pr.repo_root is not None:
         cmd = app_config.gates.test_command
+        missing = {k: v for k, v in missing_tools(app_config).items() if k == "test"}
+        if cmd and missing:
+            return GateResult(
+                label=label,
+                passed=False,
+                reason=tools_message(missing) + " (gates.requires)",
+                details={"command": cmd, "missing_tools": missing, "authoritative": True},
+            )
         if cmd:
             exit_code, output = _run_command(cmd, cwd=pr.repo_root)
             if exit_code == 0:

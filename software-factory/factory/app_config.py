@@ -9,10 +9,10 @@ stack-specific value lives here.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from factory.delivery import DeliveryConfig
 
@@ -143,7 +143,16 @@ class AppGatesConfig(BaseModel):
     lint_command: str | None = None
     format_check_command: str | None = None
     type_check_command: str | None = None
+    # Each of the four command gates above and below is a shell command, the
+    # literal ``none`` (this repo has no such check: skipped, reported as
+    # "not configured: skipped"), or empty (NOT configured yet; a code job on an
+    # app whose test gate is empty and has no tests/ is refused at submit).
+    # See ``factory/gate_model.py``.
     test_command: str | None = None
+    # Executables a gate needs on PATH, by gate (``lint``/``format_check``/
+    # ``type_check``/``test`` or the field name): ``{test: [docker]}``. Checked
+    # up front (submit, dev dispatch), never discovered mid-job.
+    requires: dict[str, list[str]] = Field(default_factory=dict)
     coverage_command: str | None = None
     e2e_command: str | None = None
     # A4 (operator decision 2026-08-09): when the acceptance oracle is on and
@@ -283,6 +292,14 @@ class AppGatesConfig(BaseModel):
     # false-greens): a pass only ever DOWNGRADES a red to quarantined-non-blocking,
     # never upgrades it to a clean pass, and the flake stays surfaced as debt.
     flake_rerun_count: int = 3
+
+
+    @field_validator("requires", mode="before")
+    @classmethod
+    def _normalize_requires(cls, v: Any) -> dict[str, list[str]]:
+        from factory.gate_model import normalize_requires
+
+        return normalize_requires(v)
 
 
 class AppConfig(BaseModel):

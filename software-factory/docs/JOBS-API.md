@@ -246,7 +246,8 @@ job id on `status`/`cancel` is a `missing_argument` JSON error under `--json`.
 
 Validation errors (`{"error": code, ...}`, exit 1): `missing_argument`, `invalid_argument`,
 `unknown_app`, `unknown_repo`, `ambiguous_repo`, `app_repo_mismatch`, `invalid_delivery`,
-`file_unreadable`, plus the routing refusals above, which submit gets from
+`file_unreadable`, `gates_not_configured` and `gate_requirements_missing` (code jobs; see
+"Gates" below), plus the routing refusals above, which submit gets from
 `factory.job_routing.resolve_job_routing` unchanged: `bad_pipeline`, `pipeline_unavailable`,
 `bad_model_flag`, `unknown_persona`, `bad_model_id` (a bare id with no `<provider>/` prefix),
 `bad_models`, `review_independence`. Unexpected failures: `internal`, exit 2. Routing warnings
@@ -338,6 +339,28 @@ durable per-job marker; an in-flight handler that later writes a stale state bac
 a parked story, and the orchestrator re-parks any story of a cancelled job instead of
 dispatching it.
 
+### Gates (2026-11-09)
+
+Each of `gates.lint_command`, `format_check_command`, `type_check_command` and
+`test_command` is in one of three states (`factory/gate_model.py`):
+
+- a shell command, run in the story worktree;
+- `none`: the repo has no such check (a docs-only repo has no tests). Skipped, and reported as
+  `not configured: skipped`, never as passing;
+- empty: not configured yet.
+
+`gates.requires: {test: [lychee], lint: [docker]}` names executables a gate needs on PATH. They
+are checked up front: at submit, and before a dev run (a missing one blocks the story with
+`gate test needs lychee, not on PATH` and costs no dev retry).
+
+A code job is refused at submit, before anything is written, with:
+
+- `gates_not_configured`: the test gate is empty and the repo has no `tests/` for the default
+  `python -m pytest`, so no job could pass it. The message names the fix
+  (`factory app set <app> --gate test="<cmd>"` or `--gate test=none`). An empty test gate on a repo
+  that has `tests/` (or no checkout to look at) is a submit `warnings` entry instead.
+- `gate_requirements_missing`: a gate that will run requires a binary not on PATH.
+
 ### `factory app add --json`
 ```
 --repo <owner/name>          required
@@ -345,30 +368,56 @@ dispatching it.
 --name <app>                 optional; default = the repo name, slugged
 --delivery-default <level>   default draft_pr for newly added repos (any level allowed)
 --pipeline-default chain|solo|auto   default chain
+--gate NAME=COMMAND          optional, repeatable; NAME lint|format_check|type_check|test;
+                             COMMAND `none` = no such check. Overrides detection.
+--requires NAME=tool,tool    optional, repeatable
 --enable-tick / --force      optional
 ```
 Registers any repo as a factory app: writes `apps/<app>/config.yaml` with detected gate commands
 (deterministic toolchain detection: Makefile, Python, Node/TS, Go, Rust, .NET, JVM, Ruby, PHP;
 an unrecognised repo still registers, with empty gates listed in `missing_gates`), creates
-`directions/`.
-`{"app", "repo", "path", "config_path", "gates": {...}, "delivery": {"default"},
-"pipeline_default", "missing_gates": [...], "toolchains": [...], "notes": [...], "cloned", "tick"}`
-Errors: `invalid_repo`, `invalid_name`, `invalid_delivery`, `invalid_pipeline`, `app_exists`,
-`repo_already_registered`, `not_a_git_repo`, `repo_mismatch`, `clone_failed`, `enable_tick_failed`.
+`directions/`. For a gate detection left empty, `suggested_gates` proposes one: mirrored from the
+repo's CI (`.github/workflows/*.yml`, `.gitlab-ci.yml`; setup steps such as `npm ci` kept as a
+prefix; the tools named become `requires`), else `none` for a docs-only repo. Suggestions are
+written as comments only; confirm them with `--gate`.
+`{"app", "repo", "path", "config_path", "gates": {...}, "requires": {...}, "delivery": {"default"},
+"pipeline_default", "missing_gates": [...], "suggested_gates": {"<field>": {"command",
+"requires", "source"}}, "docs_only", "ci": [{"gate", "command", "requires", "source"}],
+"readiness": {...}, "toolchains": [...], "notes": [...], "cloned", "tick"}`
+Errors: `invalid_repo`, `invalid_name`, `invalid_delivery`, `invalid_pipeline`, `invalid_gate`,
+`invalid_requires`, `app_exists`, `repo_already_registered`, `not_a_git_repo`, `repo_mismatch`,
+`clone_failed`, `enable_tick_failed`.
 
 ### `factory app set <app> --json`
 ```
 --delivery-default <level>           optional
---pipeline-default chain|solo|auto   optional (at least one of the two)
+--pipeline-default chain|solo|auto   optional
+--gate NAME=COMMAND                  optional, repeatable; `none` = no such check, empty = unset
+--requires NAME=tool,tool            optional, repeatable; empty removes the gate's list
 ```
-Changes a registered app's defaults in place (only those lines of `config.yaml`; comments kept).
-`{"app", "config_path", "delivery": {"default"}, "pipeline_default", "changed": [...],
-"comments_preserved": bool}`
+At least one is required. Changes a registered app's defaults and gates in place (only those lines
+of `config.yaml`; comments kept; `requires` is written as one flow-style line).
+`{"app", "config_path", "delivery": {"default"}, "pipeline_default", "gates": {...},
+"readiness": {...}, "changed": [...], "comments_preserved": bool}`
 Errors: `unknown_app`, `invalid_name`, `nothing_to_set`, `invalid_delivery`, `invalid_pipeline`,
-`invalid_config` (the result would not load, e.g. a leftover `delivery.max`).
+`invalid_gate`, `invalid_requires`, `invalid_config` (the result would not load, e.g. a leftover
+`delivery.max`).
+
+`gates` (here, `app show` and `app list`): `{"lint"|"format_check"|"type_check"|"test":
+{"field", "state": "command"|"none"|"unset", "command", "requires": [...], "missing"?: [...]}}`.
+`readiness`: `{"status": "configured"|"not_configured"|"missing_tool", "unset": [...],
+"missing_tools": {gate: [tool]}, "blocking": "<why a code job is refused>"|null, "warnings": [...]}`.
+
+### `factory app show <app> --json`
+One app: `{"app", "repo", "path", "path_exists", "config_path", "delivery", "pipeline_default",
+"gates", "readiness", "detected", "suggested_gates", "docs_only", "ci", "toolchains", "notes"}`.
+Runs detection on the checkout (file reads only). Read-only; served by `factory serve`.
+Errors: `invalid_name`, `unknown_app`, `invalid_config`.
 
 ### `factory app list --json`
-`{"apps": [{"app", "repo", "path", "delivery": {"default"}, "pipeline_default"}]}`
+`{"apps": [{"app", "repo", "path", "delivery": {"default"}, "pipeline_default", "ticked", "gates",
+"readiness"}]}`. No detection: a config parse, a PATH lookup per required tool and a stat.
+
 
 ## v1.2 additions (2026-11-06): job kinds, runtimes, runs, reports
 

@@ -277,7 +277,9 @@ Register an app — any GitHub repo — without hand-writing its config:
 ```bash
 uv run factory app add --repo owner/name [--path ~/name] [--name x] \
     [--delivery-default draft_pr] [--pipeline-default chain] [--enable-tick] [--force] [--json]
-uv run factory app set <app> [--delivery-default <level>] [--pipeline-default chain|solo|auto] [--json]
+uv run factory app set <app> [--delivery-default <level>] [--pipeline-default chain|solo|auto] \
+    [--gate test="<cmd>"|none] [--requires test=lychee,docker] [--json]
+uv run factory app show <app> [--json]      # gates, readiness, suggested gates (incl. from CI)
 uv run factory app list [--json]
 ```
 
@@ -287,8 +289,16 @@ Rust; .NET; JVM Maven/Gradle; Ruby; PHP) and writes `apps/<app>/config.yaml` plu
 `apps/<app>/directions/`. New apps default to `delivery.default: draft_pr` — a job
 that requests no level gets a draft PR and is never merged. There is no per-app
 ceiling: a job's requested level always wins. `app set` changes an app's defaults
-later, editing only those lines of its config. Gates it cannot detect are left empty and listed as
-MISSING; an empty gate is "not configured", never "passing". It refuses to
+and gates later, editing only those lines of its config. Gates it cannot detect are left empty and listed as
+MISSING; an empty gate is "not configured", never "passing". A gate is a shell
+command, or `none` for a repo that has no such check (a docs-only repo has no
+tests): it is skipped and reported "not configured: skipped". `--requires` names
+binaries a gate needs on PATH (`docker`, `lychee`); they are checked up front. A
+code job is refused at submit (`gates_not_configured`, `gate_requirements_missing`)
+when its app's test gate is empty on a repo with no `tests/`, or a required tool is
+missing. Detection also spots docs-only repos and reads `.github/workflows/*.yml`
+and `.gitlab-ci.yml` to suggest gates that mirror CI; suggestions are shown, never
+written, until you confirm them with `--gate`. It refuses to
 overwrite an existing config without `--force`. Details:
 `apps/factory/context/modules/app-registration.md`. For a hand-tuned example see
 `apps/sacrifice/config.yaml`.

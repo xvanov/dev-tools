@@ -264,7 +264,15 @@ def build_solo_brief(
         "6. If the job cannot be done as written, end with `UNDERSPECIFIED: <why>` "
         "instead of guessing.",
     ]
-    if test_command:
+    if test_command and test_command.strip().lower() == "none":
+        parts += [
+            "",
+            "**This repo has no test suite** (`gates.test_command: none`): the gate "
+            "skips the test step and checks that your branch carries a change (and "
+            "the repo's other configured checks, if any). Do not invent a test "
+            "harness the repo does not have.",
+        ]
+    elif test_command:
         parts += [
             "",
             f"**The test command is `{test_command}`**, the same command the gate "
@@ -579,6 +587,7 @@ def make_gate_check(
        2026-11-02: job template-probe:005 shipped 4 PRs whose CI failed
        ``format:check`` because only the test command ran in-conversation.
     """
+    from factory.gate_model import is_none, skipped_reason
     from factory.runner import _run_pytest
 
     _static = list(static_gates or [])
@@ -586,14 +595,22 @@ def make_gate_check(
 
     def _check() -> GateVerdict:
         checks: list[dict[str, Any]] = []
-        passed, out = _run_pytest(Path(repo_path), test_command=test_command)
-        checks.append(
-            {
-                "name": "test_command",
-                "passed": bool(passed),
-                "reason": "green" if passed else "test command exited non-zero",
-            }
-        )
+        if is_none(test_command):
+            # ``gates.test_command: none`` — the repo has no tests. Skipped,
+            # reported as such; the non-empty-change check below still runs.
+            passed, out = True, skipped_reason("gates.test_command")
+            checks.append(
+                {"name": "test_command", "passed": True, "skipped": True, "reason": out}
+            )
+        else:
+            passed, out = _run_pytest(Path(repo_path), test_command=test_command)
+            checks.append(
+                {
+                    "name": "test_command",
+                    "passed": bool(passed),
+                    "reason": "green" if passed else "test command exited non-zero",
+                }
+            )
         if not passed:
             return GateVerdict(
                 passed=False,
@@ -616,7 +633,8 @@ def make_gate_check(
             return GateVerdict(
                 passed=False,
                 reason=(
-                    "tests are green but the branch has NO change vs its base — "
+                    ("the test gate is skipped (none)" if is_none(test_command) else "tests are green")
+                    + " but the branch has NO change vs its base — "
                     "nothing would ship. Implement the job (uncommitted edits "
                     "count; the factory commits the tree for you)."
                 ),
@@ -723,7 +741,7 @@ def static_gate_commands(app_config: Any) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for name, field_name in STATIC_GATE_FIELDS:
         cmd = str(getattr(gates, field_name, "") or "").strip()
-        if cmd:
+        if cmd and cmd.lower() != "none":  # ``none``: the repo has no such check
             out.append((name, cmd))
     return out
 
