@@ -369,17 +369,20 @@ function create(db: Db) {
      * Writes what the factory now says about a job onto its run.
      * @param {number|string} id
      * @param {{status: string, outcome: string|null, factoryState: string|null, costUsd: number|null, mrUrl: string|null,
-     *   exitNote: string|null, delivery: string|null, ended: boolean}} u  `ended`: stamp ended_at when unset
+     *   exitNote: string|null, delivery: string|null, ended: boolean, whileStatus?: string|null}} u  `ended`: stamp ended_at
+     *   when unset; `whileStatus`: write only while the run's status is still that one
+     * @returns {Promise<boolean>} whether the row was written
      */
-    async applyFactoryState(id: number | string, { status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended }: { status?: string | null; outcome?: unknown; factoryState?: unknown; costUsd?: unknown; mrUrl?: unknown; exitNote?: unknown; delivery?: string | null; ended?: unknown }) {
-      await db.query(
+    async applyFactoryState(id: number | string, { status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended, whileStatus = null }: { status?: string | null; outcome?: unknown; factoryState?: unknown; costUsd?: unknown; mrUrl?: unknown; exitNote?: unknown; delivery?: string | null; ended?: unknown; whileStatus?: string | null }) {
+      const r = await db.query(
         `update run set status = $2, outcome = $3, outcome_at = case when $3::text is distinct from outcome then now() else outcome_at end,
                       factory_state = $4, cost_usd = coalesce($5, cost_usd), mr_url = coalesce($6, mr_url),
                       exit_note = coalesce($7, exit_note), delivery = coalesce($8, delivery),
                       ended_at = case when $9 and ended_at is null then now() else ended_at end
-        where id = $1`,
-        [id, status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended]
+        where id = $1 and ($10::text is null or status = $10)`,
+        [id, status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended, whileStatus]
       );
+      return (r.rowCount || 0) > 0;
     },
 
     /** Stores the subscription-equivalent cost (sql/031; throws on a store not yet migrated). */

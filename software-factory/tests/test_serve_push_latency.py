@@ -237,6 +237,48 @@ def test_a_jobs_end_reaches_the_pa_within_a_second(root: Path, monkeypatch: pyte
     assert [j["state"] for _t, j in pa.received if j["job_id"] == job] == ["done"]  # GitHub agreed: nothing more
 
 
+def test_a_jobs_github_confirm_does_not_hold_back_another_jobs_push(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The confirm (seconds of ``gh``) ran on the watch thread, so a second
+    job's transition right after the first one's end waited for it."""
+    calls = _github(monkeypatch, delay_s=1.0)
+    ending, moving = _submit("Fix the review comments"), _submit("Add dark mode")
+    rec = persist_story(
+        StoryRecord(direction_id=ending.split(":")[1], app="demo", title="t", slug="s-5", scope="backend",
+                    state=StoryState.DEV_IN_PROGRESS.value),
+        state_db_path(root),
+    )
+    other = persist_story(
+        StoryRecord(direction_id=moving.split(":")[1], app="demo", title="t", slug="s-6", scope="backend",
+                    state=StoryState.STORY_CREATED.value),
+        state_db_path(root),
+    )
+    pa = FakePA()
+    watch = _watch(root, pa.url)
+    try:
+        rec.state = StoryState.DELIVERED_PR.value
+        rec.github_pr_number = 5
+        rec.github_branch = "factory/s-5"
+        rec.delivery_level = "draft_pr"
+        persist_story(rec, state_db_path(root))
+        assert pa.wait_for(ending, "done") is not None, pa.received
+        deadline = time.monotonic() + 10
+        while not calls and time.monotonic() < deadline:  # GitHub is being asked
+            time.sleep(0.01)
+        assert calls, "the end was not confirmed on GitHub"
+        other.state = StoryState.DEV_IN_PROGRESS.value
+        t0 = time.perf_counter()
+        persist_story(other, state_db_path(root))
+        t1 = pa.wait_for(moving, "in_progress")
+        assert t1 is not None, f"{moving} never reached the PA; got {pa.received}"
+        print(f"\nanother job's push while GitHub confirms an end: {(t1 - t0) * 1000:.0f} ms")
+        assert t1 - t0 < 1.0, t1 - t0
+    finally:
+        watch.stop(timeout=30)
+        pa.close()
+    assert watch._confirmer is not None and not watch._confirmer.is_alive(), "stop waits for the confirm in flight"
+    assert [j["state"] for _t, j in pa.received if j["job_id"] == ending] == ["done"]  # GitHub agreed
+
+
 def _ending(states: dict[str, Any], said: dict[str, Any]) -> tuple[api.JobStatePusher, list[dict[str, Any]], list[str]]:
     sent: list[dict[str, Any]] = []
     asked: list[str] = []

@@ -34,13 +34,15 @@ a commit to ``factory.db`` (where the ticks record every story transition), so
 a job's stage reaches Build in well under a second, and never in a tick's way.
 A job's end is pushed as ``done`` at its last delivery, then corrected if
 GitHub says otherwise: the local view reads a PR, branch or merge delivery as
-``in_progress`` until GitHub confirms it (8.4.44).
+``in_progress`` until GitHub confirms it (8.4.44). That GitHub read runs on
+the watch's confirm thread, never in another job's push's way.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import queue
 import subprocess
 import threading
 import time
@@ -249,7 +251,11 @@ class JobStatePusher:
     that job once with GitHub (``confirm_fn``, a few seconds) and sends what
     GitHub says if it differs. The answer stands while the local view is
     unchanged; a non-terminal answer (CI still running) is read again every
-    ``recheck_s`` on a full check.
+    ``recheck_s`` on a full check. With ``defer`` (``JobStateWatch`` gives it
+    its confirm worker) those reads run there and ``check`` returns without
+    them, so another job's push never waits on GitHub; without it they run
+    inside ``check``. Deciding and sending happen under one lock, so a
+    correction never overtakes a newer push.
     """
 
     def __init__(
@@ -264,6 +270,7 @@ class JobStatePusher:
         recheck_s: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
         log: Callable[[str], None] = lambda msg: None,
+        defer: Callable[[Callable[[], object]], object] | None = None,
     ) -> None:
         self.root = Path(root)
         self.url = url
@@ -274,9 +281,11 @@ class JobStatePusher:
         self.recheck_s = recheck_s
         self.clock = clock
         self.log = log
+        self.defer = defer
         self._seen: dict[str, tuple[str, str]] | None = None
         # job id -> (its local reading, what is pushed for it, when GitHub was last asked)
         self._ends: dict[str, tuple[tuple[str, str], tuple[str, str], float | None]] = {}
+        self._asking: set[str] = set()  # jobs whose GitHub read is queued or running
         self._lock = threading.Lock()
         self.pushed = 0
 
@@ -310,7 +319,8 @@ class JobStatePusher:
                 if end is not None and end[0] == local:
                     shown[jid] = end[1]
                     asked = end[2]
-                    if end[1][0] not in _TERMINAL and full and (asked is None or now - asked >= self.recheck_s):
+                    waiting = asked is None or now - asked >= self.recheck_s
+                    if end[1][0] not in _TERMINAL and full and waiting and jid not in self._asking:
                         confirm.append(jid)
                 elif _delivered_locally(by_id[jid]):
                     shown[jid] = ("done", "")
@@ -326,26 +336,43 @@ class JobStatePusher:
                 return []
             changed = [self._row(by_id[jid], shown[jid]) for jid in by_id if self._seen.get(jid) != shown[jid]]
             self._seen = {**{k: v for k, v in self._seen.items() if k in skip}, **shown}
-        self._send(changed)
-        # GitHub's word on the ends just pushed (seconds each), outside the lock.
+            self._send(changed)
+            asks = [(jid, listed[jid], by_id[jid]) for jid in confirm]
+            self._asking.update(confirm)
+        if not asks:
+            return changed
+        if self.defer is not None:
+            self.defer(lambda: self._confirm_ends(asks))
+            return changed
+        return changed + self._confirm_ends(asks)
+
+    def _confirm_ends(self, asks: list[tuple[str, tuple[str, str], dict[str, Any]]]) -> list[dict[str, Any]]:
+        """GitHub's word on ends just pushed (seconds each, outside the lock),
+        each pushed as soon as it is known if it differs. An answer for a job
+        whose local reading has moved on since is dropped."""
         corrected: list[dict[str, Any]] = []
-        for jid in confirm:
+        for jid, local, job in asks:
             try:
-                st = self._confirm(self.root, jid)
-                said = (str(st["state"]), str(st.get("why") or ""))
-            except Exception as exc:  # noqa: BLE001 - the PA's poll still reads GitHub
-                self.log(f"push: {jid} not confirmed on GitHub ({exc!r}); pushed as the chain recorded it")
-                continue
-            with self._lock:
-                end = self._ends.get(jid)
-                if end is None or self._seen is None:
+                try:
+                    st = self._confirm(self.root, jid)
+                    said = (str(st["state"]), str(st.get("why") or ""))
+                except Exception as exc:  # noqa: BLE001 - the PA's poll still reads GitHub
+                    self.log(f"push: {jid} not confirmed on GitHub ({exc!r}); pushed as the chain recorded it")
                     continue
-                self._ends[jid] = (end[0], said, self.clock())
-                if self._seen.get(jid) != said:
-                    self._seen[jid] = said
-                    corrected.append(self._row({**by_id[jid], **st}, said))
-        self._send(corrected)
-        return changed + corrected
+                with self._lock:
+                    end = self._ends.get(jid)
+                    if end is None or end[0] != local or self._seen is None:
+                        continue
+                    self._ends[jid] = (end[0], said, self.clock())
+                    if self._seen.get(jid) != said:
+                        self._seen[jid] = said
+                        row = self._row({**job, **st}, said)
+                        self._send([row])
+                        corrected.append(row)
+            finally:
+                with self._lock:
+                    self._asking.discard(jid)
+        return corrected
 
     @staticmethod
     def _row(job: dict[str, Any], shown: tuple[str, str]) -> dict[str, Any]:
@@ -406,7 +433,9 @@ class JobStateWatch:
     that can still move (``full=False``) and pushes what changed. A full
     check runs every ``full_every_s`` and after :meth:`poke` with ``full``
     (submit, cancel, resume through the API). Nothing here runs in a tick or
-    in serve's loop, so a slow or absent PA never delays a transition.
+    in serve's loop, so a slow or absent PA never delays a transition. A
+    job end's GitHub read (seconds of ``gh``) runs on a second thread, one at
+    a time, so it never delays another job's push either.
     """
 
     def __init__(
@@ -429,8 +458,14 @@ class JobStateWatch:
         self._stop = threading.Event()
         self._want_full = False
         self._thread: threading.Thread | None = None
+        self._asks: queue.Queue[Callable[[], object] | None] = queue.Queue()
+        self._confirmer: threading.Thread | None = None
 
     def start(self) -> JobStateWatch:
+        if self.pusher.defer is None:
+            self._confirmer = threading.Thread(target=self._confirm_loop, name="factory-push-confirm", daemon=True)
+            self._confirmer.start()
+            self.pusher.defer = self._asks.put
         self._thread = threading.Thread(target=self._run, name="factory-push", daemon=True)
         self._thread.start()
         return self
@@ -440,6 +475,16 @@ class JobStateWatch:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout)
+        if self._confirmer is not None:
+            self._asks.put(None)
+            self._confirmer.join(timeout)
+
+    def _confirm_loop(self) -> None:
+        while (ask := self._asks.get()) is not None:
+            try:
+                ask()
+            except Exception as exc:  # noqa: BLE001 - the confirms never raise; belt and braces
+                self.pusher.log(f"push: confirm failed: {exc!r}")
 
     def poke(self, *, full: bool = False) -> None:
         """Check now (from any thread; never blocks)."""

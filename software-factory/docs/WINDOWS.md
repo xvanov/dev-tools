@@ -145,8 +145,9 @@ process. Use `factory.oscompat.pid_alive`.
   read only by the full check, every `--push-every` seconds (5) and right after an
   API submit, cancel or resume. A job whose last story delivers (a PR, a branch, a
   merge) is pushed `done` with that transition, then serve asks GitHub (`job status`,
-  about 3 s) and pushes what it says if that differs (CI still running: `in_progress`,
-  asked again every 30 s); the local view alone cannot read a PR delivery as done.
+  about 3 s, on a thread of its own so other jobs' pushes do not wait) and pushes what
+  it says if that differs (CI still running: `in_progress`, asked again every 30 s);
+  the local view alone cannot read a PR delivery as done.
   A PA that is down costs a log line; ticks never wait on it.
 
 ## git exits 0xC0000142

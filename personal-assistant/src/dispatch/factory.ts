@@ -20,7 +20,8 @@
 //                  `job list` into factory_board, and notices on what changed
 //   report/cancelJob/approve/openFollow  the factory page's and `pa factory`'s actions
 //   pushed()       a factory's pushed job statuses (POST /api/factory/events)
-//                  merged into factory_board at once, for the live feed
+//                  merged into factory_board at once, for the live feed; a
+//                  pushed end settles its run through apply (settlePushed)
 //
 // Every job carries a kind (code | research | report) and a runtime (api |
 // claude_session), JOBS-API v1.2. A research/report job needs no repo and
@@ -755,7 +756,10 @@ const LIVE = ['starting', 'running', 'waiting'];
 
 /**
  * Writes one job's status onto its run, and — the first time the job is seen
- * terminal — moves the commitment through the ledger and says so.
+ * terminal — moves the commitment through the ledger and says so. The poll
+ * and a pushed end (settlePushed) can hold the same run at once; a live run is
+ * written only while it still has the status it was read with, so only one
+ * of them ends it.
  */
 async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boolean }> {
   const u = F.runUpdate(job);
@@ -773,8 +777,9 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
     (u.cost_usd !== null && Number(run.cost_usd) !== u.cost_usd) ||
     (u.subscription_equiv_usd !== null && run.subscription_equiv_usd !== undefined && Number(run.subscription_equiv_usd) !== u.subscription_equiv_usd) ||
     (u.mr_url && u.mr_url !== run.mr_url);
+  let wrote = true;
   if (changed) {
-    await repository.runs.applyFactoryState(run.id, {
+    wrote = await repository.runs.applyFactoryState(run.id, {
       status: nextStatus,
       outcome: nextOutcome,
       factoryState: u.factory_state,
@@ -783,16 +788,17 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
       exitNote: u.exit_note,
       delivery: u.delivery,
       ended: u.terminal && wasLive,
-    });
+      whileStatus: wasLive ? run.status : null,
+    }) !== false;
     // sql/031: a separate statement, so a store not yet migrated still records the rest.
-    if (u.subscription_equiv_usd !== null) {
+    if (wrote && u.subscription_equiv_usd !== null) {
       await repository.runs.setSubscriptionEquiv(run.id, u.subscription_equiv_usd).catch(() => {});
     }
   }
   // Plan E1: every PR (number, state, CI) and every step with its session, on
   // every pass — a step's session or a PR's CI can change while nothing above does.
   await recordChain(run.id, job).catch((err: Error) => log.debug('run links not recorded', { run: run.id, message: err.message }));
-  const ended = Boolean(u.terminal && wasLive);
+  const ended = Boolean(u.terminal && wasLive && wrote);
   if (ended) {
     const move = F.commitmentMove(job);
     if (move && run.commitment_id) {
@@ -812,7 +818,7 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
         dedupeKey: `factory-end:${run.id}`,
       })
       .catch(() => {});
-  } else if (wasLive && u.status === 'waiting' && run.status !== 'waiting') {
+  } else if (wrote && wasLive && u.status === 'waiting' && run.status !== 'waiting') {
     await require('../notify')
       .notify({
         kind: 'info',
@@ -822,7 +828,7 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
       })
       .catch(() => {});
   }
-  return { changed: Boolean(changed), ended };
+  return { changed: Boolean(changed && wrote), ended };
 }
 
 /**
@@ -882,18 +888,22 @@ async function poll(): Promise<{ checked: number; changed?: number; ended?: numb
         log.debug('job status failed', { run: run.id, job: run.factory_job_id, message: err.message });
         return null;
       }));
-    if (!job) continue;
-    // Our job, or nobody's business: the external id is this run's id.
-    if ((job.source && job.source !== 'pa') || (job.external_id != null && String(job.external_id) !== String(run.external_id || run.id))) {
-      log.warn('factory job does not belong to this run; left alone', { run: run.id, job: run.factory_job_id });
-      continue;
-    }
+    if (!job || !belongs(run, job)) continue;
     const r = await apply(run, job);
     if (r.changed) changed++;
     if (r.ended) ended++;
   }
   if (changed) log.info('factory runs updated', { checked: watched.length, changed, ended });
   return unsettled ? { checked: watched.length, changed, ended, unsettled } : { checked: watched.length, changed, ended };
+}
+
+/** Our job, or nobody's business: the external id is this run's id. */
+function belongs(run: Run, job: Job): boolean {
+  if ((job.source && job.source !== 'pa') || (job.external_id != null && String(job.external_id) !== String(run.external_id || run.id))) {
+    log.warn('factory job does not belong to this run; left alone', { run: run.id, job: run.factory_job_id });
+    return false;
+  }
+  return true;
 }
 
 // ------------------------------------------------- the factory page's data ----
@@ -962,6 +972,8 @@ function pushedPatches(body: unknown): Patch[] {
  * per call); the factory_board trigger puts it on the live feed, and the
  * worker's pacer takes the full list soon after, which overwrites the patch
  * with the truth. A job the list does not hold yet waits for that pass.
+ * A pushed end also settles its run (settlePushed), after the answer: the
+ * factory's pusher waits on it (2 s) and the notification can take longer.
  */
 async function pushed(body: unknown): Promise<{ ok: true; received: number; patched: number }> {
   const patches = pushedPatches(body);
@@ -971,7 +983,49 @@ async function pushed(body: unknown): Promise<{ ok: true; received: number; patc
   }
   // Wake the pacer even when nothing was patched (a new job, or only its why).
   if (patches.length) await repository.factoryBoard.notifyPush(patches.map((p) => p.jobId));
+  if (patches.some((p) => ENDS.has(p.patch.state))) {
+    // One at a time, in the order pushed: an end and the correction GitHub sends after it.
+    settling = settling.then(() => settlePushed(patches)).catch((err: Error) => {
+      log.warn('a pushed job end did not settle its run; the poll will', { message: err.message });
+      return 0;
+    });
+  }
   return { ok: true, received: patches.length, patched };
+}
+
+const ENDS = new Set(['done', 'failed', 'cancelled']);
+let settling: Promise<number> = Promise.resolve(0);
+
+/**
+ * A pushed end (done, failed, cancelled) settles the run that holds the job
+ * at once (8.4.44), through the poll's own apply: the stored job (the last
+ * `job list`, with the push merged in) under the pushed state and why. The
+ * run is closed, its card's context cleared and "Factory run #N: …" raised
+ * here, so a job's end reaches Plan and Build with the push, not a poll
+ * later; the next poll finds the run ended and only refreshes what its list
+ * adds (a merge, the cost). A job the stored list does not hold yet, or no
+ * run of ours holds, waits for the poll. Resolves how many runs it ended.
+ */
+async function settlePushed(patches: Patch[]): Promise<number> {
+  const ends = patches.filter((p) => ENDS.has(p.patch.state));
+  if (!ends.length) return 0;
+  const [watched, { jobs }]: [Run[], { jobs: Job[] }] = await Promise.all([repository.runs.watchedFactoryRuns(), snapshot()]);
+  let ended = 0;
+  for (const p of ends) {
+    const run = watched.find((r) => r.factory_job_id === p.jobId);
+    const stored = jobs.find((j) => j.job_id === p.jobId);
+    if (!run || !stored) continue;
+    const job: Job = { ...stored, ...p.patch, terminal: true };
+    if (!belongs(run, job)) continue;
+    if ((await apply(run, job)).ended) ended++;
+  }
+  if (ended) log.info('factory runs settled from a push', { ended });
+  return ended;
+}
+
+/** Tests only: resolves once every pushed end so far has been settled. */
+function _settled(): Promise<number> {
+  return settling;
 }
 
 /** The last stored `job list` and when it was taken (never calls the factory). */
@@ -1097,5 +1151,5 @@ async function sweepUnsettled(): Promise<number> {
 module.exports = {
   enabled, machine, factoryMachine, call, apps, forgetApps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
   submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
-  pushed, pushedPatches, viaServe,
+  pushed, pushedPatches, settlePushed, _settled, viaServe,
 };
