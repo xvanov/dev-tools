@@ -948,6 +948,26 @@ function chaseBlock(c, p) {
     el('div', { class: 'row' }, never));
 }
 
+// Copies text, falling back to a hidden textarea + execCommand where the async
+// clipboard is refused (no focus, no gesture, insecure context). Resolves
+// true only when a copy happened, so the page never claims one that did not.
+function copyText(text) {
+  const legacy = () => {
+    const t = document.createElement('textarea');
+    t.value = text;
+    t.setAttribute('readonly', '');
+    t.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(t);
+    t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    t.remove();
+    return ok;
+  };
+  if (!navigator.clipboard?.writeText) return Promise.resolve(legacy());
+  return navigator.clipboard.writeText(text).then(() => true, () => legacy());
+}
+
 // A draft is edited in place and saved when the box loses focus. Send opens
 // it, written, in Teams or Outlook — this page cannot send — and then asks
 // whether you did, because only you know.
@@ -970,13 +990,18 @@ function draftCard(d) {
 
   sendBtn.addEventListener('click', async () => {
     sendBtn.disabled = true;
+    // Copy now, inside the click and before any await: the browser grants the
+    // clipboard to the gesture, and a copy after two round trips (or once
+    // Teams has taken focus) failed silently. A Teams group chat cannot be
+    // prefilled by link (deliver.ts), so the clipboard is the only way in.
+    const copying = copyText(box.value);
     try {
       await save();
       const r = await post(`api/drafts/${d.id}/deliver`);
-      await navigator.clipboard.writeText(r.body).catch(() => {});
+      const copied = await copying;
       if (r.open && r.open.startsWith('msteams:')) window.location.href = r.open;
       else if (r.open || r.web) window.open(r.open || r.web, '_blank', 'noopener');
-      toast(r.how + (r.prefilled ? '' : ' (copied)'));
+      toast(r.prefilled ? r.how : copied ? `${r.how} — draft copied, press Ctrl+V in the chat` : `${r.how} — copy failed, use Copy draft`);
       const sent = el('button', { class: 'primary' }, 'I sent it');
       const sentClose = el('button', { title: 'Also mark the ask done' }, 'Sent — ask is done');
       const notYet = el('button', {}, 'Not yet');
@@ -984,7 +1009,9 @@ function draftCard(d) {
       sentClose.addEventListener('click', act(sentClose, () => post(`api/drafts/${d.id}/sent`, { close: true })));
       notYet.addEventListener('click', () => { confirmRow.hidden = true; sendBtn.disabled = false; });
       const web = r.web && r.open !== r.web ? link(r.web, 'open in browser') : null;
-      confirmRow.replaceChildren('Did it go?', sent, sentClose, notYet, web);
+      const again = r.prefilled ? null : el('button', { title: 'Copy the draft again, then paste it in the chat' }, 'Copy draft');
+      if (again) again.addEventListener('click', async () => toast((await copyText(box.value)) ? 'copied' : 'copy failed — select the text and press Ctrl+C'));
+      confirmRow.replaceChildren('Did it go?', sent, sentClose, notYet, again, web);
       confirmRow.hidden = false;
     } catch (err) {
       toast(err.message);
