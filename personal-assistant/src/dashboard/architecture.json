@@ -1245,7 +1245,7 @@
       },
       "health": "factory-serve",
       "details": {
-        "Contract": "software-factory/docs/JOBS-API.md, v1.2 (kinds, runtimes, runs, reports)",
+        "Contract": "software-factory/docs/JOBS-API.md, v1.7 (serve reads local state plus a background GitHub snapshot; github_as_of)",
         "Commands": [
           "job submit",
           "job status",
@@ -1258,16 +1258,17 @@
         "Kinds": "code (direction to stories to PRs), research and report (one agent writes report.md; delivery none)",
         "Continue and resume": "job submit --branch / --pr and job resume <id> are in JOBS-API.md, and the PA sends them. A factory that does not know them refuses in its parser and the PA says the factory must be updated",
         "Never": "the PA never imports factory code or reads its store",
-        "Transport": "plan 2.1: a factory on the PA's machine answers through `factory serve`'s localhost API, POST 127.0.0.1:7330/api/cli {argv} (header X-Factory: 1). It runs the same CLI command in-process, so the JSON is byte-identical, and returns {code, stdout, stderr}; read-only verbs run concurrently (per-thread output capture), state-changing ones one at a time; warm calls take 40-200 ms instead of 5-10 s of `uv run`. The PA (PA_FACTORY_SERVE_URL) tries it first and spawns `uv run factory ...` only when nothing ran (nothing listening, or a verb serve does not serve: job follow). A remote factory is still reached through termhub's /api/exec",
+        "Transport": "plan 2.1: a factory on the PA's machine answers through `factory serve`'s localhost API, POST 127.0.0.1:7330/api/cli {argv} (header X-Factory: 1). It returns {code, stdout, stderr, ms}. job status, job list and app list (JOBS-API v1.7) answer from the factory db and a GitHub snapshot refreshed in the background, with no gh/git/systemctl on the request, so a warm serve is milliseconds; github_as_of is when that snapshot was read. Every other allowed verb runs the same CLI command in-process (byte-identical JSON). Read-only verbs run concurrently (per-thread output capture), state-changing ones one at a time. The PA (PA_FACTORY_SERVE_URL) tries serve first and spawns `uv run factory ...` only when nothing ran (nothing listening, or a verb serve does not serve: job follow). The CLI itself still asks GitHub live. A remote factory is still reached through termhub's /api/exec",
         "Push": "E3: `factory serve` POSTs job state changes (a new state or why; {jobs: [{job_id, state, why, updated_at}]}) to the PA's /api/factory/events from its own thread, 0.2-0.4 s after a tick commits a story transition to factory.db (statted every 0.1 s); done, failed and cancelled jobs are re-read by a full check every 5 s and right after an API submit, cancel or resume. A job whose last story delivers is pushed done with that transition, then corrected to what `job status` reads on GitHub (about 3 s, on serve's confirm thread, so other jobs' pushes never wait for it) if that differs, re-asked every 30 s while GitHub says in_progress (FACTORY_PA_EVENTS_URL, default the local PA)",
         "Schemas": "plan 1.1 (D15): one JSON Schema source at the repo root, schemas/*.schema.json: Job (this status object, v1.4), Run (a PA run's id chain), Card, Event (an /api/events frame), Approval (the chat's permission prompt). TS types are generated (schemas/types.d.ts by schemas/gen-types.js); the PA validates with schemas/index.js (dependency-free), the factory with factory/contract_schemas.py (jsonschema). Both sides test their real objects against them"
       },
-      "contract": "v1.2",
+      "contract": "v1.7",
       "code": [
         "software-factory/docs/JOBS-API.md",
         "software-factory/factory/cli_jobs.py",
         "software-factory/factory/jobs/submit.py",
         "software-factory/factory/jobs/status.py",
+        "software-factory/factory/jobs/read_cache.py",
         "schemas/index.js",
         "schemas/gen-types.js",
         "schemas/types.d.ts",

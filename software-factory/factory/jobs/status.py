@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -202,13 +202,30 @@ class _Ctx:
     github: GitHubCache
     factory_block: str | None
     coverage: Any = None
+    #: Serve's read API: tick coverage comes from the background snapshot,
+    #: never a ``systemctl`` call on this request.
+    cached_host: bool = False
+    _apps: dict[str, AppConfig] = field(default_factory=dict)
+
+    def app_cfg(self, app: str) -> AppConfig:
+        """One parse of ``apps/<app>/config.yaml`` per status/list call."""
+        hit = self._apps.get(app)
+        if hit is None:
+            hit = load_app_config(app, self.root)
+            self._apps[app] = hit
+        return hit
 
     def tick_coverage(self) -> Any:
         """What ticks which app (v1.6), read once per status/list call."""
         if self.coverage is None:
-            from factory.scheduler.coverage import read_coverage
+            if self.cached_host:
+                from factory.jobs.read_cache import cached_coverage
 
-            self.coverage = read_coverage(self.root)
+                self.coverage = cached_coverage(self.root)
+            else:
+                from factory.scheduler.coverage import read_coverage
+
+                self.coverage = read_coverage(self.root)
         return self.coverage
 
 
@@ -570,7 +587,7 @@ def _job_level(cfg: AppConfig, meta: dict[str, Any], rows: list[dict[str, Any]])
 
 
 def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
-    cfg: AppConfig = load_app_config(ref.app, ctx.root)
+    cfg: AppConfig = ctx.app_cfg(ref.app)
     meta = ref.meta
     state_yaml = read_state_yaml(ref.dir_path)
     dir_status = _direction_status(ctx, ref, state_yaml)
@@ -789,6 +806,9 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "stalled": is_stalled(state, updated_at, ctx.factory_block),
         # v1.6 (additive)
         "ticked": ticked,
+        # v1.7: when the PR/CI fields were read. Null when GitHub was not asked
+        # or could not answer (see docs/JOBS-API.md).
+        "github_as_of": gh.as_of if gh is not None else None,
     }
 
 
@@ -829,27 +849,45 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
         "base": None,
         "stalled": False,
         "ticked": None,
+        "github_as_of": None,
     }
 
 
-def _ctx(root: Path, github: bool) -> _Ctx:
+def _ctx(root: Path, github: bool, *, cached: bool = False) -> _Ctx:
     conn = _ro_connect(state_db_path(root))
-    return _Ctx(Path(root), conn, GitHubCache(enabled=github), _factory_block_reason(root, conn))
+    if cached and github:
+        from factory.jobs.read_cache import cache_github
+
+        gh: GitHubCache = cache_github()
+    else:
+        gh = GitHubCache(enabled=github)
+    return _Ctx(
+        Path(root), conn, gh, _factory_block_reason(root, conn), cached_host=cached
+    )
 
 
-def job_status(root: Path, job_id: str, *, github: bool = True) -> dict[str, Any]:
+def job_status(
+    root: Path, job_id: str, *, github: bool = True, cached: bool = False
+) -> dict[str, Any]:
+    """One job's status.
+
+    ``github=False`` (``--no-github``) is the local view only. ``cached=True``
+    is ``factory serve``'s read API: GitHub fields come from the background
+    snapshot and nothing in this call spawns ``gh`` or ``systemctl``. The CLI
+    leaves ``cached`` false and asks GitHub live.
+    """
     from factory.jobs.tasks import find_task, is_task_job_id
 
     if is_task_job_id(job_id):
         task = find_task(root, job_id)
-        ctx = _ctx(root, False)
+        ctx = _ctx(root, False, cached=cached)
         try:
             return _task_status_for(ctx, task)
         finally:
             if ctx.conn is not None:
                 ctx.conn.close()
     ref = find_job(root, job_id)
-    ctx = _ctx(root, github)
+    ctx = _ctx(root, github, cached=cached)
     try:
         return _status_for(ctx, ref)
     finally:
@@ -864,10 +902,14 @@ def list_jobs(
     active: bool = False,
     app: str | None = None,
     github: bool = True,
+    cached: bool = False,
     skip: Collection[str] = (),
 ) -> dict[str, Any]:
-    """Every job's status. ``skip``: job ids left out unread (serve's push skips terminal ones)."""
-    ctx = _ctx(root, github)
+    """Every job's status. ``skip``: job ids left out unread (serve's push skips terminal ones).
+
+    ``cached`` is the serve read API; see :func:`job_status`.
+    """
+    ctx = _ctx(root, github, cached=cached)
     jobs: list[dict[str, Any]] = []
     try:
         for ref in iter_jobs(root, app=app):

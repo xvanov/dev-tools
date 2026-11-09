@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/xvanov/dev-tools/schemas/job.schema.json",
   "title": "Job",
-  "description": "A factory job as `factory job status --json` prints it (software-factory/docs/JOBS-API.md, v1 to v1.4). The contract is additive, so unknown keys are allowed.",
+  "description": "A factory job as `factory job status --json` prints it (software-factory/docs/JOBS-API.md, v1 to v1.7). The contract is additive, so unknown keys are allowed.",
   "type": "object",
   "required": ["job_id", "app", "title", "source", "external_id", "state", "terminal", "pipeline", "delivery", "stories", "pr_urls", "merged", "cost_usd", "updated_at", "why"],
   "properties": {
@@ -28,7 +28,8 @@
     "subscription_equiv_usd": { "type": "number", "minimum": 0, "description": "v1.2" },
     "base": { "anyOf": [{ "$ref": "#/$defs/base" }, { "type": "null" }], "description": "v1.3" },
     "stalled": { "type": "boolean", "description": "v1.3" },
-    "ticked": { "type": ["boolean", "null"], "description": "v1.6: something ticks the job's app (null: cannot tell; research/report)" }
+    "ticked": { "type": ["boolean", "null"], "description": "v1.6: something ticks the job's app (null: cannot tell; research/report)" },
+    "github_as_of": { "type": ["string", "null"], "description": "v1.7: when the PR/CI fields were read from GitHub (null: not asked, or GitHub could not be asked)" }
   },
   "additionalProperties": true,
   "$defs": {

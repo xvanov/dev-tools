@@ -588,6 +588,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
   versions, desktop and disk-janitor tests/CI, the factory's test count and model routes, a
   hostname) and adds the root CLAUDE.md conventions it dropped. Tick when #69 merges.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
+  2026-11-08, live work serve before this change (checkout `9cd5567`, serve `ms`): `job list`
+  3.5–3.7 s (2.3 s in this session), `job status dev-tools:020` 1.6–3.3 s (1.6 s), `app list`
+  0.35–1.3 s (0.47–1.0 s). The time was Typer rebuilding the whole CLI on every request
+  (0.3–1.5 s), a live `gh pr list` (about 1 s, plus CI views when a PR is open; the `gh` shim
+  also runs `gh auth token`), and PyYAML re-parsing every `state.yaml` on each list. After
+  (this code, warm process, no `gh` on the request): live state, 23 jobs — list 30–43 ms,
+  status 5 ms, app list 3 ms. A 30-job db through `run_cli`: list 25–33 ms, status 3–4 ms,
+  app list 1 ms. Not ticked: confirm on the live serve after deploy.
 
 ## Phase 3: storage to SQLite (D2)
 

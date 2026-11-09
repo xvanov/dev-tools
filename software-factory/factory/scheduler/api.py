@@ -81,23 +81,193 @@ def allowed(argv: list[str]) -> bool:
     return subs is None or (len(argv) > 1 and argv[1] in subs)
 
 
-def run_cli(argv: list[str]) -> dict[str, Any]:
-    """Run one ``factory`` CLI command in-process: ``{code, stdout, stderr}``."""
-    import typer.main
+class _NotFast(Exception):
+    """``argv`` is not one of the hot reads; ``run_cli`` falls through to Typer."""
 
+
+def _flag(token: str, name: str) -> str | None:
+    """Value of ``--name value`` or ``--name=value`` already consumed, else None.
+
+    Returns ``""`` when the token is not this flag.
+    """
+    if token == name:
+        return None  # caller reads the next argv
+    prefix = name + "="
+    if token.startswith(prefix):
+        return token[len(prefix):]
+    return ""
+
+
+def _parse_fast(argv: list[str]) -> tuple[str, dict[str, Any]] | None:
+    """``job status|list`` and ``app list``, or None when Typer should parse.
+
+    Unknown flags fall through so a bad flag still gets Typer's reply. The
+    flags the personal assistant sends are parsed here, without building the
+    whole CLI (that walk is hundreds of milliseconds on a warm process).
+    """
+    if len(argv) < 2:
+        return None
+    head, rest = argv[:2], argv[2:]
+    if head == ["app", "list"]:
+        as_json = False
+        for token in rest:
+            if token == "--json":
+                as_json = True
+            else:
+                return None
+        return "app-list", {"json": as_json}
+    if head == ["job", "status"]:
+        as_json = False
+        no_github = False
+        job_id: str | None = None
+        for token in rest:
+            if token == "--json":
+                as_json = True
+            elif token == "--no-github":
+                no_github = True
+            elif token.startswith("-"):
+                return None
+            elif job_id is None:
+                job_id = token
+            else:
+                return None
+        return "status", {"json": as_json, "no_github": no_github, "job_id": job_id}
+    if head != ["job", "list"]:
+        return None
+    as_json = False
+    no_github = False
+    active = False
+    source: str | None = None
+    app_name: str | None = None
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        if token == "--json":
+            as_json = True
+        elif token == "--no-github":
+            no_github = True
+        elif token == "--active":
+            active = True
+        elif token in ("--source", "--app") or token.startswith("--source=") or token.startswith("--app="):
+            inline = _flag(token, "--source" if token.startswith("--source") else "--app")
+            if inline == "":
+                return None
+            if inline is None:
+                i += 1
+                if i >= len(rest) or rest[i].startswith("-"):
+                    return None
+                inline = rest[i]
+            if token.startswith("--source"):
+                source = inline
+            else:
+                app_name = inline
+        elif token.startswith("-"):
+            return None
+        else:
+            return None
+        i += 1
+    return "list", {
+        "json": as_json,
+        "no_github": no_github,
+        "active": active,
+        "source": source,
+        "app": app_name,
+    }
+
+
+def _fast_app_list(as_json: bool) -> None:
+    import json
+
+    import typer
+
+    from factory.cli_apps import _FACTORY_ROOT, list_registered_apps
+    from factory.jobs.read_cache import cached_coverage
+
+    rows = list_registered_apps(_FACTORY_ROOT, coverage=cached_coverage(_FACTORY_ROOT))
+    if as_json:
+        typer.echo(json.dumps({"apps": rows}))
+        return
+    if not rows:
+        typer.echo("No apps registered (no apps/*/config.yaml).")
+        return
+    for row in rows:
+        if "error" in row:
+            typer.echo(f"{row['app']}: BROKEN CONFIG — {row['error']}")
+            continue
+        typer.echo(
+            f"{row['app']}: {row['repo']}  path={row['path']}  "
+            f"delivery={row['delivery']['default']}  pipeline={row['pipeline_default']}"
+        )
+
+
+def _dispatch_fast(argv: list[str]) -> None:
+    """Run a hot read. Raises :class:`_NotFast` when ``argv`` is not one."""
+    parsed = _parse_fast(argv)
+    if parsed is None:
+        raise _NotFast()
+    kind, opts = parsed
+    if kind == "app-list":
+        _fast_app_list(bool(opts["json"]))
+        return
+    from factory.cli_jobs import _need_job_id, _root, _run
+    from factory.jobs.status import job_status, list_jobs
+
+    if kind == "status":
+        _run(
+            bool(opts["json"]),
+            lambda: job_status(
+                _root(),
+                _need_job_id(opts["job_id"]),
+                github=not opts["no_github"],
+                cached=True,
+            ),
+        )
+        return
+    _run(
+        bool(opts["json"]),
+        lambda: list_jobs(
+            _root(),
+            source=opts["source"],
+            active=bool(opts["active"]),
+            app=opts["app"],
+            github=not opts["no_github"],
+            cached=True,
+        ),
+    )
+
+
+def run_cli(argv: list[str]) -> dict[str, Any]:
+    """Run one ``factory`` CLI command in-process: ``{code, stdout, stderr}``.
+
+    ``job status``, ``job list`` and ``app list`` skip Typer and, when GitHub
+    is wanted, read the background snapshot (:mod:`factory.jobs.read_cache`).
+    Every other verb still goes through the CLI, which asks GitHub live.
+    """
     from factory.capture import capture
-    from factory.cli import app
 
     code = 0
     # Each call captures its own stdout/stderr (factory.capture), so read-only
     # verbs run concurrently; state-changing ones still go one at a time.
+    # The hot reads never import the Typer app: building that command tree is
+    # hundreds of milliseconds, which is the whole budget.
     lock = _CLI_LOCK if argv[:2] not in _READ_ONLY else contextlib.nullcontext()
     with lock, capture() as (out, err):
         try:
-            rc = typer.main.get_command(app).main(
-                args=list(argv), prog_name="factory", standalone_mode=False
-            )
-            code = int(rc or 0)
+            handled = False
+            try:
+                _dispatch_fast(list(argv))
+                handled = True
+            except _NotFast:
+                handled = False
+            if not handled:
+                import typer.main
+
+                from factory.cli import app
+
+                rc = typer.main.get_command(app).main(
+                    args=list(argv), prog_name="factory", standalone_mode=False
+                )
+                code = int(rc or 0)
         except SystemExit as exc:  # typer.Exit under standalone_mode=False is returned, but be safe
             code = int(exc.code or 0) if not isinstance(exc.code, str) else 1
         except Exception as exc:  # noqa: BLE001 - a usage error or a crash is a reply, not a dead server
@@ -435,7 +605,10 @@ class JobStateWatch:
     (submit, cancel, resume through the API). Nothing here runs in a tick or
     in serve's loop, so a slow or absent PA never delays a transition. A
     job end's GitHub read (seconds of ``gh``) runs on a second thread, one at
-    a time, so it never delays another job's push either.
+    a time, so it never delays another job's push either. Reads of job
+    status/list through the API do not use that thread: they answer from
+    :mod:`factory.jobs.read_cache`, which ``factory serve`` refreshes beside
+    this watch.
     """
 
     def __init__(

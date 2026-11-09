@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 _PR_FIELDS = "number,state,url,headRefName,isDraft"
@@ -65,6 +66,11 @@ class GitHubView:
     _branches: dict[str, bool | None] = field(default_factory=dict)
     _contains: dict[str, bool | None] = field(default_factory=dict)
     _ci: dict[int, dict[str, Any] | None] = field(default_factory=dict)
+    _rollups: dict[int, list[Any] | None] = field(default_factory=dict)
+    _api: dict[str, Any] = field(default_factory=dict)
+    #: When the PR index was read. ``None`` until GitHub answers (or the
+    #: serve snapshot this view was copied from has no successful read).
+    as_of: str | None = None
 
     def _call(self, args: list[str]) -> subprocess.CompletedProcess[str] | None:
         try:
@@ -111,6 +117,7 @@ class GitHubView:
             if info is not None:
                 index[info.number] = info
         self._index = index
+        self.as_of = datetime.now(UTC).isoformat()
         return index
 
     def pr(self, number: int) -> PRInfo | None:
@@ -134,14 +141,40 @@ class GitHubView:
         return info
 
     def api_json(self, path: str) -> Any:
-        """``gh api <path>`` parsed, or ``None`` on any failure (not cached)."""
+        """``gh api <path>`` parsed, or ``None`` on any failure.
+
+        Cached for the life of this view (one status/list call, or one
+        snapshot refresh). A failure is cached too, so a scope resolve does
+        not ask twice.
+        """
+        if path in self._api:
+            return self._api[path]
         proc = self._call(["api", path])
-        if proc is None or proc.returncode != 0:
-            return None
-        try:
-            return json.loads(proc.stdout or "null")
-        except json.JSONDecodeError:
-            return None
+        result: Any = None
+        if proc is not None and proc.returncode == 0:
+            try:
+                result = json.loads(proc.stdout or "null")
+            except json.JSONDecodeError:
+                result = None
+        self._api[path] = result
+        return result
+
+    def rollup_rows(self, number: int) -> list[Any] | None:
+        """Raw ``statusCheckRollup`` for ``number``, or ``None`` if unread."""
+        if number in self._rollups:
+            return self._rollups[number]
+        proc = self._call(
+            ["pr", "view", str(number), "--repo", self.repo, "--json", "statusCheckRollup"]
+        )
+        rows: list[Any] | None = None
+        if proc is not None and proc.returncode == 0:
+            try:
+                raw = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup")
+            except (json.JSONDecodeError, AttributeError):
+                raw = None
+            rows = raw if isinstance(raw, list) else None
+        self._rollups[number] = rows
+        return rows
 
     def ci(self, number: int, scope: Any = None) -> dict[str, Any] | None:
         """The PR's CI rollup: ``{"state", "failing", "pending"}``, or ``None``.
@@ -154,24 +187,17 @@ class GitHubView:
         """
         if number in self._ci:
             return self._ci[number]
-        proc = self._call(
-            ["pr", "view", str(number), "--repo", self.repo, "--json", "statusCheckRollup"]
-        )
+        rows = self.rollup_rows(number)
         result: dict[str, Any] | None = None
         # A failed CI read leaves ``ci`` unknown (``None``); it is NOT recorded
         # as "GitHub unavailable" — the PR facts themselves were read fine.
-        if proc is not None and proc.returncode == 0:
-            try:
-                rows = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup") or []
-            except (json.JSONDecodeError, AttributeError):
-                rows = None
-            if isinstance(rows, list):
-                ignored: list[str] = []
-                if scope is not None:
-                    rows, ignored = scope.apply(rows)
-                result = summarize_checks(rows)
-                if ignored:
-                    result["ignored"] = ignored
+        if isinstance(rows, list):
+            ignored: list[str] = []
+            if scope is not None:
+                rows, ignored = scope.apply(rows)
+            result = summarize_checks(rows)
+            if ignored:
+                result["ignored"] = ignored
         self._ci[number] = result
         return result
 

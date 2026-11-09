@@ -488,10 +488,11 @@ def add_app(
     return result
 
 
-def list_registered_apps(root: Path) -> list[dict[str, Any]]:
-    from factory.scheduler.coverage import read_coverage
+def list_registered_apps(root: Path, *, coverage: Any = None) -> list[dict[str, Any]]:
+    if coverage is None:
+        from factory.scheduler.coverage import read_coverage
 
-    coverage = read_coverage(root)
+        coverage = read_coverage(root)
     rows: list[dict[str, Any]] = []
     for cfg_path in sorted((root / "apps").glob("*/config.yaml")):
         app = cfg_path.parent.name
