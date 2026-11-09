@@ -88,7 +88,7 @@ Card links are built server-side from stored URLs and only `http(s)` ones are re
 approve, merge) are POSTs under the same guards, and memory pages reach the browser as a parsed
 tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
 `test/memoryui.test.js` fails if one appears. The Factory page (`/factory`) is the same: its
-writes (Cancel, Approve, Open in termhub, New job) are POSTs under the same guards, a job id is
+writes (Cancel, Approve, Open in termhub, New job, and the Repos section's Add repo and gate edits, `factory app add|set` with each value one argv element) are POSTs under the same guards, a job id is
 checked against `factoryCore.JOB_ID` before anything, Approve runs only the `approve-direction` the
 factory named in that job's own warning (read from the stored list, never from the request), a new
 code job at `auto_merge`/`push_to_main` needs the page token and the level confirmed, and a report —

@@ -92,6 +92,29 @@
   .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--ink-2); }
   .md li.d1 { margin-left: 16px; } .md li.d2 { margin-left: 32px; }
 
+  /* Repos: the factory's registered repos, their gates and readiness. */
+  .repolist { list-style: none; margin: 8px 0 0; padding: 0; font-size: var(--text-sm); }
+  .repolist li { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
+  .repolist li:first-child { border-top: 0; }
+  .repolist .nm { font-weight: 550; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .repolist .why { flex-basis: 100%; margin-top: 0; }
+  .chip.rd-configured { color: var(--ok); }
+  .chip.rd-not_configured { color: var(--amber); background: var(--amber-soft); }
+  .chip.rd-missing_tool { color: var(--bad); }
+  #appform { display: grid; gap: 10px; margin-top: 10px; }
+  #appform label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
+  #appform input, #appform select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px; }
+  #appform input.cmd { font-family: var(--font-mono); font-size: 12px; }
+  #appform .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #appform fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin: 0; display: grid; gap: 6px; }
+  #appform legend { font-weight: 600; font-size: 13px; padding: 0 4px; }
+  #appform .gaterow { display: grid; grid-template-columns: 9em minmax(0, 1fr); gap: 6px; }
+  #appform .sug { font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+  #appform .sug button { margin-left: 6px; font-size: 11px; padding: 1px 6px; }
+  #appform .row { display: flex; gap: 8px; align-items: center; }
+  @media (max-width: 560px) { #appform .gaterow, #appform .two { grid-template-columns: minmax(0, 1fr); } }
+
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--surface-0); padding: 8px 14px; border-radius: var(--radius); font-size: 13px; opacity: 0;
     transition: opacity .2s var(--ease); pointer-events: none; max-width: 90vw; z-index: 40; }
@@ -123,6 +146,17 @@
     <div class="row"><button class="primary" type="submit">Start job</button><span class="meta" id="newhint"></span></div>
   </form>
 </details>
+<!-- Repos (factory.apps.client.js): the repos the factory knows, their gates and
+     readiness; add one, edit one. -->
+<details class="new" id="repos">
+  <summary>Repos <span class="meta" id="repos-n"></span></summary>
+  <ul class="repolist" id="repolist"><li class="empty">loading…</li></ul>
+  <form id="addrepo" autocomplete="off">
+    <label class="wide">Add repo <input name="repo" placeholder="owner/name" required></label>
+    <label class="wide">Local path <input name="path" placeholder="optional: an existing clone"></label>
+    <div class="row"><button type="submit">Add repo</button><span class="meta" id="addhint"></span></div>
+  </form>
+</details>
 </aside>
 <main id="board" class="jmain" data-permission-card></main>
 </div>
@@ -133,6 +167,13 @@
     <div id="sheet-body"></div>
   </div>
 </div>
+<div class="sheet" id="appsheet" hidden>
+  <div class="paper" role="dialog" aria-modal="true" aria-labelledby="appsheet-title">
+    <div class="bar"><h2 id="appsheet-title">Repo</h2><button type="button" id="appsheet-close">Close</button></div>
+    <div class="meta" id="appsheet-meta"></div>
+    <form id="appform" autocomplete="off"></form>
+  </div>
+</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="events.js"></script>
 <!-- Jarvis's permission prompt (e.g. its factory_approve), answerable here too.
@@ -140,5 +181,6 @@
 <script src="login.js"></script>
 <script src="permission.js"></script>
 <script src="factory.js"></script>
+<script src="factory-apps.js"></script>
 </body>
 </html>

@@ -10,6 +10,8 @@
 //   POST /api/factory/jobs            a new job: title, ask, kind, runtime, repo, delivery
 //   POST /api/factory/jobs/<id>/cancel|approve|open
 //   POST /api/factory/events          a factory pushes job status changes (live feed)
+//   GET|POST /api/factory/apps[/<app>] the Repos section: registered repos, gates, add/edit
+//                                     (factoryApps.ts; page script factory.apps.client.js)
 //
 // The page never makes the factory work per request: the board is the
 // `factory job list` the worker stored (factory.refreshBoard, sql/031). Only a
@@ -32,6 +34,7 @@ const F = require('../dispatch/factoryCore.ts');
 
 const PAGE = path.join(__dirname, 'factory.html');
 const CLIENT = path.join(__dirname, 'factory.client.js');
+const APPS_CLIENT = path.join(__dirname, 'factory.apps.client.js');
 
 const KIND_LABEL: Record<string, string> = { code: 'code — change a repo', research: 'research — answer a question, write a report', report: 'report — write a document', plan: 'plan — read-only: an implementation plan, change nothing' };
 const RUNTIME_LABEL: Record<string, string> = { api: 'API models (metered)', claude_session: 'Claude session (subscription)' };
@@ -153,8 +156,17 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
     send(res, 200, fs.readFileSync(CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
     return true;
   }
+  if (req.method === 'GET' && url.pathname === '/factory-apps.js') {
+    send(res, 200, fs.readFileSync(APPS_CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
+    return true;
+  }
   if (req.method === 'GET' && url.pathname === '/api/factory') {
     send(res, 200, await boardData());
+    return true;
+  }
+  // The Repos section (factoryApps.ts): registered apps, their gates, add/edit.
+  if (req.method === 'GET' && (url.pathname === '/api/factory/apps' || url.pathname.startsWith('/api/factory/apps/'))) {
+    send(res, 200, await require('./factoryApps.ts').get(url));
     return true;
   }
   // A report arrives parsed (dashboard/markdown.js) and is built with
@@ -177,6 +189,10 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
   const body = await readJson(req);
   const factory = require('../dispatch/factory.ts');
 
+  if (url.pathname === '/api/factory/apps' || url.pathname.startsWith('/api/factory/apps/')) {
+    send(res, 200, await require('./factoryApps.ts').post(url.pathname, body));
+    return true;
+  }
   if (url.pathname === '/api/factory/jobs') {
     const o: ReturnType<typeof newJob> & { confirmedUnattended?: boolean } = newJob(body);
     const D = require('../dispatch/deliveryCore.ts');
