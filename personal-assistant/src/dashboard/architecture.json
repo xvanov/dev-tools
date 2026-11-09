@@ -867,6 +867,7 @@
         "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
         "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.ts)",
         "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose",
+        "Memory reads only what you are in": "the claims pass skips, with no model call, an item you are not part of (src/memory/relevance.ts): on GitHub you must be its author, assignee, a reviewer requested by name, @mentioned or a commenter (a team review request is not you); a Teams channel post must name you; or it is in a thread where one of those holds. Before this rule 8.9k of the work stack's 10k claims came from team_review_requested notifications. `pa memory prune` lists claims read from such items; --apply retracts them (nothing deleted)",
         "Memory tab saves": "Save to memory and Discard move the card at once and send the request after (a failure puts it back with a toast); approve answers once the row flips and consolidates and rewrites pages 1.5 s later, batched, outside the request (synchronous SQLite shares the dashboard's event loop). sql-sqlite/013 indexes claim by status: the tab's counts went from 1.2 s to 2 ms"
       },
       "code": [
@@ -874,6 +875,8 @@
         "personal-assistant/src/distill/short.ts",
         "personal-assistant/src/commitments/blocks.ts",
         "personal-assistant/src/commitments/sourcePolicy.ts",
+        "personal-assistant/src/memory/relevance.ts",
+        "personal-assistant/src/memory/prune.ts",
         "personal-assistant/src/ledger",
         "personal-assistant/src/dashboard/board.ts"
       ]

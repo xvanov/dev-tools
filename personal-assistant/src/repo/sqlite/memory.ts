@@ -855,6 +855,44 @@ function create(db: Db) {
       );
     },
 
+    async recordExtractionSkipped(itemId: number | string, version: string, why: string) {
+      await db.query(
+        `insert into claim_extraction (source_item_id, extracted_by, claims, dropped, error)
+       values ($1,$2,0,0,$3)
+       on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
+         extracted_at = ${NOW}, claims = 0, dropped = 0, error = excluded.error`,
+        [itemId, version, `skipped: ${why}`.slice(0, 500)]
+      );
+    },
+
+    async itemsInThreads(threadIds: string[]) {
+      if (!threadIds?.length) return [];
+      return db.rows(
+        `select id, source, thread_external_id, author_identity, subject, body_text, raw
+       from source_item where thread_external_id in (select value from json_each($1))`,
+        [threadIds.map(String)]
+      );
+    },
+
+    async itemsBehindClaims() {
+      return db.rows(
+        `select si.id, si.source, si.thread_external_id, si.author_identity, si.subject, si.body_text, si.raw
+       from source_item si
+      where si.id in (select c.source_item_id from claim c where c.status <> 'retracted'
+                         and c.origin not in ('explicit', 'agent') and c.source_item_id is not null)`
+      );
+    },
+
+    async claimsOfItems(itemIds: unknown[]) {
+      if (!itemIds?.length) return [];
+      return db.rows(
+        `select id, status, subject_kind, subject_id, subject_label, kind, text, source_item_id
+       from claim where source_item_id in (select value from json_each($1)) and status <> 'retracted'
+        and origin not in ('explicit', 'agent') order by id`,
+        [itemIds.map(Number)]
+      );
+    },
+
     // ----------------------------------------------------------- dream (memory/dream)
 
     async dreamMarker(key: number | string) {

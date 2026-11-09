@@ -815,6 +815,44 @@ module.exports = {
     assert.strictEqual(await repos.memory.pendingExtractionCount(version, 40), before);
   },
 
+  'recordExtractionSkipped: the item is done at the version, with no claims': async ({ repos, seed, assert }) => {
+    const version = `skip-${Date.now()}`;
+    const item = await seed.sourceItem({ body: 'z'.repeat(60) });
+    assert.ok(ids(await repos.memory.pendingExtraction(version, 100000, 40)).includes(item));
+    await repos.memory.recordExtractionSkipped(item, version, 'not you');
+    await repos.memory.recordExtractionSkipped(item, version, 'not you, again');
+    assert.ok(!ids(await repos.memory.pendingExtraction(version, 100000, 40)).includes(item));
+  },
+
+  'itemsInThreads: every item in the given threads, raw parsed': async ({ repos, seed, uniq, assert }) => {
+    const t = uniq('https://github.example/o/r/pull/');
+    const a = await seed.sourceItem({ source: 'github_pr', thread: t, author: 'github:me-dev', raw: { assignees: ['me-dev'] } });
+    const b = await seed.sourceItem({ source: 'github_notification', thread: t });
+    await seed.sourceItem({ source: 'github_notification', thread: uniq('other') });
+    const got = await repos.memory.itemsInThreads([t]);
+    assert.deepStrictEqual(ids(got).sort(), [a, b].sort());
+    assert.deepStrictEqual(got.find((r) => Number(r.id) === a).raw.assignees, ['me-dev']);
+    assert.deepStrictEqual(await repos.memory.itemsInThreads([]), []);
+  },
+
+  'itemsBehindClaims: items still backing an unretracted claim': async ({ repos, seed, uniq, assert }) => {
+    const a = await extracted(repos, seed);
+    const gone = await extracted(repos, seed);
+    await repos.memory.retractClaims([gone.id]);
+    await note(repos, { subjectLabel: uniq('typed') });
+    const items = ids(await repos.memory.itemsBehindClaims());
+    assert.ok(items.includes(a.itemId) && !items.includes(gone.itemId));
+  },
+
+  'claimsOfItems: the unretracted claims of those items, superseded included': async ({ repos, seed, assert }) => {
+    const a = await extracted(repos, seed);
+    const b = await extracted(repos, seed, { itemId: a.itemId, status: 'superseded' });
+    const gone = await extracted(repos, seed);
+    await repos.memory.retractClaims([gone.id]);
+    assert.deepStrictEqual(ids(await repos.memory.claimsOfItems([a.itemId, gone.itemId])), [a.id, b.id].sort((x, y) => x - y));
+    assert.deepStrictEqual(await repos.memory.claimsOfItems([]), []);
+  },
+
   'personDisplayName: the name, or null': async ({ repos, seed, assert }) => {
     const id = await seed.memPerson({ name: 'Display Name' });
     assert.deepStrictEqual(await repos.memory.personDisplayName(id), { display_name: 'Display Name' });

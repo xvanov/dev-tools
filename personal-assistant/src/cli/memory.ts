@@ -19,6 +19,7 @@ const HELP = `
     pa memory explain <claim>       a claim, its evidence, and its history
     pa memory search <query...>     search claims
     pa memory run [extract|consolidate|pages|dream] [--limit n]   force a pass
+    pa memory prune [--apply] [--n 10]   claims read from items you were not part of; --apply retracts them
     pa remember "<note>" [--about name] [--kind k]   save a fact now
     pa forget <claim> | item:<id>   retract a claim, or everything read from an item
 `;
@@ -90,6 +91,29 @@ function make(out: any, fail: any) {
         return;
       }
 
+      if (sub === 'prune') {
+        // Claims read from items you were never part of (src/memory/relevance.ts).
+        // Lists by default; --apply retracts them (nothing is deleted).
+        const doIt = flagBool(flags, 'apply');
+        if (doIt && process.env.PA_READ_ONLY === '1') return fail('pa memory prune --apply writes; not from a read-only session');
+        const prune = require('../memory/prune.ts');
+        const a = await prune.audit();
+        const byWhy = new Map<string, number>();
+        for (const s of a.skipped) byWhy.set(s.why, (byWhy.get(s.why) || 0) + 1);
+        const byStatus = new Map<string, number>();
+        for (const c of a.claims) byStatus.set(c.status, (byStatus.get(c.status) || 0) + 1);
+        out(`${a.items} items back a claim; ${a.skipped.length} of them do not involve you${a.login ? ` (GitHub ${a.login})` : ''}:`);
+        for (const [why, n] of [...byWhy].sort((x, y) => y[1] - x[1])) out(`  ${String(n).padStart(6)}  ${why}`);
+        out(`${a.claims.length} claims read from them: ${[...byStatus].map(([s, n]) => `${n} ${s}`).join(', ') || 'none'}`);
+        const show = flagInt(flags, 'n', 10);
+        for (const c of a.claims.filter((x: Row) => x.status !== 'superseded').slice(0, show)) {
+          out(`  #${c.id} [${c.status}] ${c.subject_kind} ${c.subject_label}: ${String(c.text).slice(0, 140)}`);
+        }
+        if (!doIt) return out(a.claims.length ? '\ndry run — `pa memory prune --apply` retracts them (as `pa forget`; nothing is deleted)' : '');
+        const r = await prune.apply(a.claims);
+        return out(`retracted ${r.retracted} claims; ${r.restored} older claims believed again; ${r.pagesRemoved} pages left empty removed (the rest are rewritten by the hourly pages pass)`);
+      }
+
       if (sub === 'run') {
         const which = (args[1] || 'all').toLowerCase();
         const limit = flagInt(flags, 'limit', null);
@@ -98,7 +122,7 @@ function make(out: any, fail: any) {
         if (which === 'extract' || which === 'all') {
           const extract = require('../memory/extract.ts');
           const r = await extract.run({ limit: limit || 40, concurrency: flagInt(flags, 'concurrency', 1) });
-          out(`extract: ${r.items} items → ${r.claims} claims (${r.dropped} dropped for bad evidence)${r.errors ? `, ${r.errors} failed` : ''}; ${await extract.pendingCount()} items left`);
+          out(`extract: ${r.items} items → ${r.claims} claims (${r.skipped ? `${r.skipped} not yours, skipped; ` : ''}${r.dropped} dropped for bad evidence)${r.errors ? `, ${r.errors} failed` : ''}; ${await extract.pendingCount()} items left`);
         }
         if (which === 'consolidate' || which === 'all') {
           const r = await require('../memory/consolidate.ts').run({ limit: limit || 120 });

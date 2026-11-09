@@ -867,6 +867,48 @@ function create(db: Db) {
       );
     },
 
+    /** Records an item the claims pass read no claims from because ME is not in it (memory/relevance). */
+    async recordExtractionSkipped(itemId: number | string, version: string, why: string) {
+      await db.query(
+        `insert into claim_extraction (source_item_id, extracted_by, claims, dropped, error)
+       values ($1,$2,0,0,$3)
+       on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
+         extracted_at = now(), claims = 0, dropped = 0, error = excluded.error`,
+        [itemId, version, `skipped: ${why}`.slice(0, 500)]
+      );
+    },
+
+    /** Items in these threads (memory/relevance: a thread ME took part in). */
+    async itemsInThreads(threadIds: string[]) {
+      if (!threadIds?.length) return [];
+      return db.rows(
+        `select id, source, thread_external_id, author_identity, subject, body_text, raw
+       from source_item where thread_external_id = any($1::text[])`,
+        [threadIds]
+      );
+    },
+
+    /** Source items that still back a claim nobody retracted (memory/prune). */
+    async itemsBehindClaims() {
+      return db.rows(
+        `select si.id, si.source, si.thread_external_id, si.author_identity, si.subject, si.body_text, si.raw
+       from source_item si
+      where exists (select 1 from claim c where c.source_item_id = si.id and c.status <> 'retracted'
+                       and c.origin not in ('explicit', 'agent'))`
+      );
+    },
+
+    /** The unretracted, read-from-an-item claims of these items. */
+    async claimsOfItems(itemIds: unknown[]) {
+      if (!itemIds?.length) return [];
+      return db.rows(
+        `select id, status, subject_kind, subject_id, subject_label, kind, text, source_item_id
+       from claim where source_item_id = any($1::bigint[]) and status <> 'retracted'
+        and origin not in ('explicit', 'agent') order by id`,
+        [itemIds.map(Number)]
+      );
+    },
+
     // ----------------------------------------------------------- dream (memory/dream)
 
     /** The stored value of a dream marker (a `setting` row), or null. @returns {Promise<{value: any}|null>} */

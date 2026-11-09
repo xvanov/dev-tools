@@ -708,7 +708,12 @@ pa memory explain 812            one claim: its evidence, source, and what it re
 pa remember "Quill prefers PRs under 400 lines" [--about Quill]
 pa forget 812 | item:4411        retract; the pages are rebuilt without it
 pa memory run [extract|consolidate|pages|dream]   force a pass
+pa memory prune [--apply]        claims read from items you were not part of (a team's PRs); --apply retracts
 ```
+
+Memory is read only from items you are part of (`src/memory/relevance.ts`): a teammate's PR that
+reached you through a team review request, or a channel thread that never names you, stays a
+searchable item but never becomes a claim.
 
 **Reading it back: recall.** `src/recall/` is the question-answering path, exposed as the MCP
 `recall` tool and used for reply drafts and dispatch briefs. One hop searches items, claims and

@@ -14,7 +14,9 @@
 // "Work to do" is a query, as for distillation: items with no claim_extraction
 // row at CLAIMS_VERSION. Machine noise and items another item already covers
 // (a review-request notification for a PR that is ingested itself) are not
-// work at all.
+// work at all. Nor is an item ME is not part of — a teammate's PR that came
+// through a team review request, a channel thread that never names ME
+// (relevance.ts): it is marked done with no claims and no model call.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -29,6 +31,7 @@ const projects = require('../projects');
 const { embed } = require('../search');
 const { logger } = require('../log.ts');
 const { parseClaimsResponse, verifyQuote, headTail } = require('./claims.ts');
+const relevance = require('./relevance.ts');
 
 const log = logger('memory.extract');
 
@@ -322,15 +325,29 @@ async function context() {
   const list = await projects.candidates();
   return {
     me,
+    who: relevance.meFrom(await repo.people.myIdentities()),
     meLabel: me ? `${me.display_name}${me.primary_email ? ` <${me.primary_email}>` : ''}` : null,
     projectNames: list.map((p: any) => p.name),
   };
 }
 
+// Items ME is not part of are recorded as read, with no claims and no model
+// call. Their thread siblings are loaded only for the items that fail on
+// their own, so a pass never reads a whole chat.
+async function involvedOnly(items: any, who: any) {
+  const first = relevance.partition(items, who);
+  if (!first.skip.length) return first;
+  const threads = [...new Set(first.skip.map((s: any) => s.item.thread_external_id).filter(Boolean))];
+  const siblings = threads.length ? await repo.memory.itemsInThreads(threads) : [];
+  return relevance.partition(items, who, siblings);
+}
+
 async function run({ limit = 24, concurrency = 1 }: { limit?: number; concurrency?: number } = {}) {
-  const items = await pending(limit);
-  if (!items.length) return { items: 0, claims: 0, dropped: 0, errors: 0 };
+  const pendingItems = await pending(limit);
+  if (!pendingItems.length) return { items: 0, claims: 0, dropped: 0, errors: 0, skipped: 0 };
   const ctx = await context();
+  const { keep: items, skip } = await involvedOnly(pendingItems, ctx.who);
+  for (const s of skip) await repo.memory.recordExtractionSkipped(s.item.id, CLAIMS_VERSION, s.why);
   const totals: Record<string, any> = { items: 0, claims: 0, dropped: 0, errors: 0 };
   const queue = batches(items);
   const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
@@ -340,6 +357,8 @@ async function run({ limit = 24, concurrency = 1 }: { limit?: number; concurrenc
     }
   });
   await Promise.all(workers);
+  totals.items += skip.length;
+  totals.skipped = skip.length;
   log.info('claims extracted', totals);
   return totals;
 }
@@ -355,4 +374,5 @@ module.exports = {
   renderItem,
   batches,
   vet,
+  involvedOnly,
 };

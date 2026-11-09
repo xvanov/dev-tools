@@ -242,7 +242,7 @@ const READ_VERBS: Record<string, Spec> = {
   show: { denyFlags: ['project'] },
   review: { denyFlags: ['done'] },
   projects: { subs: ['', 'list'] },
-  memory: { denySubs: ['run'] },
+  memory: { denySubs: ['run', 'prune'] },
   meeting: { subs: ['next', 'list', 'brief', 'debriefs', 'help'] },
   'routine list': {},
   'backup list': {},

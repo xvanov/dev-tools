@@ -313,6 +313,14 @@ is `on delete set null`, because retention deletes mail and chat and memory must
 A claim with no evidence is either an explicit `pa remember` note (whose evidence is the words
 typed) or a bug.
 
+**Memory is read only from items I am part of.** `src/memory/relevance.ts` decides it in code before
+the claims pass calls a model: on GitHub I must be the author, an assignee, a reviewer requested by
+name (a team's review request is the team's queue), @mentioned by login, or a commenter
+(`githubGate.involvement`, the same rule the distiller's commitments use); a Teams channel post must
+name me or be mine; or the item is in a thread where one of those holds. Anything else is recorded
+as read with no claims (`claim_extraction.error = 'skipped: …'`) and stays a searchable source item.
+`pa memory prune` lists claims read from such items before the rule; `--apply` retracts them.
+
 **Memory supersedes; it does not overwrite or delete.** A contradicting claim closes the old one's
 `invalid_at`/`expired_at` and links it with `supersedes_id`; duplicates point at what they
 corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory code runs a
