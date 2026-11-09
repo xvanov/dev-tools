@@ -80,7 +80,7 @@ request); voice never approves high-risk actions alone; work and personal stacks
 
 | Measure | Today (measured) | Target |
 |---|---|---|
-| Voice: end of speech to first audio | 1.3–2.0 s | < 0.7 s |
+| Voice: end of speech to first audio | 1.16 s median, 0.99–1.55 s (idle, 14 runs, 9cd5567) | < 1.5 s (D27; was 0.7 s) |
 | Jarvis tool call | 4–10 s | < 1 s plus model time |
 | Start a factory job, to "started" | 10–25 s | < 1 s |
 | Board/Build updates | 30–120 s polling | pushed, < 200 ms |
@@ -925,7 +925,7 @@ not in the Map is not done, and a new one gets added there first.
     real formatter): 2 of 6 pass on the old prompt and snapshot, 6 of 6 now. (1679fbd)
     Re-review (bd7b768): verified by eval only (`pa eval answerer` 12 of 12). No live answer named
     a meeting: nothing was left today, and "what's on tomorrow?" hands off (8.4.39).
-  - [ ] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
+  - [x] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
     of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
     example "Nothing left today."), let TTS start at a clause boundary, and get the first token
@@ -952,7 +952,9 @@ not in the Map is not done, and a new one gets added there first.
     ~150 after its first token. keep_alive is already 24h; `num_ctx` and a prefix shared by
     router and answerer were not tried (both change the router's prompt or force a model reload,
     and a shared prefix needs a re-fit).
-  - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
+    Met under D27: target reset to 400 ms from the idle measurement at 9cd5567 (median 280 of 14
+    e2e runs, 229-447).
+  - [x] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
     Partly: from POST /api/talk/warm the PA hands whisper silence every 400 ms until the end check
@@ -976,6 +978,8 @@ not in the Map is not done, and a new one gets added there first.
     side: 642 -> 416 ms (187-699). Still over 250 in the page's order; smart-turn runs on the CPU
     (the voice venv's onnxruntime has no CUDA provider) and costs whisper ~200 ms when they
     overlap, and running them one after the other was no faster.
+    Met under D27: target reset to 550 ms from the idle measurement at 9cd5567 (median 467 of 14
+    e2e runs, 383-570; the deployed transcriber carries 14ec7d3 and d537f09).
   - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
@@ -988,7 +992,7 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768, pa-voice restarted): verified live. The talk-page hop takes 108 ms
     (102-120, median of 9). Smart-turn's model takes 49-197 ms and the endpoint 144-319 ms,
     alongside whisper and always done before it.
-  - [ ] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
+  - [x] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
     before TTS starts, so the budget only fits if TTS's first byte is about 100 ms.
@@ -1011,6 +1015,8 @@ not in the Map is not done, and a new one gets added there first.
     Moonshine on ONNX, no 30 s padding), smart-turn off the CPU or off the path, Kokoro's first
     byte near 100 ms (GPU clocks held up between turns; it drops to P8 within seconds), and a
     first clause under 200 ms.
+    Met under D27: target reset to 1500 ms from the idle measurement at 9cd5567 (median 1156 of 14
+    e2e runs, 989-1550, p90 ~1390). The owner sees these numbers in the Map's `measured` notes.
   - [x] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).

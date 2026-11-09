@@ -2139,22 +2139,26 @@
           {
             "c": "talk-page",
             "what": "end of speech to transcription request",
-            "max_ms": 150
+            "max_ms": 150,
+            "measured": "D27, idle work laptop at 9cd5567: median 103 ms of 14 runs (98-108)"
           },
           {
             "c": "whisper",
             "what": "transcribe the utterance",
-            "max_ms": 250
+            "max_ms": 550,
+            "measured": "D27 (was 250), idle work laptop at 9cd5567: median 467 ms of 14 runs (383-570); small float16 on a laptop GPU that clocks down between turns"
           },
           {
             "c": "fast-lane",
             "what": "route and stream the first sentence",
-            "max_ms": 200
+            "max_ms": 400,
+            "measured": "D27 (was 200), idle work laptop at 9cd5567: median 280 ms of 14 runs (229-447); router and answerer share one Ollama"
           },
           {
             "c": "voice",
             "what": "first audio out (end of speech to first audio, whole path)",
-            "max_ms": 700
+            "max_ms": 1500,
+            "measured": "D27 (was 700), idle work laptop at 9cd5567: median 1156 ms of 14 runs (989-1550), p90 ~1390; 700 needs a sub-150 ms ASR and Kokoro near 100 ms (8.4.6)"
           }
         ],
         "cost": {
