@@ -1,5 +1,115 @@
 # Acceptance review: `whats-on` (plan 8.3)
 
+## Re-review, 2026-11-09 (served `9cd5567`)
+
+**Verdict: PASS** against the D27 caps. Nine turns of "What's on today?" were right, local, and $0. Hop medians of those nine, against the caps reset in the Map (`measured` notes, idle runs at this same commit):
+
+- talk-page: **100 ms** (98-108) against 150.
+- whisper: **450 ms** (347-549) against 550.
+- fast-lane: **301 ms** (211-629) against 400. One run was 629.
+- voice (`speed`): **1190 ms** (1056-1758) against 1500. That same run was 1758.
+
+The served tree's own `summary.ok` is false on every run. Its Map is still the pre-D27 caps (whisper 250, fast-lane 200, voice 700). `c61bad6` reset the caps and is not in the commit this stack is serving. This review scores the D27 caps.
+
+| | |
+|---|---|
+| Date | 2026-11-09, 02:08-02:14Z (Sunday 21:08-21:14 local) |
+| Stack | work (this Windows laptop) |
+| Commit served | `9cd55676963b2e09580f8cb7cf45dcbfe0279f28` (GET /api/version) |
+| Caps scored | D27, on `origin/main`: talk-page 150, whisper 550, fast-lane 400, first audio 1500 |
+| Load | A research e2e was in progress on this laptop when the review started (dry run at 02:03Z, a real run still up around 02:05Z) and had exited before the first scored run. A parallel test suite had been on the CPUs a few minutes earlier. During the nine runs neither was running. CPU at the start of each run was 0-38%. No run was thrown out. |
+| Reviewer | a fresh session that did not implement the workflow or its fixes (D10) |
+| Criteria | `architecture.json` → `examples[whats-on].acceptance`, hops at the D27 caps |
+
+### How it was run
+
+1. `node bin\pa.js e2e whats-on --dry-run` from the live checkout, `C:\Program Files\nodejs` first on PATH: OK. The map has the block, the effective ceiling is $0, TTS is on cuda, and the fast lane is on.
+2. Nine real runs of `node bin\pa.js e2e whats-on --json`, one at a time, 15 s after each one finished, from 02:08:53Z to 02:11:57Z. The e2e replays the talk page (warm, the question's length, the 96 ms VAD wait, endpoint and transcribe together, the turn, TTS at the first piece). The clock starts at the end of speech.
+3. Three more runs with `--question "What's on tomorrow?"` (02:12:20Z, 02:12:44Z, 02:13:07Z), so 8.4.2 and 8.4.39 could be checked on a day with meetings left tomorrow. They are not in the hop medians. The today question is one five-word sentence; tomorrow is a longer answer, and its first audio is a different hop.
+4. Facts: the fast lane's own snapshot (`createSnapshotCache().get()`), `pa brief`, and the calendar rows behind both (`sources.eventsBetween`, local time and cancelled flag only). The snapshot's open and cancelled times match those rows on both days.
+5. Cost: each run's spend delta, and `llm_spend` grouped by purpose, model and backend since 02:08:53Z.
+6. The serving generation's `supervisor.log`, every `event loop blocked` line since it started routing at 01:56:00Z (spawned 01:55:56Z, the 9cd5567 deploy).
+
+The e2e still leaves out Silero's 32 ms frame and the browser starting playback. Both add time, so the voice numbers are lower bounds. Adding the frame to the talk-page median keeps it under 150.
+
+### Rubric
+
+| Criterion | Previous re-review | Now | Evidence now |
+|---|---|---|---|
+| `local` | **pass** | **pass** | 9 of 9 today turns, and 3 of 3 tomorrow turns, took route `answer` on `local/llama3.2:3b`. Today p(answer_here) 0.999-1.0. Tomorrow 0.838, 0.987, 0.987. `llm_spend` since 02:08:53Z has 12 `fast-lane` rows, all that local model, all $0, and no Claude row. |
+| `speed`: first audio < 1500 ms (D27; the rubric line still said 0.7 s and is aligned in this commit) | **fail**: 1807 ms against 700 | **pass**: **1190 ms** (1056-1758) | Per run: 1073, 1203, 1350, 1126, 1240, 1116, 1056, 1190, 1758. One run is over 1500 (1758, TTS first byte 676). The median is 310 ms under the cap. |
+| `facts` | **pass** (today only; tomorrow handed off) | **pass** | Below. The cancelled meeting tomorrow is left out of the spoken answer (8.4.54). The three open meetings are named, and nothing is invented. |
+
+The facts check:
+
+- **Calendar and snapshot.** Sunday 21:14 local. Nothing is left today. Tomorrow has three open rows (10:00, 11:00, 11:30) and one cancelled row (04:00). The snapshot says none left today, lists those three open times with their titles, and lists 04:00 under Cancelled. The row query agrees on all four times. `pa brief` prints those four times under TOMORROW and has no TODAY section.
+- **Today.** 9 of 9 turns said there are no meetings today (five words). No time, no title, no "with", no tomorrow.
+- **Tomorrow (8.4.2, 8.4.39).** 3 of 3 stayed on the fast lane. Each names the three open meetings by title and by time, says they are tomorrow, and does not put them on today. No title is introduced with "with". The 11:30 meeting is included. The cancelled 04:00 meeting is not mentioned, and the word "cancelled" is not said.
+
+### Other acceptance items
+
+| Item | Previous re-review | Now |
+|---|---|---|
+| Outcome: answered aloud from the cached snapshot, locally, nothing sent to Claude | pass | **pass** (spoken via /api/talk/tts in all 12 runs; no Claude row in `llm_spend`) |
+| Cost ≤ $0 | pass | **pass** (spend delta $0 on every run). The other `llm_spend` rows in the window are background embed, compose and memory calls, about $0.000036, not these turns. |
+| Views: ask | not evidenced (idle `ask.png`) | **pass**: `views.ask` is `method: tool`, `tool: chat`, with the spoken answer, on all 12 runs (8.4.7, 8.4.47). No screenshot. |
+| Approvals: none required | pass | pass |
+
+### Hops
+
+Medians of the 9 today runs. Range in brackets. "Over by" is the median against the D27 cap.
+
+| Hop | D27 cap | Previous re-review (cap then) | Now | Over by | Result |
+|---|---|---|---|---|---|
+| talk-page: end of speech to transcription request | 150 ms | 108 ms (102-120) against 150 | **100 ms** (98-108) | none | **pass** |
+| whisper: transcribe | 550 ms | 565 ms (471-1912) against 250 | **450 ms** (347-549) per request, 361 ms (291-479) in whisper | none | **pass** |
+| fast-lane: route and stream the first sentence | 400 ms | 669 ms (418-2363) against 200 | **301 ms** (211-629) to the first piece (5 words). First token 202 (124-513) | none on the median; 1 of 9 is 229 ms over | **pass** |
+| voice: end of speech to first audio | 1500 ms | 1807 ms (1264-3608) against 700 | **1190 ms** (1056-1758). TTS first byte 341 (224-676) | none on the median; 1 of 9 is 258 ms over | **pass** |
+
+Per run (ms; whisper is request/in-whisper):
+
+| Run (Z) | talk-page | smart-turn (model) | whisper | first token | first piece | TTS 1st byte | voice | CPU | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| 02:08:53 | 98 | 231 (77) | 450/429 | 202 | 301 | 224 | 1073 | 38% | - |
+| 02:09:16 | 98 | 220 (43) | 549/326 | 124 | 211 | 345 | 1203 | 20% | - |
+| 02:09:40 | 100 | 144 (94) | 503/479 | 285 | 381 | 366 | 1350 | 9% | - |
+| 02:10:03 | 107 | 355 (185) | 377/361 | 187 | 301 | 341 | 1126 | 15% | - |
+| 02:10:26 | 99 | 289 (89) | 490/438 | 261 | 348 | 303 | 1240 | 8% | - |
+| 02:10:49 | 108 | 258 (48) | 409/385 | 124 | 226 | 373 | 1116 | 28% | - |
+| 02:11:12 | 98 | 380 (234) | 381/291 | 210 | 292 | 285 | 1056 | 8% | - |
+| 02:11:35 | 106 | 221 (44) | 528/304 | 148 | 227 | 329 | 1190 | 13% | - |
+| 02:11:57 | 106 | 299 (256) | 347/307 | 513 | 629 | 676 | 1758 | 11% | over the fast-lane and voice caps; no event-loop block in this minute |
+
+Tomorrow, not in the medians: voice 1548, 1190, 1375. The first of those is 48 ms over 1500. Fast-lane 378, 320, 352, all under 400. Whisper 633, 472, 377; the first is over 550. Those three are a longer answer, and the first came 15 s after the ninth today run.
+
+### Defects
+
+Checked live at 9cd5567, scored on the D27 caps:
+
+- **8.4.1** (tomorrow read as today): **verified live.** 9 of 9 today answers say there are no meetings today. Snapshot and brief put all four rows on tomorrow.
+- **8.4.2** (titles as attendees, the 11:30 left out): **verified live.** 3 of 3 tomorrow answers name all three open meetings, titles as titles, including 11:30, with no "with".
+- **8.4.3** (fast lane): **met** under the 400 ms cap. Median 301 (211-629).
+- **8.4.4** (whisper): **met** under the 550 ms cap. Median 450 (347-549).
+- **8.4.5** (talk-page): **still holds.** Median 100 (98-108).
+- **8.4.6** (first audio): **met** under the 1500 ms cap. Median 1190 (1056-1758).
+- **8.4.7** (hops and the Ask view): **verified live.** Four hops in the page's order. Ask is the tool check on every run.
+- **8.4.38** (event loop): **not closed.** One block of 1060 ms at 01:56:13Z, 13 s after the generation started routing, passes github, jira, memory-pages and memory-dream. From then through 02:14Z, including all 12 turns, no further block. The once-a-minute 1-3 s pattern from the last re-review did not repeat. A block over 1 s is still there, so the item stays open.
+- **8.4.39** (tomorrow handed off): **verified live.** 3 of 3 stayed on route `answer`.
+
+New:
+
+- **8.4.54** Tomorrow's answer leaves out the cancelled meeting. 3 of 3 turns name the three open meetings and say nothing about the 04:00 cancelled row.
+
+### Evidence
+
+Under `%LOCALAPPDATA%\personal-assistant\e2e\` (local; the transcripts hold real calendar text and are not in the repo):
+
+- `20261109T020850Z-whats-on-dry/`: the dry run.
+- `20261109T020853Z`, `020916Z`, `020940Z`, `021003Z`, `021026Z`, `021049Z`, `021112Z`, `021135Z`, `021157Z` (`-whats-on`): the 9 today runs.
+- `20261109T021220Z`, `021244Z`, `021307Z` (`-whats-on`): the three tomorrow runs.
+
+---
+
 ## Re-review, 2026-11-08
 
 **Verdict: FAIL, on latency only.** `local` and `facts` now pass. In 9 of 9 turns the answer

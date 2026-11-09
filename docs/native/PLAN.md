@@ -186,6 +186,17 @@ the card was created:
   the `local` cargo profile (release with thin LTO took 95 s). jarvisd's `bun build --compile` is
   a listed, skipped target until 4.1 gives it an entrypoint. Signing hook: `DEVTOOLS_SIGN_CMD` (7.4).
 - [ ] **Exit T:** all suites meet the targets table on Windows and Linux.
+  Factory suite, before: 325 s wall on the 16-core Linux host, 1 failure (`/pi` in the swebench
+  sandbox). `042f151` removes the waits that produced that: `gh auth token` plus the per-tick
+  ci-health `gh api` (~6 s/tick), the LiteLLM import on the missing-key path (~8–29 s), the
+  sandbox timeout tests' 30 s executor stall, and the oracle fixture's 15 s boot deadline
+  (a silent boot is retried 3×). D17: the toolchain test skips when `pi` is not on a path the
+  sandbox bind-mounts. Linux retime of `042f151` did not finish — the exec host name stopped
+  resolving (this laptop's Tailscale session was logged out) after the clone's first
+  `uv run pytest` died on a missing `sqlmodel` (`uv sync --all-extras` first). Windows, serial,
+  touched files only: deferral ticks 1.2–1.7 s (were 25–37 s), sandbox timeout tests ~1.2 s
+  (were ~30 s), missing-key tests 0.2–0.4 s. Oracle ablation tests on this laptop were still
+  34–84 s; the Linux 52 s case was the 15 s deadline, which this commit cuts to 3 s.
 
 ## Track Z: zero-downtime deploys (cross-cutting, starts in phase 0)
 
@@ -844,7 +855,7 @@ not in the Map is not done, and a new one gets added there first.
   and a quality rubric. Examples: `deepseek-pr` and `review-fix`: PR opened or updated, CI green,
   a code review finds no blocker, the diff stays in scope; `research`: sources cited and
   checked, no unsupported claims, the report answers the question asked; `whats-on`: answered
-  locally in under 0.7 s to first audio with correct facts; `teams-ask`: the ask lands on the
+  locally in under 1.5 s to first audio with correct facts (D27; was 0.7 s); `teams-ask`: the ask lands on the
   board with the right person, due date and source link. The drift test enforces the block's
   shape.
 - [ ] **8.2 `e2e <workflow>`** generalizes E4: runs any registered workflow against the live
@@ -917,6 +928,9 @@ not in the Map is not done, and a new one gets added there first.
     (1679fbd)
     Re-review (bd7b768): verified live. 9 of 9 turns say "There are no meetings today." on a
     Sunday evening with all four rows on Monday, and the brief prints TOMORROW.
+    Re-review (9cd5567): verified live again. 9 of 9 say there are no meetings today.
+    The snapshot and the brief put all four rows (04:00 cancelled, 10:00, 11:00, 11:30)
+    on tomorrow, and the brief has no TODAY section.
   - [x] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
     meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
     attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
@@ -925,6 +939,9 @@ not in the Map is not done, and a new one gets added there first.
     real formatter): 2 of 6 pass on the old prompt and snapshot, 6 of 6 now. (1679fbd)
     Re-review (bd7b768): verified by eval only (`pa eval answerer` 12 of 12). No live answer named
     a meeting: nothing was left today, and "what's on tomorrow?" hands off (8.4.39).
+    Re-review (9cd5567): verified live. 3 of 3 "what's on tomorrow?" turns answered
+    locally and named all three open meetings, titles as titles, with the 11:30
+    included and no "with <title>". The cancelled 04:00 is still left out (8.4.54).
   - [x] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
     of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
@@ -954,6 +971,8 @@ not in the Map is not done, and a new one gets added there first.
     and a shared prefix needs a re-fit).
     Met under D27: target reset to 400 ms from the idle measurement at 9cd5567 (median 280 of 14
     e2e runs, 229-447).
+    Re-review (9cd5567): median 301 ms of 9 (211-629) against 400. One run was 629.
+    First token median 202 (124-513).
   - [x] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
@@ -980,6 +999,8 @@ not in the Map is not done, and a new one gets added there first.
     overlap, and running them one after the other was no faster.
     Met under D27: target reset to 550 ms from the idle measurement at 9cd5567 (median 467 of 14
     e2e runs, 383-570; the deployed transcriber carries 14ec7d3 and d537f09).
+    Re-review (9cd5567): median 450 ms of 9 (347-549) against 550. All nine are under.
+    In whisper itself, median 361 (291-479).
   - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
@@ -992,6 +1013,8 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768, pa-voice restarted): verified live. The talk-page hop takes 108 ms
     (102-120, median of 9). Smart-turn's model takes 49-197 ms and the endpoint 144-319 ms,
     alongside whisper and always done before it.
+    Re-review (9cd5567): still holds. Talk-page median 100 ms (98-108). Smart-turn
+    144-380 ms (model 43-256) runs beside whisper.
   - [x] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
@@ -1017,6 +1040,8 @@ not in the Map is not done, and a new one gets added there first.
     first clause under 200 ms.
     Met under D27: target reset to 1500 ms from the idle measurement at 9cd5567 (median 1156 of 14
     e2e runs, 989-1550, p90 ~1390). The owner sees these numbers in the Map's `measured` notes.
+    Re-review (9cd5567): median 1190 ms of 9 (1056-1758) against 1500. One run was
+    1758 (TTS first byte 676). Kokoro's first byte otherwise 224-373, median 341.
   - [x] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
@@ -1035,6 +1060,8 @@ not in the Map is not done, and a new one gets added there first.
     Done (this commit): the /talk shot is dropped. Headless /talk never leaves "Tap once to enable
     Jarvis", so Ask is the tool check (summary.json views.ask, method tool, the spoken answer).
     Not run live.
+    Re-review (9cd5567): verified live. All 12 summaries have views.ask method tool,
+    tool chat, and the spoken answer. No ask.png.
   - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
     2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
@@ -1042,6 +1069,9 @@ not in the Map is not done, and a new one gets added there first.
     /api/cli) ([acceptance/research.md](acceptance/research.md)).
     Research re-review (`dev-tools:r0003`): 002f99e's routing is verified live (route 58,
     prepare 30, brief 48 ms). The hop is worse, though: 11355 ms, 10864 of it the submit (8.4.45).
+    Research re-review (`dev-tools:r0004`, 9cd5567): 2057 ms. Laps: route 33, prepare 19,
+    brief 14, serve 1662, submit 1704, follow 255. The post-write stall is gone (8.4.45);
+    serve is still most of the hop, 1.1 s over the 1 s target (D27).
   - [ ] **8.4.9 research: approval to "started" takes ~2.1 s (target 1 s), and the e2e reads
     11.5 s.** `factory_start` returned at 19:52:11.3, serve woke and dispatched at 19:52:12, and the
     job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
@@ -1055,6 +1085,9 @@ not in the Map is not done, and a new one gets added there first.
     Research re-review (`dev-tools:r0003`): the measurement is verified live. The e2e's 7021 ms
     is `started_at` less the tool's return. The hop is still open: serve's wake dispatch came
     ~10.3 s after the job was written (8.4.45), and then 5.7 s passed before `started_at`.
+    Research re-review (`dev-tools:r0004`, 9cd5567): 1416 ms, `started_at` less the tool's
+    return. Wake dispatch is in the same second as the write; `started_at` is 1.7 s after
+    `created_at`. Still 0.4 s over 1 s (D27).
   - [ ] **8.4.10 research: the worker hop is not measured, and PA learns state changes 6-7 s late.**
     The job ended at 19:53:35.25, serve pushed `done` at 19:53:41, and PA recorded it at 19:53:41.14
     (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at
@@ -1068,6 +1101,11 @@ not in the Map is not done, and a new one gets added there first.
     factory time to the run event, or to the Plan card once the job is terminal.
     A missing Plan card leaves the hop unmeasured. Where serve's push waits is
     still open.
+    Research re-review (`dev-tools:r0004`, 9cd5567): measured live. The hop is 6929 ms,
+    the max: `in_progress` reached the run row 6929 ms after the job-status stamp (PA
+    logged "factory runs updated" at 02:04:11, not a push settle; serve had pushed
+    `in_progress` at 02:04:03 and again at 02:04:08). `done` reached the Plan card in
+    373 ms (8.4.46). Both miss 200 ms. The non-terminal path is the one that still waits.
   - [x] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
     --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
     "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
@@ -1084,6 +1122,8 @@ not in the Map is not done, and a new one gets added there first.
     left running. Not yet on a real run.
     Research re-review (`dev-tools:r0003`): verified live for Plan, Build and Run, each ready in
     ~10 s with the run's data in it. The Ask shot never gets ready (8.4.47).
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified again. Plan ready in 10.0 s,
+    Build in 10.2 s, Run in 10.2 s, each with this run's data.
   - [x] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
@@ -1101,6 +1141,8 @@ not in the Map is not done, and a new one gets added there first.
     card or Claude Code's prompt UI.
     Research re-review (`dev-tools:r0003`): verified live. The e2e approve (23:34:11.339) was
     followed by the chat call (23:34:11.343), and `pa audit verify` passes.
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified again. Approve at 02:04:00.276,
+    chat call at 02:04:00.279.
   - [x] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
     runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
     path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
@@ -1114,6 +1156,9 @@ not in the Map is not done, and a new one gets added there first.
     Unit-tested; not run on the live stack, because reviewers were running there.
     Research re-review (`dev-tools:r0003`): verified live. `--sweep --marker` killed the follow and
     researcher sessions and dropped card #6778. Another reviewer's live run was left alone.
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified again. The run's own cleanup
+    killed the follow and researcher sessions and dropped card #6780. Both sessions are
+    gone, and the card is `dropped`.
   - [ ] **8.4.14 deepseek-pr: the tool call takes 6.7 s (target 1 s excluding model time).** Card at
     19:56:39.0, compose's model call ended 19:56:44.74 (2954 ms), PA "dispatched" 19:56:45.74: about
     2.8 s before compose and 1.0 s of submit, so ≈3.7 s without the model. Measured on `c0c2a3e`,
@@ -1497,6 +1542,11 @@ not in the Map is not done, and a new one gets added there first.
     `backup` restore `spawnSync` tar (not the hourly dump). Dashboard pages `readFileSync` the HTML
     per request. `common.runSync` remains for the Linux doctor (`xdg-mime`, `notify-send --help`).
     Not re-checked against the live supervisor log.
+    Re-review (9cd5567): not ticked. From the generation that started routing at
+    01:56:00Z through 02:14Z, supervisor.log has one "event loop blocked" line:
+    1060 ms at 01:56:13Z, passes github, jira, memory-pages, memory-dream. None
+    during the 12 turns (02:08-02:13Z). The once-a-minute 1-3 s pattern was not
+    repeated; a block over 1 s still is.
   - [x] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
     session (p(answer_here) 0.775-0.78, threshold 0.85), although the snapshot lists tomorrow's
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
@@ -1513,6 +1563,8 @@ not in the Map is not done, and a new one gets added there first.
     turns the guard already hands off). `pa eval answerer` 12 of 12. Not covered: turns with
     history; in probes a few tomorrow questions after two turns of chat still handed off
     (p 0.28-0.43). (aa04496)
+    Re-review (9cd5567): verified live. 3 of 3 tomorrow turns took route answer
+    (p 0.838, 0.987, 0.987) on the local model. None handed off.
   - [x] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
     machine, `screens.capture` for Build (`/factory`) never settles. When the 60 s kill timer ends
     the browser, nothing is left on the event loop, and Node exits 0 with the promise pending. So
@@ -1603,7 +1655,7 @@ not in the Map is not done, and a new one gets added there first.
     end is being confirmed, reaches the fake PA in 216 ms. With the confirm on the watch thread
     the same test fails at 4234 ms. (this commit: `fix(software-factory): confirm a job's end
     off the push-watch thread`)
-  - [ ] **8.4.45 research: the factory submit stalls ~9 s after the job is written.** In the
+  - [x] **8.4.45 research: the factory submit stalls ~9 s after the job is written.** In the
     research re-review, `factory_start`'s submit lap was 10864 ms. The factory wrote the job at
     23:34:13.697 (`created_at`), 2.2 s into the submit. PA logged the factory's answer at
     23:34:22.388, 8.7 s later. Serve logged `push: dev-tools:r0003=queued` and `dispatch (wake)`
@@ -1619,7 +1671,11 @@ not in the Map is not done, and a new one gets added there first.
     1 s (`test_research_submit_answers_while_factory_db_is_locked`): `_submit_task`
     does not take the tick's db lock. The live 8.7 s was not reproduced; the next
     run splits it between `ms.serve` and the rest of the lap.
-  - [ ] **8.4.46 research: the Plan card shows a finished job as running for ~2 min.** The job
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified fixed live. The job was
+    written at 02:04:02.039 and PA logged the answer at 02:04:02.334, 296 ms later
+    (8.7 s before). `ms.serve` is 1662 of the 1704 ms submit. What remains over 1 s
+    is that serve time (8.4.8), not a stall after the write.
+  - [x] **8.4.46 research: the Plan card shows a finished job as running for ~2 min.** The job
     ended at 23:35:58.56, and serve pushed `done` at 23:35:59. Build's shot at 23:36:27 showed it
     done. Plan's shot at 23:36:16 still read "job dev-tools:r0003 · in_progress / step 63
     researcher · running", because the card chain reads the run row. PA ended the row ("factory
@@ -1631,6 +1687,12 @@ not in the Map is not done, and a new one gets added there first.
     The e2e now times it (this commit): a terminal worker hop is the Plan card's
     board event minus the factory transition, and a missing card does not pass
     on the run row. Not run live.
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified fixed live. PA logged
+    "factory runs settled from a push" at 02:05:34.462, 375 ms after `ended_at`.
+    The e2e times `done` to the Plan card at 373 ms, and the shot reads
+    "job dev-tools:r0004 · done" and "run #32 (done)" (it read `in_progress` for
+    125 s before). The same shot still labels step 71 "researcher · running"; a
+    later read of the chain has that step `ok`.
   - [x] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
     "loading…" (the page shows "Tap once to enable Jarvis"). So the shot always waits its full
     20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool
@@ -1639,6 +1701,9 @@ not in the Map is not done, and a new one gets added there first.
     Done (this commit): the shot is dropped. views.ask is method tool — chat (the spoken answer)
     for whats-on, factory_job for research and deepseek-pr, factory_continue for review-fix.
     teams-ask lists no ask view. Not run live.
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified live. views.ask is
+    method tool, tool factory_job, with an excerpt of the done job. There is no
+    Ask screenshot and no 20 s wait.
 - [ ] **8.4.48 factory serve: unresponsive for ~4 min after a restart.** Work stack, 2026-11-08
   23:51-23:56Z, right after it restarted onto fe23854: the new serve held 7330 and its lease but
   answered no `/api/cli` call (20-60 s timeouts) and wrote nothing to serve.log until its first
@@ -1711,6 +1776,17 @@ not in the Map is not done, and a new one gets added there first.
     out of the blocker pass (tasks and candidates) and the context pass. A stored verdict is
     ignored when read if its task or blocker is such a card, or its why carries the marker or a
     phrase of that card's ask or title. The row stays. Not run live.
+    Research re-review (`dev-tools:r0004`, 9cd5567): verified live. The Plan page
+    text does not show the leaked blocker phrase. The only On-me card whose text
+    carries an e2e marker is this run's own card.
+  - [ ] **8.4.54 whats-on: tomorrow's answer leaves out the cancelled meeting.**
+    On the work stack at 9cd5567, Sunday evening, the snapshot lists three open
+    meetings tomorrow (10:00, 11:00, 11:30) and a cancelled one at 04:00. 3 of 3
+    "What's on tomorrow?" turns named the three open meetings, titles as titles,
+    and did not mention 04:00 or that a meeting was cancelled
+    ([acceptance/whats-on.md](acceptance/whats-on.md), re-review). The answerer
+    rule says a cancelled meeting is said to be cancelled. Name it, or say how
+    many were cancelled, when that day is asked for.
 - [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
   checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
   backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`
