@@ -1,5 +1,87 @@
 # Acceptance review: `review-fix` (plan 8.3)
 
+## Re-review, 2026-11-09
+
+**Verdict: FAIL, on time. The outcome happened.** The factory updated the same PR in place.
+Both review comments are fixed, the push is a fast-forward, the job opened no other PR,
+nothing was merged, and CI on the final head is green. Cost is $0.0214, under the $0.05
+ceiling (D26). Two hops miss their 1 s targets: the tool call is 4418 ms without the model,
+and approval to "started" is 1793 ms. The e2e wrote `summary.json`, took its screenshots,
+and cleaned up. It exited 1 for those two hops.
+
+| | |
+|---|---|
+| Date | 2026-11-09, 02:08-03:32Z |
+| Stack | work. `--on personal` is not a `PA_MACHINES` name (`--on personal: not in PA_MACHINES`), so the dry run and the real run were on this machine. PA `GET /api/version` is `9cd5567`. |
+| Commit served | `9cd55676963b2e09580f8cb7cf45dcbfe0279f28` |
+| Input | [xvanov/dev-tools#75](https://github.com/xvanov/dev-tools/pull/75), a draft PR opened as the repo owner from a worktree of this clone: branch `e2e/review-fix-dummy-20261109T0206` off `main`, adding `personal-assistant/src/util/e2eClip.ts` (two deliberate flaws) and a happy-path test. Head `be2fde6`. Closed after the run, not merged, branch deleted. |
+| Job | `dev-tools:021` (PA run 33, no card), `claude_session`, delivery `pr`, pipeline `solo`, `base: {branch: e2e/review-fix-dummy-20261109T0206, pr: 75, into: main}` |
+| Reviewer | a fresh session that did not implement the workflow or its fixes (D10) |
+| Criteria | `architecture.json` → `examples[review-fix].acceptance` |
+
+### The input
+
+One `COMMENT` review (GitHub refuses "request changes" on your own PR) with two inline threads on `e2eClip.ts`:
+
+1. Line 11: `s.slice(0, limit) + '...'` returns `limit + 3` characters and uses three ASCII dots. Cut to `limit - 1` and append one `…`, so the result is exactly `limit` long. Test `clipLabel('hello world', 5)` is `'hell…'` and 5 long, and limit 1 returns `'…'`.
+2. Line 8: guard `limit`. `limit = 0` returns `'...'`, a negative limit drops characters from the end and still appends `'...'`, and `1.5` is truncated by `slice`. Throw `RangeError` unless `limit` is an integer ≥ 1, and test 0, -1 and 1.5.
+
+### How it was run
+
+1. `node bin/pa.js help e2e`, then `node bin/pa.js e2e review-fix --pr 75 --repo xvanov/dev-tools --dry-run --on personal`. That refused at once: `personal` is not in `PA_MACHINES`.
+2. The same dry run without `--on`, on the work stack, at 02:08:42Z. **14 of 14 checks passed**, including the four PR checks (open, from the repo, 2 of 2 threads unresolved), "factory ticks app dev-tools", and "claude logged in on the factory machine". The effective ceiling read from `GET /api/workflow-limits` is $0.05.
+3. The real run, once, at 02:09:00Z: `node bin/pa.js e2e review-fix --pr 75 --repo xvanov/dev-tools --stack work --report <file>`. It drove `factory_continue` through the e2e approval, waited for the job, wrote `summary.json` and four screenshots, killed the sessions, and exited 1. The PR was left open, then closed here.
+4. One setup fault, separate from the product: the dummy branch was checked out in a worktree of the same clone the factory uses. The first three dev attempts (02:10-02:15Z) failed with `fatal: 'e2e/review-fix-dummy-20261109T0206' is already used by worktree`. The worktree was removed at 02:19Z. The dev step then ran. Those 11 minutes are not the product's.
+
+### Rubric
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| `updated`: the same PR is updated; no new PR, nothing merged | **pass** | Head `be2fde6` became `2db99ba`. The e2e's compare of old to new is `ahead` (+10), `behind` 0: a fast-forward, no force push. Same branch. The job's only PR is #75 (`pr_urls`). #78 opened meanwhile from another branch and was not counted (8.4.42). `mergedAt` null; the PR stayed an open draft until it was closed here. |
+| `ci`: CI is green on the new head | **pass**, with a note | The e2e check is `CI SUCCESS` on `2db99ba`. The input head was not green: jarvisd's typecheck failed on `compose.ts` and `ledger.ts`, the same errors as main's push of `9cd5567` (8.4.29, 8.4.56). The personal-assistant jobs on that head passed. The final head went green only after the factory merged a later main (`6ca8e02`, the typecheck fix) at 03:21Z. The branch's own fix commit does not touch those files. |
+| `review`: no blocker, and each comment is addressed or answered | **pass** | Both are fixed in `878e7d2` and still present at `2db99ba`. (1) The slice is `limit - 1` plus one `…`, and the tests check `'hell…'` at limit 5 (length 5) and `'…'` at limit 1. (2) `RangeError` unless `limit` is an integer ≥ 1, tested for 0, -1 and 1.5. The threads stay unresolved; the commit body names each. |
+| `scope`: the diff stays inside the review comments | **pass**, with a note | Against `main`, the PR is only `e2eClip.ts` and its test. The fix commit touches only those two files. The factory also merged `origin/main` twice, unasked (`f16aa13` at 02:20Z, four docs files; `2db99ba` at 03:21Z, which is what carried the typecheck fix onto the branch). No review comment asked for that. The second dev session (the CI-fix, 03:22-03:25Z) pushed no commit of its own. |
+
+### Other acceptance items
+
+| Item | Result | Evidence |
+|---|---|---|
+| Outcome: the existing PR updated in place (fast-forward) so its comments are resolved, on the subscription | **pass** | Updated in place, by fast-forward, both comments fixed, delivery `pr` (not `auto_merge`). The brief says "Continues PR #75" and its stop condition is to commit onto that branch, open no new PR, and never merge (8.4.27). Compose dropped a constraint about opening a PR and a question about the comments before render. |
+| Cost ≤ $0.05 | **pass** | `job status`: `cost_usd` 0.0214, `subscription_equiv_usd` 0.9634. pm $0.0021 and sm $0.0025 (DeepSeek-V4-Flash), tech_writer $0.0098 and, on the CI-fix, $0.0070 (Kimi-K2.7-Code). Both dev steps were $0 (`claude_session/claude-opus-5-5`). The equivalent is high because the dev model was Opus, twice; it is recorded, not billed (D26). |
+| Approvals: `factory_continue` | **pass** (exercised) | Audit seq 7 `allow` (`approve-chat-actions`) on the e2e channel, then seq 8 `ask` (`chat-actions-ask`) for the call. |
+| View: build | **pass** | `/api/factory` listed `dev-tools:021` under Needs you while CI was red, with `base {pr: 75}`, `ticked: true` (8.4.28). The screenshot is `ready: true` (devtools, waited 10163 ms). |
+| View: run | **pass** | Four step sessions plus the follow session. Two run screenshots are `ready: true` (waited about 10 s each). |
+| View: ask | **pass** (tool) | `factory_continue` answered `started: true`, `continues {pr: 75}`, runtime `claude_session`, delivery `pr`. |
+
+### Hops
+
+The e2e's numbers are from `summary.json`. The split of the tool call is the dispatch log's `ms`. Clock of the job is `job status` and the story log.
+
+| Hop | Target | Measured | Detail | Result |
+|---|---|---|---|---|
+| jarvis: tool call (`factory_continue`) excluding model time | 1000 ms | **4418 ms** (wall 6811 ms, less compose's 2393 ms) | route 209, prepare 16, gather 1502, **submit 2480** (serve 2448 of it), follow 203. Was 4540 ms without the model on the previous re-review (submit 3483), and 8300 ms on the first (submit 7056). | **fail** |
+| dispatcher: approval to "started" | 1000 ms | **1793 ms** from the tool's return to the pm step (02:09:11.566, `runs[].started_at`) | Serve pushed `queued` in that same second and `triaging` at 02:09:38. Was 3204 ms on the previous re-review. | **fail** |
+| runtime-claude: the session fixes the comments | unbounded | **156 s** for the fixing dev step (02:21:13.531-02:23:49.558). The e2e hop is **4921970 ms** | The e2e times first `runs[].started_at` to the job's `updated_at` (02:09:11 to 03:31:13): the whole job, including the CI-fix. The second dev step (03:22:17-03:25:07, 170 s) merged main and pushed no further commit. | reported |
+| github: CI watch on the new head to green | unbounded, ≤ 3 CI-fix cycles | e2e **2809 ms**, which is the poll after the job had already seen green. The checks themselves ran **03:25:59-03:28:15Z** (136 s; jarvisd on Windows finished at 03:28:15). The watch reported green at 03:31:13, **322 s** after the push (03:25:51) | 1 CI-fix cycle. The cycle could not start for 50 min (8.4.58). 0 of the cap of 3 were spent on a code change. | reported (within bounds) |
+| worker: state change to the board redraw | 200 ms | **264 ms** from the story's `delivered` event (03:31:13.566) to PA's "factory runs settled from a push" (03:31:13.830). Serve's push of `done` is the same second. | The e2e still does not time this hop (`ok: null`, "measured by E3/0.4, not by this run"). The redraw in the browser was not timed. The 27.3 s poll gap from the previous re-review is gone (8.4.44). 264 ms is the settle, and it is over 200 ms. | **not measured** by the e2e; the log sample is over the target |
+
+For D27, the numbers to reset from, on this machine, one run: tool call without the model 4418 ms (gather 1502, submit 2480 of which serve is 2448); approval to started 1793 ms; the fixing dev step 156 s; CI checks 136 s and the factory's watch 322 s from the push to "CI green" (the e2e's 2809 ms is not that watch); push to PA settle 264 ms, redraw not timed.
+
+### Defects (filed under 8.4 in PLAN.md)
+
+1. **8.4.26** still open. 4418 ms without the model, against 1 s. Submit alone is 2480 ms, and 2448 ms of that is factory serve.
+2. **8.4.29** not ticked. The dev-tools base was not green when the job started. The final head went green only by merging a later main.
+3. **8.4.58** A CI-fix cannot reclaim a worktree whose terminal is still there. Nine ticks from 02:30Z to 03:16Z failed with WinError 32. `1f99fe1` on main is that fix; this factory was not running it.
+
+Still open and not filed again: approval to "started" is 1793 ms (the previous re-review left the same gap unfiled). Not filed again: the factory merges `main` into a PR it continues, unasked.
+
+### Evidence
+
+- `<PA data dir>/e2e/20261109T020842Z-review-fix-dry/summary.json` (14/14).
+- `<PA data dir>/e2e/20261109T020900Z-review-fix/summary.json`, transcripts, and four screenshots, all `ready: true`.
+- `dev-tools:021` direction `021-fix-the-unresolved-review-comments-on-pr-75-automated-e2e-ru` (brief, thread snapshot).
+- On GitHub: PR #75 (review 5820886558, commits `878e7d2` and `2db99ba`, the closing comment). CI runs 42549199414 (input head, jarvisd red) and the final head's checks (03:25:59-03:28:15Z, success).
+
 ## Re-review, 2026-11-08
 
 **Verdict: FAIL, on cost and time. The outcome happened.** The factory updated the same PR in

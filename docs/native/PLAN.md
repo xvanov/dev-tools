@@ -1390,6 +1390,9 @@ not in the Map is not done, and a new one gets added there first.
     process). A real submit still pays the factory process and one GitHub round trip (1133 ms
     median on the work laptop, 3483 ms on the personal machine), which alone sits at or over the
     1 s target. Not ticked.
+    review-fix re-review (dev-tools:021, 9cd5567): tool call 4418 ms without the model (wall
+    6811, compose_model 2393). route 209, prepare 16, gather 1502, submit 2480 (serve 2448 of
+    it), follow 203. Was 4540 ms without the model last time (submit 3483). Still over 1 s.
   - [x] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
     reads "Push and open a DRAFT pull request", while the factory's appended section says it
     "updates that PR (it opens no new one)". Its facts say the request "gives no detail about what
@@ -1406,6 +1409,9 @@ not in the Map is not done, and a new one gets added there first.
     (3883b97)
     Re-review (b674e67): verified live. `dev-tools:007`'s brief says "Continues PR #66", and its
     stop condition is to commit onto the PR's branch, open no new PR and never merge.
+    review-fix re-review (dev-tools:021, 9cd5567): verified live. The brief says "Continues PR
+    #75" and stops with commit onto that branch, open no new PR, never merge. Compose dropped
+    a constraint about opening a PR and a question about the comments.
   - [x] **8.4.28 review-fix: Build hides which PR a continuation works on.** `/api/factory` gives
     `base: null` and `prs: null` for `sacrifice:131`, while `job status` and `factory_job` have
     `base {branch, pr: 418}`. A job no ticker serves is grouped under running. Show the continued
@@ -1415,6 +1421,8 @@ not in the Map is not done, and a new one gets added there first.
     you as "waiting: app not ticked" (8.4.24, 5f19b68).
     Re-review (b674e67): verified live. `/api/factory` gives `dev-tools:007` `base {pr: 66}` and
     `ticked: true`.
+    review-fix re-review (dev-tools:021, 9cd5567): verified live. `/api/factory` gives
+    `base {pr: 75}` and `ticked: true`, and while CI was red the job was under Needs you.
   - [ ] **8.4.29 review-fix: sacrifice's `main` is red today.** On the PR's base, pytest fails 3 of
     1597 in `tests/test_chat_criteria_coercion.py` (expects `2026-08-15T18:00:00-04:00`, gets
     today's date). `main`'s head was green on 15 August. No sacrifice PR can pass `ci`, and a CI-fix
@@ -1424,6 +1432,12 @@ not in the Map is not done, and a new one gets added there first.
     both factories tick. Not on xvanov/sacrifice: serve does not tick it, its delivery default is
     auto_merge, and its `main` is red on date-dependent tests. Fixing sacrifice's tests is out of
     scope for this plan.
+    review-fix re-review (dev-tools:021, 9cd5567): not ticked. The run was a dummy PR in
+    xvanov/dev-tools, as decided. The base was not green: the input head and main's push of
+    9cd5567 both failed the jarvisd typecheck (`compose.ts`, `ledger.ts`), which a
+    personal-assistant change runs. The job's CI check passed only after the factory merged a
+    later main (6ca8e02) that fixed that typecheck. The branch's own fix commit does not touch
+    those files.
   - [x] **8.4.30 teams-ask: no real-run driver, and `--test-chat` is ignored.** `pa e2e teams-ask
     --test-chat <id>` exits "not automated yet" (`RUNNERS` has no teams-ask; `o.testChat` is read
     and never used). The dry run doesn't look at the chat either. Nothing in the PA or the e2e can
@@ -1603,6 +1617,8 @@ not in the Map is not done, and a new one gets added there first.
     timeout. The CLI also exits 1 when a run's `summary.json` is missing. The same page now
     settles in 41 s with the fallback's shot and leaves no browser behind. (this commit:
     `fix(personal-assistant): never let a screenshot stall an e2e run`)
+    review-fix re-review (dev-tools:021, 9cd5567): verified live. The run wrote summary.json
+    and four screenshots (all ready), cleaned up, and exited 1 for the two slow hops.
   - [x] **8.4.41 review-fix: a `claude_session` job is not free.** Resolved by decision D26 (d3e3061): the ceiling for subscription workflows is $0.05 a job, and the factory's planning and docs steps stay metered on Flash. `dev-tools:007` cost $0.0271
     metered. pm ($0.0016) and sm ($0.0020) ran on azure/DeepSeek-V4-Flash, and tech_writer
     ($0.0236) on azure/Kimi-K2.7-Code. Only dev ran on the subscription ($0, $0.0131
@@ -1610,6 +1626,8 @@ not in the Map is not done, and a new one gets added there first.
     the Map's review-fix says "Billed to the subscription: cost_usd 0" with a $0 ceiling, so the
     cost criterion cannot pass. Run a `claude_session` solo job's other steps on the subscription
     too (or skip them: tech_writer's spec landed nowhere in the PR), or change the Map's cost.
+    review-fix re-review (dev-tools:021, 9cd5567): verified live. cost_usd $0.0214 against $0.05
+    (pm $0.0021, sm $0.0025, tech_writer $0.0098 and $0.0070). Both dev steps $0. subscription_equiv_usd $0.9634 (Opus, twice; recorded, not billed).
   - [x] **8.4.42 review-fix: the "no new PR" check counts anyone's PR.** `reviewFixChecks`
     compares the repo's newest PR number before and after. During the run, the work stack's
     factory opened #69 in xvanov/dev-tools (22:45:13Z, a story-65 branch), so the check would have
@@ -1622,6 +1640,8 @@ not in the Map is not done, and a new one gets added there first.
     detail, not counted. On #66's live answer the check passes with "the job's only PR is #66;
     #69 opened meanwhile from other branches, not counted". (this commit:
     `fix(personal-assistant): count only the job's own PRs in review-fix`)
+    review-fix re-review (dev-tools:021, 9cd5567): verified live. The check passed with "the
+    job's only PR is #75; #78 opened meanwhile from other branches, not counted".
   - [x] **8.4.43 review-fix: the dry run's claude check fails over `--on`.** `claudeAuth` runs
     bare `claude auth status` through the factory machine's termhub exec, whose PATH lacks
     `~/.local/bin`, so it fails with `spawn claude ENOENT`. claude is installed there and logged in
@@ -1635,6 +1655,8 @@ not in the Map is not done, and a new one gets added there first.
     laptop with `~/.local/bin` taken off PATH: bare `claude` gave `spawn claude ENOENT`, the
     resolved path answered with a claude.ai login. (this commit:
     `fix(personal-assistant): find claude off PATH in the e2e dry run`)
+    review-fix re-review (dev-tools:021, 9cd5567): not re-checked over `--on` (`personal` is
+    not a PA_MACHINES name). The work-stack dry run's claude check passed.
   - [x] **8.4.44 review-fix: the job's end is not pushed.** At the job's end serve pushed
     `dev-tools:007=in_progress` (22:45:23.099). PA's run row ended, and "Factory run #8: done"
     was raised, only at its next poll (22:45:50.209): 27.3 s after the job's `done`, against
@@ -1671,6 +1693,10 @@ not in the Map is not done, and a new one gets added there first.
     end is being confirmed, reaches the fake PA in 216 ms. With the confirm on the watch thread
     the same test fails at 4234 ms. (this commit: `fix(software-factory): confirm a job's end
     off the push-watch thread`)
+    review-fix re-review (dev-tools:021, 9cd5567): the push landed. Serve pushed `done` in the
+    same second as the story's delivered event (03:31:13.566); PA logged "settled from a push"
+    at 03:31:13.830, 264 ms later. The 27.3 s poll gap is gone. The e2e still does not time
+    this hop, and 264 ms is the settle, not the browser redraw, against 200 ms.
   - [x] **8.4.45 research: the factory submit stalls ~9 s after the job is written.** In the
     research re-review, `factory_start`'s submit lap was 10864 ms. The factory wrote the job at
     23:34:13.697 (`created_at`), 2.2 s into the submit. PA logged the factory's answer at
@@ -1834,6 +1860,14 @@ not in the Map is not done, and a new one gets added there first.
     spends past the ceiling.** The e2e scored $1.4232 and exited. The factory's watch
     started at 02:19:21Z and redispatched a dev at 02:25:04Z (cycle 1 of 3, step 51062).
     `job cancel` at 02:28:50Z recorded cost_usd $2.336, over the $2 ceiling.
+  - [ ] **8.4.58 review-fix: a CI-fix cannot reclaim a worktree a terminal still holds.**
+    On the live work factory, `dev-tools:021`'s first dev session finished at 02:23:49Z and
+    its terminal stayed in the story worktree. Every tick from 02:30:48Z through 03:16:01Z
+    rolled the CI-fix back: renaming that directory failed with WinError 32, a process still
+    held it. The 03:21Z attempt got the directory and the job went on. A fix is on main
+    (1f99fe1: create the checkout beside the held directory and reuse it) but this factory
+    was not running that commit while the ticks failed. Not verified live
+    ([acceptance/review-fix.md](acceptance/review-fix.md), re-review).
 - [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
   checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
   backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`
