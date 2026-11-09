@@ -1569,6 +1569,10 @@ not in the Map is not done, and a new one gets added there first.
   interval tick ended. Suspect: fe23854's end-of-job GitHub confirm run for every finished job at
   start, on the watch thread, holding what the API needs. Serve must answer within its warm budget
   from start; confirm only jobs that ended since the last push, off the API path.
+  Re-checked 2026-11-09 00:43Z on a deliberate restart (5d98440 -> 77be77a): the API was up 7 s after
+  the restart and `job list` answered in 2.8 s. The quiet log was the normal 300 s gap between
+  interval ticks, not a hang; the 20-60 s API timeouts at 23:54Z stay unexplained (the machine ran
+  several agents' test suites then). Left open to watch at the next restarts.
   Against the suspect: the first check after a start seeds jobs that had already ended without
   asking GitHub (`test_jobs_that_ended_before_serve_started_are_not_announced` asserts no reads),
   so only jobs that end afterwards are confirmed. The confirm never ran on the API's threads, and
