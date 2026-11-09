@@ -634,8 +634,9 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
 
 - Local dev loop (tests until green): yes. Chain dev retries; solo / `claude_session` run
   in-conversation gate rounds.
-- Local review loop: yes for `chain` (reviewer ↔ dev, 3 cycles) and `api`-runtime `solo`
-  (2 cycles: one fix round). `claude_session` `solo` has no reviewer.
+- Local review loop: yes for `chain` (reviewer ↔ dev, 3 cycles; a medium finding is a
+  cycle) and `api`-runtime `solo` (2 cycles: one fix round, and only for a high-severity
+  finding; medium and low are posted on the PR). `claude_session` `solo` has no reviewer.
 - CI watch + CI-fix loop on the PR: yes. `draft_pr`/`pr` watch before delivery; `auto_merge`
   fixes before merging; at most 3 cycles. The watch (and `ci` in `factory job status`, and
   the `push_to_main` main-green hold) counts only the checks that decide something

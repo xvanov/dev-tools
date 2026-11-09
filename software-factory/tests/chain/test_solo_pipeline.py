@@ -332,6 +332,175 @@ def test_reviewed_solo_story_gets_one_fix_round_then_parks(temp_root: Path) -> N
     assert "hit hard cap of 2 cycles" in (final.error or "")
 
 
+class _Pull:
+    def __init__(self) -> None:
+        self.comments: list[str] = []
+
+    def create_issue_comment(self, body: str) -> None:
+        self.comments.append(body)
+
+    def add_to_labels(self, label: str) -> None:
+        return None
+
+
+class _Github:
+    def __init__(self, pull: _Pull) -> None:
+        self.pull = pull
+
+    def get_repo(self, _name: str) -> Any:
+        pull = self.pull
+
+        class _Repo:
+            def get_pull(self, _number: int) -> _Pull:
+                return pull
+
+        return _Repo()
+
+
+def _notes_fixture(**over: Any) -> dict[str, Any]:
+    fixture: dict[str, Any] = {
+        "verdict": "request_changes",
+        "summary": "nits",
+        "findings": [
+            {
+                "severity": "medium",
+                "criterion": "correctness",
+                "location": "src/a.py:10",
+                "what": "no cited precedent",
+                "fix_suggestion": "cite server.ts",
+            },
+            {
+                "severity": "low",
+                "criterion": "style",
+                "location": "src/a.py:12",
+                "what": "missing trailing newline",
+            },
+        ],
+        "test_quality_score": 0.9,
+        "test_quality_findings": [],
+        "comments_to_post": [{"file": "src/a.py", "line": "1", "body": "already noted"}],
+    }
+    fixture.update(over)
+    return fixture
+
+
+def test_solo_review_without_a_blocker_posts_notes_and_continues(temp_root: Path) -> None:
+    """A medium and four-style lows must not buy a dev round (PLAN 8.4.50)."""
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    pull = _Pull()
+    story = _story_at(StoryState.TESTS_GREEN, temp_root, github_pr_number=72)
+    res = handle_review(
+        story,
+        _app(temp_root),
+        temp_root,
+        dry_run=False,
+        db_path=db,
+        fixture=_notes_fixture(),
+        github_client=_Github(pull),
+    )
+    assert res.next_state is StoryState.REVIEWER_DONE
+    assert res.payload["verdict"] == "approve"
+    bodies = [c["body"] for c in res.payload["comments_to_post"]]
+    assert "already noted" in bodies
+    assert any("no cited precedent" in b and "cite server.ts" in b for b in bodies)
+    assert any("missing trailing newline" in b for b in bodies)
+    after = get_story(story.id or 0, db)
+    assert after is not None and after.reviewer_cycles == 0
+    assert orch._dispatch_for_story(after) == "tech_writer"
+    posted = "\n".join(pull.comments)
+    assert "no cited precedent" in posted
+    assert "missing trailing newline" in posted
+    assert "already noted" in posted
+    assert _events(after, temp_root, "solo_review_notes_only")
+
+
+def test_solo_high_finding_still_spends_the_fix_round(temp_root: Path) -> None:
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.TESTS_GREEN, temp_root)
+    findings = _notes_fixture()["findings"] + [
+        {
+            "severity": "high",
+            "criterion": "correctness",
+            "location": "src/cli/version.ts:4",
+            "what": "git runs without a cwd",
+        }
+    ]
+    res = handle_review(
+        story,
+        _app(temp_root),
+        temp_root,
+        dry_run=True,
+        db_path=db,
+        fixture=_notes_fixture(findings=findings),
+    )
+    assert res.next_state is StoryState.REVIEWER_REQUESTED_CHANGES
+    after = get_story(story.id or 0, db)
+    assert after is not None and after.reviewer_cycles == 1
+    bodies = [c["body"] for c in res.payload["comments_to_post"]]
+    assert any("no cited precedent" in b for b in bodies)
+    assert not any("without a cwd" in b for b in bodies)
+
+
+def test_solo_blocking_severity_and_a_low_score_still_spend_the_round(temp_root: Path) -> None:
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    app = _app(temp_root)
+    blocking = _story_at(StoryState.TESTS_GREEN, temp_root, slug="block")
+    res = handle_review(
+        blocking,
+        app,
+        temp_root,
+        dry_run=True,
+        db_path=db,
+        fixture=_notes_fixture(
+            findings=[
+                {
+                    "severity": "blocking",
+                    "location": "src/a.py:1",
+                    "what": "ships the wrong port",
+                }
+            ]
+        ),
+    )
+    assert res.next_state is StoryState.REVIEWER_REQUESTED_CHANGES
+
+    low_score = _story_at(StoryState.TESTS_GREEN, temp_root, slug="score")
+    res = handle_review(
+        low_score,
+        app,
+        temp_root,
+        dry_run=True,
+        db_path=db,
+        fixture=_notes_fixture(test_quality_score=0.5),
+    )
+    assert res.next_state is StoryState.REVIEWER_REQUESTED_CHANGES
+
+
+def test_chain_medium_still_requests_changes(temp_root: Path) -> None:
+    """The chain's reviewer still treats a medium as a cycle. Solo is the exception."""
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.TESTS_GREEN, temp_root, pipeline="chain", slug="chain")
+    res = handle_review(
+        story,
+        _app(temp_root),
+        temp_root,
+        dry_run=True,
+        db_path=db,
+        fixture=_notes_fixture(comments_to_post=[]),
+    )
+    assert res.next_state is StoryState.REVIEWER_REQUESTED_CHANGES
+    assert res.payload["comments_to_post"] == []
+    after = get_story(story.id or 0, db)
+    assert after is not None and after.reviewer_cycles == 1
+
+
 def test_reviewed_solo_story_refuses_a_reviewer_on_the_dev_model(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

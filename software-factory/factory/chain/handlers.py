@@ -4440,6 +4440,58 @@ def _slop_findings_for_story(
         return []
 
 
+# A solo fix round is the expensive part (a fresh dev conversation). Only a
+# high finding spends it. "blocking" is accepted as a synonym a model sometimes
+# emits; medium and low are notes on the PR.
+_SOLO_BLOCKING_SEVERITIES = frozenset({"high", "blocking"})
+
+
+def _solo_review_has_blocker(result: dict[str, Any]) -> bool:
+    """True when a solo review must go back to dev.
+
+    Slop is included: the deterministic detector is a hard block, not a note.
+    A low ``test_quality_score`` is enforced by the approve bar, not here.
+    """
+    if result.get("slop_detector_findings"):
+        return True
+    for finding in result.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity") or "").lower()
+        if severity in _SOLO_BLOCKING_SEVERITIES:
+            return True
+    return False
+
+
+def _fold_nonblocking_findings_into_comments(result: dict[str, Any]) -> None:
+    """Copy medium and low findings into ``comments_to_post``.
+
+    The PR gets the note. The finding stays in ``findings`` so the history is
+    honest; it does not, by itself, spend a fix round.
+    """
+    comments = [c for c in (result.get("comments_to_post") or []) if isinstance(c, dict)]
+    seen = {str(c.get("body") or "") for c in comments}
+    for finding in result.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity") or "low").lower()
+        if severity in _SOLO_BLOCKING_SEVERITIES:
+            continue
+        location = str(finding.get("location") or "")
+        file, _, line = location.partition(":")
+        body = f"[{severity}] {finding.get('what') or ''}".strip()
+        suggestion = finding.get("fix_suggestion")
+        if suggestion:
+            body = f"{body}\n\n{suggestion}"
+        if body in seen:
+            continue
+        seen.add(body)
+        comments.append(
+            {"file": file or location or "(review)", "line": line or "1", "body": body}
+        )
+    result["comments_to_post"] = comments
+
+
 @traced("factory.review")
 def handle_review(
     story: StoryRecord,
@@ -4714,12 +4766,13 @@ def handle_review(
             )
             history_section = _render_reviewer_history_section(story)
             from factory.chain.solo import (
-                is_solo as _is_solo_review,
-            )
-            from factory.chain.solo import (
+                SOLO_REVIEW_ROUND_RULE,
                 job_ask_text,
                 review_packet,
                 solo_reviews,
+            )
+            from factory.chain.solo import (
+                is_solo as _is_solo_review,
             )
 
             packet = ""
@@ -4730,7 +4783,7 @@ def handle_review(
                     review_tree = _writing_worktree(app_config, software_factory_root, story)
                 except Exception:  # noqa: BLE001 - the ask still reaches the reviewer
                     review_tree = None
-                packet = review_packet(
+                packet = SOLO_REVIEW_ROUND_RULE + review_packet(
                     worktree=review_tree,
                     diff=pr_diff,
                     ask=job_ask_text(direction),
@@ -4778,20 +4831,6 @@ def handle_review(
             result = _parse_reviewer_result(result_any)
 
     story.reviewer_result_json = json.dumps(result)
-
-    # Post inline comments (real-run only).
-    if not dry_run and github_client is not None and story.github_pr_number is not None:
-        try:
-            repo = github_client.get_repo(app_config.repo)
-            pr = repo.get_pull(story.github_pr_number)
-            for c in result.get("comments_to_post") or []:
-                # Inline comment requires commit_sha, path, position; we
-                # use a simpler issue comment in Phase 2 as fallback.
-                pr.create_issue_comment(
-                    f"**Reviewer note** ({c.get('file')}:{c.get('line')}):\n\n{c.get('body')}"
-                )
-        except Exception:  # pragma: no cover - real-run path
-            pass
 
     verdict = result.get("verdict", "request_changes")
     score = float(result.get("test_quality_score", 0.0))
@@ -4871,6 +4910,46 @@ def handle_review(
                     result["verdict"] = "approve"
                     result["finality_clamp_applied"] = True
                 story.reviewer_result_json = json.dumps(result)
+
+    # Solo spends its one fix round only on a high finding (PLAN 8.4.50). A
+    # review whose findings are medium and low still ships: the notes go on
+    # the PR, and tech_writer runs. The chain's reviewer is unchanged — there
+    # a medium is still a fix cycle.
+    from factory.chain.solo import solo_reviews as _solo_reviews_now
+
+    if _solo_reviews_now(story):
+        _fold_nonblocking_findings_into_comments(result)
+        if score >= 0.7 and not _solo_review_has_blocker(result):
+            if verdict != "approve" and story.id is not None:
+                log_story_event(
+                    story.id,
+                    "solo_review_notes_only",
+                    {
+                        "score": score,
+                        "comments": len(result.get("comments_to_post") or []),
+                    },
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
+            verdict = "approve"
+            result["verdict"] = "approve"
+            result["solo_nonblocking_approved"] = True
+        story.reviewer_result_json = json.dumps(result)
+
+    # Post inline comments (real-run only). After the solo fold, so medium
+    # and low findings are on the PR and not only in the review JSON.
+    if not dry_run and github_client is not None and story.github_pr_number is not None:
+        try:
+            repo = github_client.get_repo(app_config.repo)
+            pr = repo.get_pull(story.github_pr_number)
+            for c in result.get("comments_to_post") or []:
+                # Inline comment requires commit_sha, path, position; we
+                # use a simpler issue comment in Phase 2 as fallback.
+                pr.create_issue_comment(
+                    f"**Reviewer note** ({c.get('file')}:{c.get('line')}):\n\n{c.get('body')}"
+                )
+        except Exception:  # pragma: no cover - real-run path
+            pass
 
     if verdict == "approve" and score >= 0.7:
         story.state = advance(story, EVENT_REVIEWER_APPROVE).value

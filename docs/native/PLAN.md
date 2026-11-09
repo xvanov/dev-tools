@@ -1594,7 +1594,7 @@ not in the Map is not done, and a new one gets added there first.
     Done, not re-run live: the API solo reviewer (one call, no tool turns) now gets
     the job's ask verbatim (`artifacts/ask.md`) and the bounded full content of files
     the diff touches plus files the ask, the story or the context names, so it can
-    judge behaviour.
+    judge behaviour. (e8c9c79)
   - [ ] **8.4.50 deepseek-pr: a review with no blocker costs a fix round.** Cycle 1 returned
     `request_changes` on one medium and four lows. The medium was a false alarm: `/api/version`
     "has no cited precedent", but `server.ts:290` serves it. The fix round and the second review
@@ -1602,6 +1602,10 @@ not in the Map is not done, and a new one gets added there first.
     the trailing newlines it was asked for are still missing. 8.4.19 says a blocking finding gets
     the round. Send lows and mediums to the PR (`comments_to_post`), and spend the round only on a
     blocker.
+    Done, not re-run live: a solo review spends the fix round only on a high (or
+    `blocking`) finding or on test slop / a score under 0.7. Medium and low findings
+    are copied into `comments_to_post` and the story proceeds to tech_writer. The
+    chain's reviewer still treats a medium as a cycle.
   - [ ] **8.4.51 deepseek-pr: the dev step takes 5.4 min to start its agent.** The handler started
     at 00:00:27.6. `solo_checks` came 90.6 s later, then the lint baseline (`uv run --all-extras
     ruff check .` in software-factory, for a personal-assistant diff) took 95 s. Another 140 s

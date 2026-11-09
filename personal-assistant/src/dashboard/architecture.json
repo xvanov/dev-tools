@@ -1291,7 +1291,7 @@
         "Scheduler": "`factory serve` on both stacks (Windows: the factory-serve logon task, scripts/windows/install-serve.ps1, running `--supervise`; Linux: factory-serve.service, replacing the factory-tick@<app> timers; `factory on/off` manage it): ticks only apps whose config sets serve_tick: true, every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d and it dispatches research/report jobs and ticks the app within 1 s; one serve per factory root (state/locks/serve.lock plus a SQLite lease, state/scheduler/leases.db, 30 s TTL); exits 75 for a restart when the checkout's HEAD moves; `factory serve --status`. A code job for an app nothing ticks (no serve_tick, no factory-tick@ timer) is accepted with a `ticker:` warning, and submit, job status/list and app list carry `ticked: false` (status why: `waiting: app X is not ticked`; JOBS-API v1.6, factory/scheduler/coverage.py)",
         "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
         "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
-        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): a blocking finding gets one fix round, one that survives it parks the story (blocked_review_nonconvergent); a reviewer that resolves to the dev's model is refused; claude_session solo has no reviewer",
+        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): a high-severity finding gets one fix round, one that survives it parks the story (blocked_review_nonconvergent); medium and low findings are posted on the PR and do not spend a round; a reviewer that resolves to the dev's model is refused; claude_session solo has no reviewer",
         "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; never merged below auto_merge",
         "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch",
         "Research/report": "detached workers (python -m factory.jobs.worker), at most FACTORY_TASK_MAX_WORKERS (default 2), 5400 s wall clock",
@@ -2221,7 +2221,7 @@
         },
         {
           "c": "factory-chain",
-          "t": "Solo pipeline: one dev agent, one independent review (azure/Kimi-K2.7-Code, one fix round on a blocker), then gates, a PR, and the CI watch (up to 3 CI-fix cycles)."
+          "t": "Solo pipeline: one dev agent, one independent review (azure/Kimi-K2.7-Code, one fix round on a high-severity finding; medium and low go on the PR), then gates, a PR, and the CI watch (up to 3 CI-fix cycles)."
         },
         {
           "c": "runtime-api",

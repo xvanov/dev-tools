@@ -32,8 +32,9 @@ and lint and is still wrong: the deepseek-pr job's PR #63 ran ``git`` without a
 (PLAN.md 8.4.19). So an ``api``-runtime solo story takes the chain's reviewer
 once before delivery (``solo_reviews``) — on routes.yaml's reviewer model, which
 must differ from every dev tier — with at most ``SOLO_MAX_REVIEW_CYCLES``
-cycles: a blocking finding gets ONE fix round in a fresh dev conversation, and
-a blocker that survives it parks the story in ``blocked_review_nonconvergent``
+cycles: a ``high`` finding gets ONE fix round in a fresh dev conversation, and
+a blocker that survives it parks the story in ``blocked_review_nonconvergent``.
+``medium`` and ``low`` findings are posted on the PR and do not spend the round.
 for a human instead of shipping. That review is one text call and zero tool
 turns, so the prompt carries the job's ask verbatim and the bounded content of
 the files the diff touches plus the files the ask or the context names
@@ -229,9 +230,10 @@ def build_solo_brief(
         who = (
             "ONE independent review, by a different model, reads your diff once "
             "your tests are green, before the merge gates (the repo's test suite, "
-            "its configured gates and CI) run on it. A blocking finding comes back "
-            "to you once; one that survives the fix stops the job. Get it right "
-            "the first time:"
+            "its configured gates and CI) run on it. A high-severity finding comes "
+            "back to you once; medium and low notes are left on the PR and do not "
+            "come back. One high finding that survives the fix stops the job. Get "
+            "it right the first time:"
         )
     else:
         who = (
@@ -298,6 +300,16 @@ def build_solo_brief(
 REVIEW_FILE_CAP = 8_000
 REVIEW_PACKET_CAP = 48_000
 REVIEW_MAX_FILES = 12
+
+#: Told to the solo reviewer, and enforced in ``handle_review``: the model
+#: returning ``request_changes`` on a medium does not spend the fix round.
+SOLO_REVIEW_ROUND_RULE = (
+    "## Solo review — what spends a fix round\n\n"
+    "This story gets one fix round, and only for a `high` finding: the change "
+    "is wrong, unsafe, or misses the ask. `medium` and `low` findings are notes. "
+    "Put them in `comments_to_post` and `approve` when nothing is `high` and "
+    "`test_quality_score` is at least 0.7. The chain enforces this.\n\n"
+)
 
 _CITED_PATH_RE = re.compile(
     r"(?<![\w./-])"
@@ -932,7 +944,7 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
         "pipeline": SOLO,
         "reviewer": (
             f"independent review before delivery (max {SOLO_MAX_REVIEW_CYCLES} cycles: "
-            "one fix round)"
+            "one fix round on a high finding; medium and low are PR comments)"
             if solo_reviews(story)
             else "skipped (solo pipeline, claude_session runtime)"
         ),
@@ -962,6 +974,7 @@ __all__ = [
     "build_solo_brief",
     "job_ask_text",
     "review_packet",
+    "SOLO_REVIEW_ROUND_RULE",
     "checks_plan",
     "finding_paths",
     "static_gate_baseline",
