@@ -352,7 +352,10 @@ deliberately *not* the fix: forking starts a new conversation id, which detaches
 the transcript the model badge and voice layer read. Stripping is confined to the `claude` segment
 of the line (up to the first `&&`/`||`/`;`/`|`) so a `-c` belonging to some other command survives.
 Covered by `test/restore.test.js`. Killing a live session (✕) or forgetting a restorable one
-both `DELETE` it, removing it from the archive. **This is a `sessiond`-tier change**: restart
+both `DELETE` it, removing it from the archive (before the kill, so a session mid-kill never
+lists as restorable). The client closes optimistically: tab and row go at once, ids in
+`state.closing` stay hidden from polls until a list arrives without them, and a failed `DELETE`
+puts the row back with an error toast. **This is a `sessiond`-tier change**: restart
 `sessiond` once to activate it (which clears the *current* live sessions — but from then on every
 session is persisted). Sessions lost to a reboot that happened *before* this was running are gone;
 nothing was recorded for them.

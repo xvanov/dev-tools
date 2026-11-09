@@ -34,6 +34,7 @@ const state = {
   activeId: null,
   ctrlArmed: false,
   idle: null,      // last /api/idle snapshot: today's totals + live per-session state
+  closing: new Set(), // ids closed in the UI whose DELETE the server has not yet confirmed
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -172,8 +173,13 @@ function refresh() {
     try {
       const s = await api('/api/sessions');
       state.machine = s.machine || '';
-      state.sessions = s.sessions || [];
-      state.restorable = s.restorable || [];
+      // A session closed in the UI stays hidden until a list arrives without
+      // it: a poll already in flight when X was pressed still carries it, and
+      // must not bring the row back.
+      const listed = new Set([...(s.sessions || []), ...(s.restorable || [])].map((x) => x.id));
+      for (const id of state.closing) if (!listed.has(id)) state.closing.delete(id);
+      state.sessions = (s.sessions || []).filter((x) => !state.closing.has(x.id));
+      state.restorable = (s.restorable || []).filter((x) => !state.closing.has(x.id));
       // /api/sessions is the authority on which sessions are armed; the `armed`
       // WS event only makes a change instant. Rebuilding here every poll means a
       // missed socket message can't leave the 🔊 toggles lying. Non-Claude
@@ -1227,9 +1233,25 @@ function detachTerminal(id) {
   renderSessions();
 }
 
-async function killSession(id) {
-  try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+// Close is optimistic: the tab and the row go at once, and the DELETE (which
+// waits for ptyd to take the process tree down, a few hundred ms on Windows)
+// runs behind it. A failed close puts the row back and says so, instead of
+// leaving a session that silently survived.
+function killSession(id) { closeOptimistically(id); }
+function forgetSession(id) { closeOptimistically(id); }
+
+async function closeOptimistically(id) {
+  state.closing.add(id);
   if (state.open.has(id)) detachTerminal(id);
+  state.sessions = state.sessions.filter((x) => x.id !== id);
+  state.restorable = state.restorable.filter((x) => x.id !== id);
+  syncSidebar();
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch (e) {
+    state.closing.delete(id);
+    toast(`Close failed: ${e.message}`, 'err');
+  }
   refresh();
 }
 
@@ -1248,10 +1270,6 @@ async function restoreSession(id) {
 }
 
 // Drop a restorable entry without re-opening it (a DELETE forgets the archive).
-async function forgetSession(id) {
-  try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
-  refresh();
-}
 
 async function renameSession(id, current) {
   const name = window.prompt('Rename session', current || '');

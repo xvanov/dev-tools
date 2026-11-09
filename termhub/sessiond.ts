@@ -431,10 +431,13 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
       if (req.method === 'DELETE' && idMatch) {
         const id = decodeURIComponent(idMatch[1]!);
         const session = sessions.get(id);
-        if (session) { sessions.delete(id); await session.kill(); }
         // Drop it from the archive too: a DELETE means "close it" / "forget it",
-        // for both a live session and a restorable one. Idempotent.
+        // for both a live session and a restorable one. Idempotent. Before the
+        // kill, not after: while the kill waits on ptyd the session is neither
+        // live nor gone, and listRestorable would show it as restorable — a
+        // close that looked like it had not taken.
         archive.remove(id);
+        if (session) { sessions.delete(id); await session.kill(); }
         return sendJson(res, 200, { ok: true });
       }
 
