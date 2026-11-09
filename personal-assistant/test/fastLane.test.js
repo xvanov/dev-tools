@@ -636,7 +636,9 @@ function splitAll(pieces) {
     assert.ok(!calls[0].format, 'the answerer writes words, not a decision');
     assert.deepStrictEqual(b.sent, []);
     assert.deepStrictEqual(b.remembered, [['how many are overdue?', 'You have two overdue.']]);
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    // primeAfterMs 0 is a timer, and Node clamps that to 1 ms. A run of
+    // setImmediates can finish first, so wait the timer out.
+    await new Promise((r) => setTimeout(r, 20));
     assert.deepStrictEqual(primed.at(-1).history.map((e) => e.text), ['how many are overdue?', 'You have two overdue.'], 'the next turn is primed');
     // The answerer's prefix too, first: its system prompt, the snapshot and the turn just spoken, up to the words.
     assert.deepStrictEqual(order, ['answerer', 'router']);
