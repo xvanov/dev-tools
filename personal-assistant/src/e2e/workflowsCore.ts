@@ -9,6 +9,7 @@
 //   acceptance(arch, id)                 one workflow's block, or throws
 //   scoreHops(hops, measured)            the block's hops with what was measured, ok per hop
 //   scoreCost(usd, limits, id, basis)    cost against GET /api/workflow-limits' effective ceiling
+//   askView(tool, answer)                Ask as a tool check: method, tool, excerpt (not a /talk shot)
 //   missingViews(views, ...names)        the block's views no screenshot covers yet
 //   shotChecks(shots)                    a failed check per view the browser could not shoot
 //   folderName(id, at, dry)              the run folder's name
@@ -324,6 +325,16 @@ function scoreCost(usd: number | string | null | undefined, limits: Json | null 
   };
 }
 
+/**
+ * Pure. The Ask view (8.4.47): the chat tool that checked it, and an excerpt of
+ * that tool's answer. Headless /talk never leaves "Tap once to enable Jarvis",
+ * so Ask is not a screenshot.
+ */
+function askView(tool: string, answer: unknown): { method: 'tool'; tool: string; excerpt: string } {
+  const text = answer == null ? '' : typeof answer === 'string' ? answer : JSON.stringify(answer);
+  return { method: 'tool', tool, excerpt: text.replace(/\s+/g, ' ').trim().slice(0, 240) };
+}
+
 /** Pure. The acceptance block's views that no shot or page name covers (`run-<session>` covers run). */
 function missingViews(views: unknown, ...names: string[][]): string[] {
   const have = new Set(names.flat().map((n) => String(n).split('-')[0]));
@@ -428,4 +439,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, askView, missingViews, shotChecks, folderName, summary, table, wav, ndjson };

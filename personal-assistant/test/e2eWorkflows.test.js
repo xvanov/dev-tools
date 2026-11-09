@@ -30,6 +30,15 @@ test('scoreHops: bounded hops pass or fail on max_ms; unbounded never fail; unme
   assert.strictEqual(s[2].note, 'not measured');
 });
 
+test('askView: Ask is the tool and an excerpt of its answer (8.4.47)', () => {
+  assert.deepStrictEqual(W.askView('chat', 'You have standup at ten. '), { method: 'tool', tool: 'chat', excerpt: 'You have standup at ten.' });
+  const job = W.askView('factory_job', { card: '90', report: { title: 'r' } });
+  assert.strictEqual(job.tool, 'factory_job');
+  assert.match(job.excerpt, /"card":"90"/);
+  assert.strictEqual(W.askView('factory_continue', 'x'.repeat(500)).excerpt.length, 240);
+  assert.deepStrictEqual(W.askView('chat', null), { method: 'tool', tool: 'chat', excerpt: '' });
+});
+
 test('toolCallMs: the jarvis hop excludes the composing model (8.4.22)', () => {
   const t = W.toolCallMs({ at: 0, ms: 6701 }, { started: true, timings_ms: { route: 40, compose_model: 2954, submit: 1000 } });
   assert.strictEqual(t.ms, 3747);
@@ -162,7 +171,8 @@ test('whats-on: replays the talk page: warm, smart-turn with the transcription, 
   assert.strictEqual(s.cost.usd, 0);
   assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
   assert.ok(fs.readFileSync(path.join(s.folder, 'transcripts', 'turn.txt'), 'utf8').includes('standup'));
-  assert.deepStrictEqual(log.shots, ['ask']);
+  assert.deepStrictEqual(log.shots, [], 'Ask is the chat tool answer, not a /talk shot');
+  assert.deepStrictEqual(s.views.ask, { method: 'tool', tool: 'chat', excerpt: 'You have standup at ten.' });
   const talk = log.posts.filter((u) => u.includes('/api/talk/')).map((u) => u.replace(/^.*\/api\/talk\//, ''));
   assert.deepStrictEqual(talk, ['tts', 'warm', 'endpoint', 'transcribe', 'turn', 'tts']);
 });
@@ -212,7 +222,10 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.deepStrictEqual(log.closed, ['90']);
   assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
   assert.ok(log.shots.includes('plan') && log.shots.includes('run-rs1'));
-  assert.ok(log.shots.includes('ask') && s.views.ask.url === 'http://pa/talk', 'the acceptance block lists ask: the chat page is shot');
+  assert.ok(!log.shots.includes('ask'), 'Ask is not a /talk shot');
+  assert.strictEqual(s.views.ask.method, 'tool');
+  assert.strictEqual(s.views.ask.tool, 'factory_job');
+  assert.match(s.views.ask.excerpt, /"card":"90"/);
   assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
   assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
   assert.deepStrictEqual(log.pages, ['http://hub:7000/'], 'the step\'s session link is opened (8.4.17)');
@@ -513,6 +526,9 @@ test('review-fix: factory_continue on the PR through the approval; fast-forward,
   assert.strictEqual(s.cost.usd, 0);
   assert.deepStrictEqual(s.links.head, { before: 'a'.repeat(40), after: 'b'.repeat(40) });
   assert.ok(log.shots.includes('build') && log.shots.includes('github-pr') && log.shots.includes('run-rf5'));
+  assert.ok(!log.shots.includes('ask'));
+  assert.strictEqual(s.views.ask.tool, 'factory_continue');
+  assert.match(s.views.ask.excerpt, /dev-tools:042/);
   assert.deepStrictEqual(log.killed.sort(), ['follow8', 'rf5']);
   assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
   assert.ok(s.cleanup.some((c) => /PR #12 left open/.test(c)));

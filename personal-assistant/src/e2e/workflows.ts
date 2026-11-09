@@ -3,7 +3,9 @@
 // `pa e2e <workflow>` (plan 8.2): each workflow in the Map (architecture.json
 // `examples`) run against the live stack, with evidence for the reviewer
 // sessions (8.3): per-hop timings against the workflow's 8.1 acceptance
-// block, every link, transcripts, a screenshot of each view, and cost against
+// block, every link, transcripts, a screenshot of each view except Ask (that one
+// is the tool check: summary views.ask, method tool, an excerpt of the answer),
+// and cost against
 // the effective ceiling (GET /api/workflow-limits). Everything lands in a run
 // folder (<PA data dir>/e2e/<stamp>-<workflow>[-dry]/) with summary.json.
 //
@@ -38,6 +40,7 @@ type Page = { name: string; url: string; ready?: string | null | undefined };
 type RunOut = {
   measured: Measured; checks: Check[]; transcripts: string[]; links: Json; notes: string[]; cleanup: string[]; errors: string[];
   usd: number | null; pages: Page[]; shots?: { shots: Json[]; note: string | null } | undefined; golden?: Json;
+  ask?: { method: 'tool'; tool: string; excerpt: string } | undefined;
 };
 type Runner = (acc: Acceptance, o: Options, deps: Deps, folder: string) => Promise<Partial<RunOut>>;
 
@@ -316,7 +319,7 @@ async function whatsOn(acc: Acceptance, o: Options, deps: Deps, folder: string):
   const spentAfter = await G.safely(() => deps.spendToday());
   const usd = spentBefore.ok && spentAfter.ok ? Math.max(0, spentAfter.value - spentBefore.value) : null;
   notes.push('cost is the PA spend delta over the turn; another pass spending at the same moment would show here too');
-  return { measured, transcripts, checks, notes, usd, links: { ask: `${deps.paBase}/talk` }, pages: [{ name: 'ask', url: `${deps.paBase}/talk` }] };
+  return { measured, transcripts, checks, notes, usd, links: { ask: `${deps.paBase}/talk` }, pages: [], ask: W.askView('chat', said) };
 }
 
 async function research(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
@@ -374,6 +377,7 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
     checks.push(...C.checkRun(await G.sessionLists(deps, ids.steps), ids, { scrollback: sb, pages: await G.linkPages(deps, ids.steps) }).map((c: Check) => ({ ...c, view: 'run' })));
     const mj = await G.safely(() => deps.chat('factory_job', { job, fresh: true }));
     checks.push(check('ask', 'factory_job tool → card and report', mj.ok && String(mj.value.card) === cardId && mj.value.report, mj.ok ? null : mj.error));
+    const asked = W.askView('factory_job', mj.ok ? mj.value : mj.error);
     const cost = Number(lastJob.cost_usd || 0);
     const steps: Json[] = ids.steps.filter((s: Json) => s.session);
     const pages: Page[] = [
@@ -384,7 +388,7 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
     // Screenshots now, while the card and the sessions still exist.
     const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
     return {
-      measured, checks, transcripts, notes, cleanup, usd: cost, shots, pages: [],
+      measured, checks, transcripts, notes, cleanup, usd: cost, shots, pages: [], ask: asked,
       links: { card: cardId, run: runId, job, sessions: steps.map((s) => s.session.id), report: `${deps.paBase}/api/factory/report?job=${encodeURIComponent(jobId)}` },
     };
   } finally {
@@ -511,6 +515,7 @@ async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string
     const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
     return {
       measured, checks, transcripts, notes, cleanup, usd: Number(lastJob.cost_usd || 0), shots, pages: [],
+      ask: W.askView('factory_continue', start),
       links: { run: start.run, job, pr: before.url, head: { before: before.head, after: after?.head || null }, sessions: steps.map((s) => s.session.id), follow },
     };
   } finally {
@@ -704,7 +709,7 @@ async function teamsAsk(acc: Acceptance, o: Options, deps: Deps, folder: string)
 }
 
 async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
-  let collected: { transcripts: string[]; links: Json; pages: Page[]; usd: number | null; measured: Measured; shots?: { shots: Json[]; note: string | null } } =
+  let collected: { transcripts: string[]; links: Json; pages: Page[]; usd: number | null; measured: Measured; shots?: { shots: Json[]; note: string | null }; ask?: { method: 'tool'; tool: string; excerpt: string } } =
     { transcripts: [], links: {}, pages: [], usd: null, measured: {} };
   const go = {
     ...o,
@@ -720,10 +725,13 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
       if (timeline.pr_opened != null && timeline.job_started != null) measured['factory-chain'] = { ms: timeline.pr_opened - timeline.job_started };
       if (timeline.ci_done != null && timeline.pr_opened != null) measured.github = { ms: timeline.ci_done - timeline.pr_opened, note: `CI ${(ids?.prs[0] || {}).ci || '?'}` };
       measured.worker = { ms: null, note: 'state change to board redraw: measured by E3/0.4, not by this run' };
+      const mj = await G.safely(() => deps.chat('factory_job', { job: ids?.job, fresh: true }));
+      const ask = W.askView('factory_job', mj.ok ? mj.value : mj.error);
       const steps: Json[] = (ids?.steps || []).filter((s: Json) => s.session);
       collected = {
         transcripts,
         measured,
+        ask,
         usd: lastJob?.cost_usd != null ? Number(lastJob.cost_usd) : null,
         links: { card: ids?.card, run: ids?.run, job: ids?.job, steps: (ids?.steps || []).map((s: Json) => ({ step: s.step, runtime: s.runtime, session: s.session?.id || null })), prs: (ids?.prs || []).map((p: Json) => p.url) },
         pages: [
@@ -746,6 +754,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
     usd: collected.usd,
     shots: collected.shots,
     pages: [],
+    ask: collected.ask,
     errors: report.errors,
     cleanup: report.cleanup,
     notes: [`golden-path hops: ${report.hops.map((h: Json) => `${h.hop} ${h.reached ? `+${h.sinceStartS}s` : 'NOT REACHED'}`).join(', ')}`, `dev model ${o.model}`],
@@ -839,12 +848,6 @@ async function realRun(id: string, acc: Acceptance, o: Options, deps: Deps, runn
   at.stage = 'the screenshots';
   let shots = r.shots || { shots: [], note: null };
   if (r.pages.length) shots = await screenshots(deps, path.join(folder, 'screenshots'), r.pages);
-  // Every view the acceptance block names gets a shot: Ask is the chat's page.
-  const missing = W.missingViews(acc.views, (shots.shots || []).map((x: Json) => x.view), r.pages.map((p) => p.name)).filter((v: string) => v === 'ask');
-  if (missing.length) {
-    const more = await screenshots(deps, path.join(folder, 'screenshots'), [{ name: 'ask', url: `${deps.paBase}/talk` }]);
-    shots = { shots: [...shots.shots, ...(more.shots || [])], note: shots.note || more.note };
-  }
   at.stage = 'the summary';
   const notes = [...(r.notes || []), ...(shots.note ? [shots.note] : [])];
   const rel = (f: string) => path.relative(folder, f).replace(/\\/g, '/');
@@ -853,10 +856,14 @@ async function realRun(id: string, acc: Acceptance, o: Options, deps: Deps, runn
     hops: W.scoreHops(acc.hops, r.measured),
     cost: W.scoreCost(r.usd, limits.ok ? limits.value : null, id, acc.cost?.basis),
     links: r.links,
-    views: Object.fromEntries((shots.shots || []).map((x: Json) => [x.view, {
-      url: x.url, screenshot: x.file ? rel(x.file) : null,
-      ...(x.text ? { text: rel(x.text) } : {}), ...(x.ready != null ? { ready: x.ready, waitedMs: x.waitedMs } : {}), ...(x.how ? { how: x.how } : {}), ...(x.error ? { error: x.error } : {}),
-    }])),
+    views: {
+      ...Object.fromEntries((shots.shots || []).map((x: Json) => [x.view, {
+        url: x.url, screenshot: x.file ? rel(x.file) : null,
+        ...(x.text ? { text: rel(x.text) } : {}), ...(x.ready != null ? { ready: x.ready, waitedMs: x.waitedMs } : {}), ...(x.how ? { how: x.how } : {}), ...(x.error ? { error: x.error } : {}),
+      }])),
+      // Ask is the tool check (8.4.47): headless /talk never gets ready.
+      ...(r.ask ? { ask: r.ask } : {}),
+    },
     transcripts: r.transcripts, screenshots: (shots.shots || []).filter((x: Json) => x.file).map((x: Json) => rel(x.file)),
     checks: [...r.checks, ...W.shotChecks(shots.shots)], rubric: acc.rubric, errors: r.errors || [], cleanup: r.cleanup || [], notes,
   });

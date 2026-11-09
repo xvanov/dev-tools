@@ -1011,7 +1011,7 @@ not in the Map is not done, and a new one gets added there first.
     Moonshine on ONNX, no 30 s padding), smart-turn off the CPU or off the path, Kokoro's first
     byte near 100 ms (GPU clocks held up between turns; it drops to P8 within seconds), and a
     first clause under 200 ms.
-  - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
+  - [x] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
     The Ask screenshot shows the idle Talk page, not the turn. Time the first sentence, add the
@@ -1026,6 +1026,9 @@ not in the Map is not done, and a new one gets added there first.
     URL that drives a turn would let a link hand words to the PA chat. (c422e41)
     Re-review (bd7b768): verified live except the screenshot. The e2e times all four hops in the
     page's order; `ask.png` still shows the idle Talk page.
+    Done (this commit): the /talk shot is dropped. Headless /talk never leaves "Tap once to enable
+    Jarvis", so Ask is the tool check (summary.json views.ask, method tool, the spoken answer).
+    Not run live.
   - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
     2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
@@ -1558,11 +1561,14 @@ not in the Map is not done, and a new one gets added there first.
     pushed state, or make the push's hurry reach the run-row pass, and time it in the e2e (8.4.10).
     Since 9ed9172 the pushed end ends the run row itself, so the card chain follows the push
     (17 ms from push to settled, in `test/factoryPushSettle.test.js`). Not yet timed in the e2e.
-  - [ ] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
+  - [x] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
     "loading…" (the page shows "Tap once to enable Jarvis"). So the shot always waits its full
     20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool
     level (`factory_job`). Either give the Ask shot a signal that the headless page can reach, or
     drop the shot and say that the tool check is the Ask view.
+    Done (this commit): the shot is dropped. views.ask is method tool — chat (the spoken answer)
+    for whats-on, factory_job for research and deepseek-pr, factory_continue for review-fix.
+    teams-ask lists no ask view. Not run live.
 - [ ] **8.4.48 factory serve: unresponsive for ~4 min after a restart.** Work stack, 2026-11-08
   23:51-23:56Z, right after it restarted onto fe23854: the new serve held 7330 and its lease but
   answered no `/api/cli` call (20-60 s timeouts) and wrote nothing to serve.log until its first
