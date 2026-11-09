@@ -6,9 +6,12 @@
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 function clipLabel(text: string, limit: number): string {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError(`clipLabel: limit must be an integer >= 1, got ${limit}`);
+  }
   const s = String(text ?? '');
   if (s.length <= limit) return s;
-  return s.slice(0, limit) + '...';
+  return s.slice(0, limit - 1) + '…';
 }
 
 module.exports = { clipLabel };
