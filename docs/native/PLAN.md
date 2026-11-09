@@ -1900,7 +1900,7 @@ not in the Map is not done, and a new one gets added there first.
     `PA_SANDBOX` plan-session wrapper and the Claude-session branch of `cli do`'s output. Until
     then a call logs a warning and records an `llm_spend` row of unknown cost
     (`dispatch-session-unmetered`).
-  - [x] **8.6.4 The Plan card UI on the dispatch settings API** (the commit adding `dispatchMenu.client.js`): runtime, mode,
+  - [x] **8.6.4 The Plan card UI on the dispatch settings API** (74ad131): runtime, mode,
     end state, job kind, app/repo pickers that read and write
     `/api/commitments/:id/dispatch-settings`, in a ☰ menu on each card
     (`dashboard/dispatchMenu.client.js`); the card keeps one read-only line of what Do sends. The
