@@ -1057,6 +1057,11 @@ not in the Map is not done, and a new one gets added there first.
     Research re-review (`dev-tools:r0003`): partly verified live. Serve (e88e204) pushed `done`
     at most 1.4 s after the job ended (5.7 s before), and Build showed it. The e2e still reports
     the hop "not measured", and the Plan card lags by 125.5 s (8.4.46).
+    Measured, not run live (this commit): research subscribes to /api/events
+    (factory, run, board) and summary.json's worker hop is each transition's
+    factory time to the run event, or to the Plan card once the job is terminal.
+    A missing Plan card leaves the hop unmeasured. Where serve's push waits is
+    still open.
   - [x] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
     --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
     "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
@@ -1128,6 +1133,9 @@ not in the Map is not done, and a new one gets added there first.
     push frame in 334 ms, and `delivered` (00:27:04.513) in 300 ms, both over 200 ms before any
     redraw. The run row and the card followed 9.1 s and 13.6 s after the transition (served code
     predates 9ed9172).
+    The e2e now records that worker hop on a deepseek-pr run too (this commit):
+    the same frames and the same note. Not run live; the reviewer re-run is the
+    measurement.
   - [x] **8.4.17 deepseek-pr: step session links open a 404.** Plan's card chain, Build and
     `factory_job` give `http://127.0.0.1:7010/#session=…` for every factory step, and sessiond's
     `GET /` is 404; only the run's follow session links to the front (:7000). Set
@@ -1563,6 +1571,9 @@ not in the Map is not done, and a new one gets added there first.
     pushed state, or make the push's hurry reach the run-row pass, and time it in the e2e (8.4.10).
     Since 9ed9172 the pushed end ends the run row itself, so the card chain follows the push
     (17 ms from push to settled, in `test/factoryPushSettle.test.js`). Not yet timed in the e2e.
+    The e2e now times it (this commit): a terminal worker hop is the Plan card's
+    board event minus the factory transition, and a missing card does not pass
+    on the run row. Not run live.
   - [x] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
     "loading…" (the page shows "Tap once to enable Jarvis"). So the shot always waits its full
     20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool

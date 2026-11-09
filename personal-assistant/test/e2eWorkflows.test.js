@@ -30,6 +30,40 @@ test('scoreHops: bounded hops pass or fail on max_ms; unbounded never fail; unme
   assert.strictEqual(s[2].note, 'not measured');
 });
 
+test('workerHop: factory transition to the run, and a terminal state to the Plan card (8.4.10)', () => {
+  const job = 'dev-tools:r1';
+  const base = '2026-11-08T23:35:00.000Z';
+  const at = (ms) => new Date(Date.parse(base) + ms).toISOString();
+  const run = (state, ms) => ({ topic: 'run', at: at(ms), payload: { table: 'run', id: 7, factory_job_id: job, factory_state: state } });
+  const card = (ms) => ({ topic: 'board', at: at(ms), payload: { table: 'commitment', op: 'update', id: 90, status: 'done' } });
+  const push = (state, ms) => ({ topic: 'factory', at: at(ms + 5000), payload: { table: 'push', op: 'push', jobs: [{ job_id: job, state, updated_at: at(ms) }] } });
+
+  const mid = W.workerHop({ job, card: 90, run: 7, frames: [push('in_progress', 0), run('in_progress', 180)], statuses: [{ state: 'in_progress', updated_at: at(9000) }] });
+  assert.strictEqual(mid.ms, 180);
+  assert.match(mid.note, /in_progress non-terminal 180 ms via run \(push\)/);
+
+  const done = W.workerHop({
+    job, card: 90, run: 7,
+    statuses: [{ state: 'in_progress', updated_at: at(0) }, { state: 'done', updated_at: at(1000) }],
+    frames: [
+      { topic: 'factory', at: at(1000), payload: { table: 'push', op: 'push', jobs: [job, 'other:1'], updated_at: at(1000) } },
+      run('in_progress', 120), run('done', 1017), card(1400),
+    ],
+  });
+  assert.strictEqual(done.ms, 400, 'the terminal hop is the Plan card, and a shared push stamp is not the clock');
+  assert.match(done.note, /in_progress non-terminal 120 ms via run \(job status\)/);
+  assert.match(done.note, /done terminal 400 ms via plan card \(job status\)/);
+
+  const missing = W.workerHop({ job, card: 90, run: 7, statuses: [{ state: 'done', updated_at: at(0) }], frames: [run('done', 17)] });
+  assert.strictEqual(missing.ms, null, 'a fast run row does not pass while the Plan card was not seen');
+  assert.match(missing.note, /done terminal plan card not seen, run row 17 ms \(job status\)/);
+
+  const other = W.workerHop({ job, card: 90, run: 7, frames: [push('done', 0)], statuses: [] });
+  assert.strictEqual(other.ms, null);
+  assert.match(other.note, /plan card not seen/);
+  assert.deepStrictEqual(W.workerHop({ job, frames: [], statuses: [] }), { ms: null, note: 'no factory transition seen' });
+});
+
 test('askView: Ask is the tool and an excerpt of its answer (8.4.47)', () => {
   assert.deepStrictEqual(W.askView('chat', 'You have standup at ten. '), { method: 'tool', tool: 'chat', excerpt: 'You have standup at ten.' });
   const job = W.askView('factory_job', { card: '90', report: { title: 'r' } });
@@ -226,10 +260,40 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.strictEqual(s.views.ask.method, 'tool');
   assert.strictEqual(s.views.ask.tool, 'factory_job');
   assert.match(s.views.ask.excerpt, /"card":"90"/);
+  assert.strictEqual(s.hops.find((h) => h.c === 'worker').ms, null);
+  assert.match(s.hops.find((h) => h.c === 'worker').note, /no \/api\/events subscription/);
   assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
   assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
   assert.deepStrictEqual(log.pages, ['http://hub:7000/'], 'the step\'s session link is opened (8.4.17)');
   assert.ok(s.checks.some((c) => c.view === 'run' && c.check === 'session rs1 link opens' && c.ok));
+});
+
+test('research: the worker hop times done to the Plan card (8.4.10)', async () => {
+  const { deps, log } = fakeDeps();
+  const urls = [];
+  deps.subscribe = (url, onEvent) => {
+    urls.push(url);
+    deps.emit = onEvent;
+    return () => { deps.emit = null; log.shots.push('unsubscribed'); };
+  };
+  const jobStatus = deps.jobStatus;
+  deps.jobStatus = async () => {
+    const st = await jobStatus();
+    if (st.state === 'done' && deps.emit) {
+      const t = '2026-11-08T23:35:59.000Z';
+      deps.emit({ topic: 'factory', at: t, payload: { table: 'push', op: 'push', jobs: ['dev-tools:r001'] } });
+      deps.emit({ topic: 'run', at: '2026-11-08T23:35:59.050Z', payload: { table: 'run', id: 7, factory_job_id: 'dev-tools:r001', factory_state: 'done' } });
+      deps.emit({ topic: 'board', at: '2026-11-08T23:35:59.150Z', payload: { table: 'commitment', op: 'update', id: 90, status: 'done' } });
+    }
+    return st.state === 'done' ? { ...st, updated_at: '2026-11-08T23:35:59.000Z' } : st;
+  };
+  const s = await R.main('research', {}, {}, deps);
+  const w = s.hops.find((h) => h.c === 'worker');
+  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
+  assert.match(urls[0], /topics=factory,run,board/);
+  assert.strictEqual(w.ms, 150);
+  assert.match(w.note, /done terminal 150 ms via plan card \(job status\)/);
+  assert.ok(log.shots.includes('unsubscribed'));
 });
 
 test('research: a step session link that 404s fails the Run view (8.4.17)', async () => {

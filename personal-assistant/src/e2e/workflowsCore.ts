@@ -10,6 +10,7 @@
 //   scoreHops(hops, measured)            the block's hops with what was measured, ok per hop
 //   scoreCost(usd, limits, id, basis)    cost against GET /api/workflow-limits' effective ceiling
 //   askView(tool, answer)                Ask as a tool check: method, tool, excerpt (not a /talk shot)
+//   workerHop({job,card,run,frames,statuses})  factory transition to the run event, or the Plan card when terminal
 //   missingViews(views, ...names)        the block's views no screenshot covers yet
 //   shotChecks(shots)                    a failed check per view the browser could not shoot
 //   folderName(id, at, dry)              the run folder's name
@@ -439,4 +440,114 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, askView, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
+const WORKER_TERMINAL = new Set(['done', 'failed', 'cancelled']);
+
+function workerAt(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (v == null || v === '') return null;
+  const t = Date.parse(String(v));
+  return Number.isNaN(t) ? null : t;
+}
+
+function workerPayload(frame: Json): Json | null {
+  const p = frame?.payload;
+  if (typeof p === 'string') {
+    try { return JSON.parse(p); } catch { return null; }
+  }
+  return p && typeof p === 'object' ? p as Json : null;
+}
+
+function workerNamesJob(jobs: unknown, job: unknown): boolean {
+  return (Array.isArray(jobs) ? jobs : []).some((j) => {
+    if (j == null) return false;
+    if (typeof j !== 'object') return String(j) === String(job);
+    const o = j as Json;
+    return String(o.job_id ?? o.id ?? '') === String(job);
+  });
+}
+
+function workerJobEntry(jobs: unknown, job: unknown): Json | null {
+  const hit = (Array.isArray(jobs) ? jobs : []).find((j) => j && typeof j === 'object' && String((j as Json).job_id ?? (j as Json).id ?? '') === String(job));
+  return hit ? hit as Json : null;
+}
+
+/**
+ * Pure. The worker hop (8.4.10, 8.4.16, 8.4.46). For each factory state of this
+ * job, the factory's transition time (a push frame that names this one job, else
+ * the first job-status `updated_at` for that state) to the event that followed:
+ * the run row, or, once the job is terminal, the Plan card. A fast run row must
+ * not hide a Plan card that never moved, so a terminal state with no card event
+ * leaves `ms` null. `ms` is otherwise the slowest hop seen.
+ */
+function workerHop({ job, card, run, frames = [], statuses = [] }: { job?: unknown; card?: unknown; run?: unknown; frames?: Json[]; statuses?: Json[] } = {}): { ms: number | null; note: string } {
+  const events = (Array.isArray(frames) ? frames : []).map((f) => ({ topic: f?.topic, at: workerAt(f?.at), payload: workerPayload(f) })).filter((f) => f.payload);
+  const readings = Array.isArray(statuses) ? statuses : [];
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const add = (state: unknown) => {
+    if (state == null || state === '' || seen.has(String(state))) return;
+    seen.add(String(state));
+    order.push(String(state));
+  };
+  for (const s of readings) add(s?.state);
+  for (const f of events) {
+    const p = f.payload as Json;
+    if (f.topic === 'run' && String(p.factory_job_id ?? '') === String(job)) add(p.factory_state);
+    if (f.topic === 'factory' && (p.table === 'push' || p.op === 'push')) {
+      const one = workerJobEntry(p.jobs, job);
+      if (one?.state) add(one.state);
+      else if (p.state && Array.isArray(p.jobs) && p.jobs.length === 1 && workerNamesJob(p.jobs, job)) add(p.state);
+    }
+  }
+  if (!order.length) return { ms: null, note: 'no factory transition seen' };
+
+  const rows = order.map((state) => {
+    const terminal = WORKER_TERMINAL.has(state);
+    let clock: number | null = null;
+    let source = 'none';
+    for (const f of events) {
+      if (f.topic !== 'factory') continue;
+      const p = f.payload as Json;
+      if (!(p.table === 'push' || p.op === 'push')) continue;
+      const entry = workerJobEntry(p.jobs, job);
+      const jobs = Array.isArray(p.jobs) ? p.jobs : [];
+      const only = jobs.length === 1 && workerNamesJob(jobs, job);
+      // A stamp counts only with its state. A push that names several jobs, or
+      // names this job without a state, is not this transition's clock.
+      const stamped = entry?.state === state ? workerAt(entry.updated_at) : null;
+      const frameStamped = only && p.state === state ? workerAt(p.updated_at ?? entry?.updated_at) : null;
+      const at = stamped ?? frameStamped;
+      if (at == null) continue;
+      clock = at;
+      source = 'push';
+      break;
+    }
+    if (clock == null) {
+      const reading = readings.find((s) => s?.state === state && workerAt(s.updated_at) != null);
+      if (reading) { clock = workerAt(reading.updated_at); source = 'job status'; }
+    }
+    const runEv = events.find((f) => f.topic === 'run' && f.at != null && String((f.payload as Json).factory_job_id ?? '') === String(job)
+      && (f.payload as Json).factory_state === state
+      && (run == null || String((f.payload as Json).id ?? run) === String(run))
+      && (clock == null || (f.at as number) >= clock));
+    const cardEv = events.find((f) => f.topic === 'board' && f.at != null && (f.payload as Json).table === 'commitment'
+      && card != null && String((f.payload as Json).id) === String(card)
+      && (clock == null || (f.at as number) >= clock));
+    const effect = terminal ? cardEv : runEv;
+    const via = terminal ? 'plan card' : 'run';
+    const ms = clock != null && effect?.at != null ? Math.round((effect.at as number) - clock) : null;
+    const runLag = terminal && !cardEv && runEv && clock != null ? Math.round((runEv.at as number) - clock) : null;
+    return { state, terminal, ms, via, source, runLag, seenEffect: Boolean(effect) };
+  });
+  const measured = rows.map((r) => r.ms).filter((n): n is number => n != null);
+  const terminalUnseen = rows.some((r) => r.terminal && !r.seenEffect);
+  const note = rows.map((r) => {
+    const flag = r.terminal ? 'terminal' : 'non-terminal';
+    const hop = r.ms != null ? `${r.ms} ms via ${r.via}` : (r.via === 'plan card' ? 'plan card not seen' : 'not seen');
+    const extra = r.runLag != null ? `, run row ${r.runLag} ms` : '';
+    return `${r.state} ${flag} ${hop}${extra} (${r.source})`;
+  }).join('; ');
+  return { ms: terminalUnseen || !measured.length ? null : Math.max(...measured), note };
+}
+
+module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, askView, workerHop, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
