@@ -96,6 +96,63 @@
   var focusId = current === 'sessions' ? new URLSearchParams(location.search).get('focus') : null;
   var paBase = onTermhub ? '/pa/' : new URL('./', location.href).pathname;
   var sameOrigin = onTermhub || proxied;
+
+  // One live socket per tab, not per frame. Ask, Plan and Build stay open
+  // together, and each used to hold its own /api/events and /api/chat/stream.
+  // Over HTTP/1.1 a browser allows six connections to one host. Those streams
+  // never end, so once they fill the six the tab you open next never gets a
+  // socket and its spinner never stops. The top window owns both sockets;
+  // every frame subscribes through it. A cross-origin top (the PA beside
+  // termhub) cannot be reached, so that frame keeps its own.
+  function createStreams() {
+    var pools = {};
+    function open(pool) {
+      if (!window.EventSource || pool.es || !pool.subs.length) return;
+      if (pool.timer) { clearTimeout(pool.timer); pool.timer = null; }
+      var url = pool.url;
+      if (pool.lastId) url += (url.indexOf('?') < 0 ? '?' : '&') + 'lastEventId=' + encodeURIComponent(pool.lastId);
+      var source = new EventSource(url);
+      pool.es = source;
+      source.onmessage = function (m) {
+        pool.retry = 0;
+        if (m.lastEventId) pool.lastId = m.lastEventId;
+        var list = pool.subs.slice();
+        for (var i = 0; i < list.length; i++) if (list[i].onmessage) list[i].onmessage(m);
+      };
+      source.onopen = function () {
+        var list = pool.subs.slice();
+        for (var i = 0; i < list.length; i++) if (list[i].onopen) list[i].onopen();
+      };
+      source.onerror = function () {
+        var list = pool.subs.slice();
+        for (var i = 0; i < list.length; i++) if (list[i].onerror) list[i].onerror();
+        if (source.readyState !== 2) return; // CONNECTING: the browser is retrying itself
+        if (pool.es === source) pool.es = null;
+        if (pool.subs.length && !pool.timer) pool.timer = setTimeout(function () { open(pool); }, Math.min(15000, 1000 * Math.pow(2, pool.retry++)));
+      };
+    }
+    function listen(name, url, cbs) {
+      var pool = pools[name];
+      if (!pool) pool = pools[name] = { url: url, subs: [], es: null, lastId: null, retry: 0, timer: null };
+      var sub = { onmessage: cbs.onmessage, onopen: cbs.onopen, onerror: cbs.onerror };
+      pool.subs.push(sub);
+      open(pool);
+      return function () {
+        pool.subs = pool.subs.filter(function (s) { return s !== sub; });
+        if (!pool.subs.length && pool.es) { pool.es.close(); pool.es = null; }
+      };
+    }
+    return {
+      events: function (cbs) { return listen('events', paBase + 'api/events', cbs); },
+      chat: function (cbs) { return listen('chat', paBase + 'api/chat/stream', cbs); },
+    };
+  }
+  function tabStreams() {
+    try {
+      if (window.top && window.top !== window && window.top.JarvisNav && window.top.JarvisNav.streams) return window.top.JarvisNav.streams;
+    } catch (e) { /* cross-origin top */ }
+    return createStreams();
+  }
   var termhub = ''; // origin of termhub; '' = this one
   var paUp = true;
 
@@ -584,6 +641,7 @@
     destinations: DESTS,
     go: go,
     linkTarget: destOfHref, // which destination a link switches to, or null (test/nav.test.js)
+    streams: tabStreams(), // the one /api/events and one /api/chat/stream for this tab
     refresh: function () { return fetchSession().then(paint); },
     settings: {
       isOpen: function () { return settingsOpen; },

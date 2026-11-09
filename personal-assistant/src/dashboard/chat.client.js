@@ -128,10 +128,8 @@
 
   function connect() {
     if (chat.es || !window.EventSource) return;
-    const es = new EventSource('api/chat/stream');
-    chat.es = es;
     let dropped = false;
-    es.onmessage = (msg) => {
+    const onmessage = (msg) => {
       let e;
       try { e = JSON.parse(msg.data); } catch { return; }
       if (e.type === 'status') status(e.text);
@@ -139,8 +137,18 @@
       else add(e);
     };
     // EventSource reconnects by itself; fill what was missed while it was down.
-    es.onopen = () => { if (dropped) history(); dropped = false; };
-    es.onerror = () => { dropped = true; $('chat-state').textContent = 'reconnecting…'; };
+    const onopen = () => { if (dropped) history(); dropped = false; };
+    const onerror = () => { dropped = true; $('chat-state').textContent = 'reconnecting…'; };
+    // The tab's one chat stream (nav.js), shared with Ask's voice page.
+    if (window.JarvisNav && window.JarvisNav.streams) {
+      chat.es = window.JarvisNav.streams.chat({ onmessage, onopen, onerror });
+      return;
+    }
+    const es = new EventSource('api/chat/stream');
+    chat.es = es;
+    es.onmessage = onmessage;
+    es.onopen = onopen;
+    es.onerror = onerror;
   }
 
   async function send() {

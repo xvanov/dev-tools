@@ -144,9 +144,7 @@
   }
 
   function connect() {
-    if (!window.EventSource) return;
-    const es = new EventSource('api/chat/stream');
-    es.onmessage = (m) => {
+    const onmessage = (m) => {
       let ev;
       try {
         ev = JSON.parse(m.data);
@@ -155,6 +153,14 @@
       }
       if (ev && ev.type === 'permission') show(ev);
     };
+    // The tab's one chat stream (nav.js). A page on its own opens its own.
+    if (window.JarvisNav && window.JarvisNav.streams) {
+      window.JarvisNav.streams.chat({ onmessage, onopen: refresh });
+      return;
+    }
+    if (!window.EventSource) return;
+    const es = new EventSource('api/chat/stream');
+    es.onmessage = onmessage;
     es.onopen = refresh;
   }
 

@@ -408,6 +408,31 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.strictEqual(sources[1].readyState, 2, 'the last subscriber closes the stream');
   }
 
+  // With the tab hub (nav.js), the page does not open a socket of its own.
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'events.client.js'), 'utf8');
+    const sources = [];
+    class FakeEventSource {
+      constructor(url) { this.url = url; sources.push(this); }
+      close() {}
+    }
+    let joined = 0;
+    const window = {
+      EventSource: FakeEventSource,
+      JarvisNav: { streams: { events() { joined++; return () => { joined--; }; } } },
+    };
+    const ctx = vm.createContext({ window, document: { visibilityState: 'visible' }, setTimeout, clearTimeout, setInterval, clearInterval, Date, JSON, Math });
+    vm.runInContext(src, ctx, { filename: 'events.client.js' });
+    const s1 = window.PAEvents.subscribe({ topics: ['board'], onChange: () => {}, debounceMs: 5, minGapMs: 0 });
+    const s2 = window.PAEvents.subscribe({ topics: ['factory'], onChange: () => {}, debounceMs: 5, minGapMs: 0 });
+    assert.strictEqual(sources.length, 0, 'the hub owns the socket');
+    assert.strictEqual(joined, 1, 'both subscribers share one hub registration');
+    s1.close();
+    assert.strictEqual(joined, 1, 'one subscriber leaving keeps the registration');
+    s2.close();
+    assert.strictEqual(joined, 0, 'the last subscriber leaves the hub');
+  }
+
   // ---- Plan, Build and Routines use the feed, not the 30 s polls --------------------
   {
     const dir = path.join(__dirname, '..', 'src', 'dashboard');

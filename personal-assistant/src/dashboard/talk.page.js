@@ -1160,24 +1160,32 @@
   }
 
   function connect() {
-    if (!window.EventSource) return concerned('This browser cannot follow the chat stream.', 0);
-    const es = new EventSource('api/chat/stream');
-    es.onmessage = (m) => {
+    const onmessage = (m) => {
       try {
         onEvent(JSON.parse(m.data));
       } catch {
         /* a malformed event is skipped, not fatal */
       }
     };
-    es.onopen = () => {
+    const onopen = () => {
       if ($('notice').textContent.startsWith('Lost the dashboard')) notice('');
       // A prompt already waiting when the page (re)connects: offer it too.
       fetch('api/chat/session').then((r) => (r.ok ? r.json() : {})).then((x) => { if (x.permission) offerPermission(x.permission); }).catch(() => {});
     };
-    es.onerror = () => {
+    const onerror = () => {
       st.thinking = false;
       concerned('Lost the dashboard connection; retrying…', 4000);
     };
+    // The tab's one chat stream (nav.js). Ask, Plan and Build share it.
+    if (window.JarvisNav && window.JarvisNav.streams) {
+      window.JarvisNav.streams.chat({ onmessage, onopen, onerror });
+      return;
+    }
+    if (!window.EventSource) return concerned('This browser cannot follow the chat stream.', 0);
+    const es = new EventSource('api/chat/stream');
+    es.onmessage = onmessage;
+    es.onopen = onopen;
+    es.onerror = onerror;
   }
 
   // ---- Drill-down -------------------------------------------------------------------

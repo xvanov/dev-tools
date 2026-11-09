@@ -75,4 +75,45 @@ function load(href, layer) {
   assert.ok(nav.destinations.every((d) => d.label), 'every destination has a label');
 }
 
+// The whole tab shares one events socket and one chat socket, however many
+// frames subscribe. That is what keeps a browser under its six connections.
+{
+  const sources = [];
+  class ES {
+    constructor(url) { this.url = url; this.readyState = 1; sources.push(this); }
+    close() { this.readyState = 2; }
+  }
+  const noop = () => {};
+  const el = () => ({
+    setAttribute: noop, getAttribute: () => null, removeAttribute: noop, toggleAttribute: noop,
+    appendChild: noop, insertBefore: noop, addEventListener: noop, classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+    querySelector: () => null, querySelectorAll: () => [], style: {},
+  });
+  const document = {
+    documentElement: el(), currentScript: { getAttribute: () => 'termhub' }, readyState: 'loading',
+    addEventListener: noop, querySelector: () => null, querySelectorAll: () => [], createElement: el, title: '',
+  };
+  const window = {
+    document, location: new URL('http://127.0.0.1:7000/'), EventSource: ES,
+    localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    matchMedia: () => ({ matches: false, addEventListener: noop }), addEventListener: noop,
+    history: { pushState: noop }, fetch: () => new Promise(noop), URL, URLSearchParams,
+    setTimeout: noop, clearTimeout: noop, setInterval: noop, CustomEvent: function () {},
+  };
+  window.top = window;
+  window.window = window;
+  vm.runInNewContext(SRC, Object.assign(window, { window }));
+  const a = window.JarvisNav.streams.events({ onmessage: noop });
+  const b = window.JarvisNav.streams.events({ onmessage: noop });
+  window.JarvisNav.streams.chat({ onmessage: noop });
+  window.JarvisNav.streams.chat({ onmessage: noop });
+  assert.strictEqual(sources.length, 2, 'one events socket and one chat socket per tab');
+  assert.strictEqual(sources[0].url, '/pa/api/events');
+  assert.strictEqual(sources[1].url, '/pa/api/chat/stream');
+  a();
+  assert.strictEqual(sources[0].readyState, 1, 'one subscriber leaving keeps the socket');
+  b();
+  assert.strictEqual(sources[0].readyState, 2, 'the last subscriber closes it');
+}
+
 console.log('nav ok');

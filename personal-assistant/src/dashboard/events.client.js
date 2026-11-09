@@ -7,13 +7,14 @@
  * what this page missed: another worker generation, a restart). A slow
  * fallback poll (fallbackMs, 5 min by default) covers whatever the feed misses.
  *
- * One EventSource per page, whatever the number of subscribers: over plain
- * HTTP/1.1 a browser allows six connections per host, and Plan, Build and Ask
- * stay open side by side in nav.js's frames, each with its chat stream too.
- * The browser reconnects by itself and sends Last-Event-ID; when it gives up
- * (a non-200 answer while the supervisor rolls), a new one is opened with
- * ?lastEventId= after a backoff. URLs are relative so the page works under
- * termhub's /pa/ proxy too.
+ * One EventSource for the whole tab when nav.js's shared hub is there (Ask,
+ * Plan and Build stay open side by side; a socket each would fill the
+ * browser's six connections and the next tab would never finish loading).
+ * Without the hub, one EventSource per page, whatever the number of
+ * subscribers. The browser reconnects by itself and sends Last-Event-ID;
+ * when it gives up (a non-200 answer while the supervisor rolls), a new one
+ * is opened with ?lastEventId= after a backoff. URLs are relative so the
+ * page works under termhub's /pa/ proxy too.
  */
 (function () {
   'use strict';
@@ -23,25 +24,35 @@
   var es = null;
   var retry = 0;
   var reopen = null;
+  var release = null; // the tab hub, one registration for every subscriber here
+
+  function takeMessage(m) {
+    retry = 0;
+    if (m.lastEventId) lastId = m.lastEventId;
+    var e;
+    try {
+      e = JSON.parse(m.data);
+    } catch (err) {
+      return;
+    }
+    if (!e || e.topic === 'hello') return;
+    subs.slice().forEach(function (s) { s.take(e); });
+  }
+
+  // The tab's one feed, owned by the top window (nav.js). Null when this
+  // page is open on its own, in which case open() holds the socket.
+  function hub() {
+    var nav = window.JarvisNav;
+    return nav && nav.streams ? nav.streams : null;
+  }
 
   function open() {
     clearTimeout(reopen);
     reopen = null;
-    if (!window.EventSource || es || !subs.length) return;
+    if (hub() || !window.EventSource || es || !subs.length) return;
     var source = new window.EventSource('api/events' + (lastId ? '?lastEventId=' + encodeURIComponent(lastId) : ''));
     es = source;
-    source.onmessage = function (m) {
-      retry = 0;
-      if (m.lastEventId) lastId = m.lastEventId;
-      var e;
-      try {
-        e = JSON.parse(m.data);
-      } catch (err) {
-        return;
-      }
-      if (!e || e.topic === 'hello') return;
-      subs.slice().forEach(function (s) { s.take(e); });
-    };
+    source.onmessage = takeMessage;
     source.onerror = function () {
       if (source.readyState !== 2) return; // CONNECTING: the browser is retrying itself
       if (es === source) es = null;
@@ -74,7 +85,9 @@
       },
     };
     subs.push(sub);
-    if (!es && !reopen) open();
+    var shared = hub();
+    if (shared) { if (!release) release = shared.events({ onmessage: takeMessage }); }
+    else if (!es && !reopen) open();
     var poll = setInterval(function () {
       if (document.visibilityState === 'visible') changed();
     }, opts.fallbackMs || 300000);
@@ -84,6 +97,7 @@
         clearInterval(poll);
         clearTimeout(timer);
         subs = subs.filter(function (s) { return s !== sub; });
+        if (!subs.length && release) { release(); release = null; }
         if (!subs.length && es) {
           es.close();
           es = null;
