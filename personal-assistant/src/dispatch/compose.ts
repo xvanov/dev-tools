@@ -135,7 +135,7 @@ function repoStamp(repo: string): string {
     if (!fs.statSync(git).isDirectory()) {
       const t = fs.readFileSync(git, 'utf8');
       const m = /^gitdir:\s*(.*)$/m.exec(t);
-      git = m ? path.resolve(path.dirname(git), m[1].trim()) : git;
+      git = m ? path.resolve(path.dirname(git), (m[1] ?? '').trim()) : git;
     }
     let head = fs.readFileSync(path.join(git, 'HEAD'), 'utf8').trim();
     if (head.startsWith('ref:')) {
@@ -377,7 +377,7 @@ async function compose({
   route = 'factory',
   useModel = true,
   continues = null,
-}: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number; ms: { gather: number; model: number } }> {
+}: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number; ms: { gather: number; hints: number; model: number } }> {
   const started = Date.now();
   const inputs = await gather({ target, task, done, app, slug, appPath, continues });
   const gathered = Date.now();

@@ -280,6 +280,10 @@ async function composeModule() {
   g('init', '-q');
   g('add', '-A');
   g('-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-qm', 'init');
+  // The production budget is 300 ms for the whole scan; under a loaded test run
+  // a fresh git process can exceed it on this tiny repo. The budget is the thing
+  // under test elsewhere, so this test takes a generous one and restores it.
+  compose._setScanMs(5000);
   const hints = await compose.codeHints(repo, 'Add retries to the nightly export');
   const paths = hints.reuse.map((r) => r.path);
   assert.ok(paths.includes('src/export/nightly.js'), paths.join(','));
@@ -293,6 +297,7 @@ async function composeModule() {
   const cachedMs = Date.now() - cachedAt;
   assert.ok(cachedMs < 50, `cached per checkout (${cachedMs} ms)`);
   assert.deepStrictEqual(cached.reuse.map((r) => r.path), paths);
+  compose._setScanMs(300);
   // A 1 ms budget kills git. The hard stop is a second after that, so this
   // stays well under the old 6 s scan.
   compose._setScanMs(1);

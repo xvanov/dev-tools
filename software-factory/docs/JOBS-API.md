@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -200,8 +200,10 @@ instead send it to a running `factory serve`:
     {"argv": ["job", "status", "<job_id>", "--json"]}
     -> {"code": <exit code>, "stdout": "<exactly the CLI's stdout>", "stderr": "...", "ms": n}
 
-Same command, same validation, same JSON (it runs in serve's warm process: ~0.1 s
-instead of 5–10 s of `uv run`). Allowed: every `job` verb except `follow`, and every
+Same command, same validation, same JSON (it runs in serve's warm process, so it
+skips the 5–10 s `uv run`). `job status`, `job list` and `app list` answer from
+local state plus a background GitHub snapshot (v1.7); every other verb runs the
+CLI in-process. Allowed: every `job` verb except `follow`, and every
 `app` verb; anything else is HTTP 400. Nothing listening (serve not running or
 restarting) means the command did not run: use the CLI. `factory serve` also POSTs
 job state changes to the personal assistant (`/api/factory/events`). See
@@ -303,7 +305,8 @@ fails, PR fields fall back to the local view (`pr_state: null`) and `why` says
 `GitHub unavailable, local view: …`. `--no-github` (added v1.1) skips GitHub on purpose.
 
 ### `factory job list --json [--source pa] [--active] [--app <app>] [--no-github]`
-`{"jobs": [<status object>, ...]}` — one `gh pr list` per repo, however many jobs.
+`{"jobs": [<status object>, ...]}`. The CLI does one `gh pr list` per repo, however
+many jobs. `factory serve` serves the same objects from the v1.7 snapshot.
 
 ### `factory job follow <job_id>`
 Human-readable, NOT JSON (`--interval <s>`, default 3). Streams the job's events (story transitions, handler runs, gate
@@ -705,3 +708,28 @@ would strand a PA run that cannot know the host's ticker. With `ticked: false`:
   reason to `why` for a triaging, in-progress or blocked one. The state is unchanged.
 
 A caller should treat `ticked: false` on a live job as waiting on a human, not as running.
+
+## v1.7 additions (2026-11-08): millisecond reads on factory serve
+
+Additive. The CLI (`factory job status`, `factory job list`, `factory app list`) still
+asks GitHub, and on Linux the timers, in that process. A human's answer is current.
+
+`factory serve`'s `POST /api/cli` for those three reads does not call `gh`, git, or
+`systemctl`. Story and direction state come from the factory db and the direction
+files. GitHub-derived fields (`pr_state`, `ci`, whether a delivery is confirmed so
+the job can be `done`) come from a snapshot a background thread refreshes about
+every 10 s: one `gh pr list` per registered repo, then CI and branch reads for the
+stories that need them. `ticked` comes from the same snapshot (serve's status file
+and, on Linux, the last timer scan). A cold serve, before the first good refresh,
+behaves as GitHub unavailable (local view, `why` says so). A failed refresh keeps
+the previous good snapshot.
+
+### Status / list: new field
+
+`"github_as_of": ISO-8601 UTC | null`
+
+When those GitHub fields were read. A live CLI read stamps the request. A serve
+read stamps the snapshot. `null` with `--no-github`, on a research/report job, or
+when GitHub could not be asked (no snapshot yet, or `gh` failed and no older
+snapshot is kept). The state machine is unchanged: a delivery only the local view
+claims is still not `done`.

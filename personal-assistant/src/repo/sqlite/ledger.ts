@@ -201,13 +201,19 @@ function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommit
       const as = sameThread(c, a) ? 1 : 0;
       const bs = sameThread(c, b) ? 1 : 0;
       if (as !== bs) return bs - as;
-      if (a.fetched_at < b.fetched_at) return -1;
-      if (a.fetched_at > b.fetched_at) return 1;
+      const af = String(a.fetched_at);
+      const bf = String(b.fetched_at);
+      if (af < bf) return -1;
+      if (af > bf) return 1;
       return Number(a.id) - Number(b.id);
     });
     const kept = ranked.slice(0, perCommitment);
-    kept.sort((a, b) => (a.fetched_at < b.fetched_at ? -1 : a.fetched_at > b.fetched_at ? 1 : Number(a.id) - Number(b.id)));
-    let through = String(kept[0].fetched_at);
+    kept.sort((a, b) => {
+      const af = String(a.fetched_at);
+      const bf = String(b.fetched_at);
+      return af < bf ? -1 : af > bf ? 1 : Number(a.id) - Number(b.id);
+    });
+    let through = String(kept[0]?.fetched_at ?? '');
     for (const item of kept) if (String(item.fetched_at) > through) through = String(item.fetched_at);
     out.push({
       id: c.id,
@@ -349,7 +355,7 @@ function create(db: Db) {
         }
       }
       if (checked.length) {
-        let oldest = String(checked[0].ledger_checked_at);
+        let oldest = String(checked[0]?.ledger_checked_at ?? '');
         for (const c of checked) if (String(c.ledger_checked_at) < oldest) oldest = String(c.ledger_checked_at);
         // Idle: nothing fetched since every open ask was checked. One seek.
         const hit = await db.one(

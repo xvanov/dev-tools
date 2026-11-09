@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from factory.delivery import DeliveryConfig
 
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 #: The pipelines a job can run. ``chain`` = PM->SM->dev->reviewer->gates;
 #: ``solo`` = one dev agent + gates (B.1); ``auto`` = the factory decides
 #: (v1: the app's ``pipeline_default``, and ``auto`` there means ``chain``).
@@ -365,7 +367,7 @@ def load_app_config(app: str, software_factory_root: Path) -> AppConfig:
     cfg_path = Path(software_factory_root) / "apps" / app / "config.yaml"
     if not cfg_path.exists():
         raise FileNotFoundError(f"App config missing: {cfg_path}. Expected apps/<app>/config.yaml.")
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    raw = yaml.load(cfg_path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{cfg_path}: top-level must be a YAML mapping")
     if not raw.get("app_repo_path"):

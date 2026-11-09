@@ -588,6 +588,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
   versions, desktop and disk-janitor tests/CI, the factory's test count and model routes, a
   hostname) and adds the root CLAUDE.md conventions it dropped. Tick when #69 merges.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
+  2026-11-08, live work serve before this change (checkout `9cd5567`, serve `ms`): `job list`
+  3.5–3.7 s (2.3 s in this session), `job status dev-tools:020` 1.6–3.3 s (1.6 s), `app list`
+  0.35–1.3 s (0.47–1.0 s). The time was Typer rebuilding the whole CLI on every request
+  (0.3–1.5 s), a live `gh pr list` (about 1 s, plus CI views when a PR is open; the `gh` shim
+  also runs `gh auth token`), and PyYAML re-parsing every `state.yaml` on each list. After
+  (this code, warm process, no `gh` on the request): live state, 23 jobs — list 30–43 ms,
+  status 5 ms, app list 3 ms. A 30-job db through `run_cli`: list 25–33 ms, status 3–4 ms,
+  app list 1 ms. Not ticked: confirm on the live serve after deploy.
 
 ## Phase 3: storage to SQLite (D2)
 
@@ -1177,6 +1185,8 @@ not in the Map is not done, and a new one gets added there first.
     cached wall 5 ms. Without the model that is 1026 / 393 / 5 ms, but the stub's submit is not
     the factory CLI (the re-review's submit was 1345 ms). Adding that back leaves the call over
     1 s. Not ticked.
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): 1165 ms, the 9972 ms round trip less
+    compose's 8807 ms. Per-lap `ms.serve` was not in the log window. Still over 1000 ms.
   - [x] **8.4.15 deepseek-pr: approval to "started" is ≈2.9 s (target 1 s); the e2e read 11.1 s.**
     factory_start returned ≈19:56:45.7, and the job sat `queued` ("waiting for pm-sync on the next
     factory tick") until the pm step started at 19:56:48.59. Same root as 8.4.9: a submit should
@@ -1194,7 +1204,9 @@ not in the Map is not done, and a new one gets added there first.
     PM builds the GitHub client on first use and runs GC after the step, so that work no
     longer sits in front of the runs row. A budget defer requests a progress wake (a finished
     step already did). The sm step still pays a cold `python -m factory tick` start.
-  - [ ] **8.4.16 deepseek-pr: the worker hop is not measured.** One sample: PR #63 closed at
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): 275 ms, factory_start return to the pm
+    step's `started_at`. Under 1000 ms.
+  - [x] **8.4.16 deepseek-pr: the worker hop is not measured.** One sample: PR #63 closed at
     20:24:37Z, the PA `run` row reached the live feed at 20:25:01 (24 s) and `factory_board` at
     20:25:08 (31 s). The factory's `updated_at` moved only at 20:28:52, so it can't time the change.
     Re-measure once serve runs e88e204 (E3 push), with 8.4.10's measurement.
@@ -1206,6 +1218,10 @@ not in the Map is not done, and a new one gets added there first.
     The e2e now records that worker hop on a deepseek-pr run too (this commit):
     the same frames and the same note. Not run live; the reviewer re-run is the
     measurement.
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): measured, 2207 ms. queued 179 ms via
+    the run row (job status); triaging not seen; in_progress 2207 ms via the run row. No
+    terminal plan-card sample (the job was still `pr_open`). Over the 200 ms target; that
+    number is for D27.
   - [x] **8.4.17 deepseek-pr: step session links open a 404.** Plan's card chain, Build and
     `factory_job` give `http://127.0.0.1:7010/#session=…` for every factory step, and sessiond's
     `GET /` is 404; only the run's follow session links to the front (:7000). Set
@@ -1718,7 +1734,7 @@ not in the Map is not done, and a new one gets added there first.
   asking GitHub (`test_jobs_that_ended_before_serve_started_are_not_announced` asserts no reads),
   so only jobs that end afterwards are confirmed. The confirm never ran on the API's threads, and
   since the 8.4.44 factory follow-up it is off the watch thread too.
-  - [ ] **8.4.49 deepseek-pr: the diff still fails review, and the reviewer misses it.** PR #72's
+  - [x] **8.4.49 deepseek-pr: the diff still fails review, and the reviewer misses it.** PR #72's
     `pa version` runs `git rev-parse --short HEAD` without a `cwd`, as #63 did. With the dashboard
     down, run from another repo it printed that repo's commit, and run outside a repo it printed
     "version unknown (… git unavailable)" and exited 0. Its own comment cites `server.ts:618`, the
@@ -1730,6 +1746,9 @@ not in the Map is not done, and a new one gets added there first.
     the job's ask verbatim (`artifacts/ask.md`) and the bounded full content of files
     the diff touches plus files the ask, the story or the context names, so it can
     judge behaviour. (9ff0703)
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): PR #78's `git rev-parse` sets `cwd` to
+    the personal-assistant directory, and a miss exits 1. Kimi approved (two newline lows,
+    score 0.85). No blocker.
   - [ ] **8.4.50 deepseek-pr: a review with no blocker costs a fix round.** Cycle 1 returned
     `request_changes` on one medium and four lows. The medium was a false alarm: `/api/version`
     "has no cited precedent", but `server.ts:290` serves it. The fix round and the second review
@@ -1741,7 +1760,9 @@ not in the Map is not done, and a new one gets added there first.
     `blocking`) finding or on test slop / a score under 0.7. Medium and low findings
     are copied into `comments_to_post` and the story proceeds to tech_writer. The
     chain's reviewer still treats a medium as a cycle. (06421ff)
-  - [ ] **8.4.51 deepseek-pr: the dev step takes 5.4 min to start its agent.** The handler started
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): no fix round. The lows never reached
+    the PR (8.4.55), so the "send them to the PR" half is still open.
+  - [x] **8.4.51 deepseek-pr: the dev step takes 5.4 min to start its agent.** The handler started
     at 00:00:27.6. `solo_checks` came 90.6 s later, then the lint baseline (`uv run --all-extras
     ruff check .` in software-factory, for a personal-assistant diff) took 95 s. Another 140 s
     passed from the run row (00:03:34) to the stream's first event (00:05:53.7). The fix round
@@ -1756,6 +1777,10 @@ not in the Map is not done, and a new one gets added there first.
     is not fetched and merged again before the dev step. A software-factory
     story still pays `uv sync` on a fresh worktree, and the 140 s before the
     agent's first event (a warm runtime) is not this cut.
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): handler 02:05:58.72, `solo_checks`
+    0.8 s later, lint baseline at +2.5 s on the three context markdown files (not
+    `ruff check .`). The stream's first event was 0.8 s after `started_at`. The agent
+    then took 416 s.
   - [x] **8.4.52 deepseek-pr: the tech_writer's context update is lost.** Step 70 rewrote
     `apps/dev-tools/context/navigation.md` (adding `src/cli/version.ts`), and
     `apply_context_updates` writes into the story's worktree. PR #72 has only the three code
@@ -1766,6 +1791,8 @@ not in the Map is not done, and a new one gets added there first.
     was cut without it. The update is now committed on the story branch before
     tech_writer advances (and so before the PR is opened). A failed commit bounces
     the story instead of advancing with the file uncommitted. (c3a8219)
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): commit `d4ef131` is in PR #78 and
+    adds `src/cli/version.ts` and the test to `navigation.md`.
   - [x] **8.4.53 PA: an e2e dummy card leaks into a real card's blocker verdict.** On the Plan
     board, an unrelated work card shows "You need: Needs the ArgoCD sync to deploy the target
     service before adding the pa version verb." It is a stored block row (`verdict: blocks`,
@@ -1779,6 +1806,9 @@ not in the Map is not done, and a new one gets added there first.
     Research re-review (`dev-tools:r0004`, 9cd5567): verified live. The Plan page
     text does not show the leaked blocker phrase. The only On-me card whose text
     carries an e2e marker is this run's own card.
+    deepseek-pr re-review (`dev-tools:008`, 9cd5567): the personal Plan board had only this
+    run's card. No other card's text named the dummy ask, so the filter was not proven
+    against a second card.
   - [ ] **8.4.54 whats-on: tomorrow's answer leaves out the cancelled meeting.**
     On the work stack at 9cd5567, Sunday evening, the snapshot lists three open
     meetings tomorrow (10:00, 11:00, 11:30) and a cancelled one at 04:00. 3 of 3
@@ -1787,6 +1817,23 @@ not in the Map is not done, and a new one gets added there first.
     ([acceptance/whats-on.md](acceptance/whats-on.md), re-review). The answerer
     rule says a cancelled meeting is said to be cancelled. Name it, or say how
     many were cancelled, when that day is asked for.
+  - [ ] **8.4.55 deepseek-pr: solo review notes never reach the PR.** Job `dev-tools:008`,
+    the review handler ended 02:13:37Z and the PR was pushed at 02:14:10Z. `comments_to_post`
+    held two newline lows and two citation notes, and the post runs only once
+    `github_pr_number` is set, so it posted nothing. PR #78 has no reviewer comments and
+    the story log has no "Reviewer note". The fix round was correctly not spent (8.4.50).
+    Post the notes after the PR exists, and do not swallow a failed post.
+  - [ ] **8.4.56 deepseek-pr: CI on the PR head is red, and the e2e ends the watch anyway.**
+    Run 42549793897 on `d4ef131`: jarvisd ubuntu and windows fail `npm test` (`tsc`:
+    `fetched_at` is unknown, and `ms.hints` is not in `compose.ts`'s return type — files
+    this diff does not change). The merged base's main CI skipped jarvisd. software-factory
+    ubuntu failed pytest (5m21s; the assertion was not captured, the run was still open).
+    The e2e github hop is ok with note "CI failing" at 36 s
+    ([acceptance/deepseek-pr.md](acceptance/deepseek-pr.md), 2026-11-09).
+  - [ ] **8.4.57 deepseek-pr: a failing CI starts a fix dev after the e2e returns, and it
+    spends past the ceiling.** The e2e scored $1.4232 and exited. The factory's watch
+    started at 02:19:21Z and redispatched a dev at 02:25:04Z (cycle 1 of 3, step 51062).
+    `job cancel` at 02:28:50Z recorded cost_usd $2.336, over the $2 ceiling.
 - [x] **8.5 Architecture map review.** (39e5173, 32e869a; both stacks' live `/api/architecture`
   checked at 77be77a: 37 components, sqlite-store/jarvisd/ptyd live, postgres an optional
   backend, no WSL termhub) A full pass over `architecture.json` (the `/architecture`

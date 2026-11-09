@@ -8,6 +8,7 @@ bugs in how we shell out and how we recover from races.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -438,6 +439,30 @@ def test_ensure_renames_an_undeletable_leftover_aside(
     assert _current_branch(again) == "factory/story-35-e2e"
     asides = [p for p in wt.parent.iterdir() if p.name.startswith(f"{wt.name}.stale-")]
     assert len(asides) == 1
+
+
+def test_ensure_steps_aside_when_a_process_holds_the_leftover_directory(tmp_path: Path) -> None:
+    """2026-11-09, dev-tools:021: the dev step's terminal kept the worktree as
+    its cwd. The directory was empty, and Windows refused to rename it
+    (WinError 32), so every tick rolled the story back and tried again."""
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=str(src), check=False)
+    wt.mkdir(exist_ok=True)
+    gitlink = wt / ".git"
+    if gitlink.exists():
+        gitlink.unlink()
+    holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], cwd=str(wt))
+    try:
+        again = _ensure_again(src, factory_root)
+        assert again != wt
+        assert again.name.startswith(wt.name + "-alt-")
+        assert _current_branch(again) == "factory/story-35-e2e"
+        assert (again / "work.txt").read_text(encoding="utf-8") == "attempt 1\n"
+        third = _ensure_again(src, factory_root)
+        assert third == again
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
 
 
 def test_ensure_falls_back_when_the_branch_probe_misreports(

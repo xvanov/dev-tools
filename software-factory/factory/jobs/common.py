@@ -12,6 +12,32 @@ import yaml
 from factory.directions.parser import _ID_PREFIX_RE, list_direction_dirs
 from factory.state_dir import state_dir
 
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+#: Parsed direction files, keyed by path + mtime + size. A serve process
+#: re-reads the same files on every poll; the parse (not the bytes) was the
+#: cost. Callers get a shallow copy so a later writer cannot dirty the cache.
+_YAML_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+_YAML_CACHE_MAX = 800
+
+
+def _remember(key: tuple[str, str, int, int], meta: dict[str, Any]) -> dict[str, Any]:
+    if len(_YAML_CACHE) >= _YAML_CACHE_MAX:
+        _YAML_CACHE.clear()
+    _YAML_CACHE[key] = meta
+    return dict(meta)
+
+
+def _cached(kind: str, path: Path) -> tuple[tuple[str, str, int, int], dict[str, Any] | None]:
+    try:
+        st = path.stat()
+    except OSError:
+        return (kind, str(path), 0, 0), None
+    key = (kind, str(path), st.st_mtime_ns, st.st_size)
+    hit = _YAML_CACHE.get(key)
+    return key, (None if hit is None else dict(hit))
+
+
 #: Separator between app and direction id in a job id (``sacrifice:021``).
 JOB_ID_SEP = ":"
 
@@ -57,22 +83,61 @@ def registered_apps(root: Path) -> list[str]:
     return sorted(p.name for p in apps_dir.iterdir() if (p / "config.yaml").is_file())
 
 
+def _frontmatter_block(text: str) -> dict[str, Any] | None:
+    """YAML between the opening fences, or None to fall back to the library."""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end < 0:
+        return None
+    try:
+        loaded = yaml.load(text[3:end], Loader=_YAML_LOADER) or {}
+    except yaml.YAMLError:
+        return None
+    return dict(loaded) if isinstance(loaded, dict) else None
+
+
 def read_frontmatter(dir_path: Path) -> dict[str, Any]:
     """The ``direction.md`` frontmatter, or ``{}`` if unreadable."""
+    path = Path(dir_path) / "direction.md"
+    key, hit = _cached("fm", path)
+    if hit is not None:
+        return hit
     try:
-        post = frontmatter.load(str(Path(dir_path) / "direction.md"))
-    except Exception:  # noqa: BLE001 - a corrupt sibling must not break listing
+        text = path.read_text(encoding="utf-8")
+    except OSError:
         return {}
-    return dict(post.metadata or {})
+    meta = _frontmatter_block(text)
+    if meta is None:
+        try:
+            post = frontmatter.load(str(path))
+        except Exception:  # noqa: BLE001 - a corrupt sibling must not break listing
+            return {}
+        meta = dict(post.metadata or {})
+    return _remember(key, meta)
 
 
 def read_state_yaml(dir_path: Path) -> dict[str, Any]:
     path = Path(dir_path) / "state.yaml"
+    key, hit = _cached("st", path)
+    if hit is not None:
+        audit = hit.get("audit")
+        if isinstance(audit, list):
+            hit["audit"] = list(audit)
+        return hit
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        loaded = yaml.load(path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     except (OSError, yaml.YAMLError):
         return {}
-    return loaded if isinstance(loaded, dict) else {}
+    if not isinstance(loaded, dict):
+        return {}
+    stored = _remember(key, loaded)
+    audit = stored.get("audit")
+    if isinstance(audit, list):
+        stored["audit"] = list(audit)
+    return stored
 
 
 @dataclass

@@ -1784,7 +1784,14 @@ def serve_cmd(
                     },
                     after_call=_after_call,
                 )
-                sched.log(f"api on http://127.0.0.1:{api_port} (POST /api/cli, GET /api/health)")
+                from factory.jobs.read_cache import ensure_started
+
+                ensure_started(_FACTORY_ROOT, log=sched.log)
+                sched.log(
+                    f"api on http://127.0.0.1:{api_port} (POST /api/cli, GET /api/health); "
+                    "job status/list and app list read the local db plus a GitHub snapshot "
+                    "refreshed in the background"
+                )
                 import threading as _threading
 
                 # Pay the import cost (seconds; litellm alone ~25 s cold on
