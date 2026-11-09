@@ -158,13 +158,13 @@ async function post(pathname: string, body: Json): Promise<Json | undefined> {
   const factory = require('../dispatch/factory.ts');
   if (pathname === '/api/factory/apps') {
     const input = addInput(body);
-    const r = await factoryCall(() => factory.addApp(input));
+    const r = await factoryCall<Json>(() => factory.addApp(input));
     return r;
   }
   if (!pathname.startsWith('/api/factory/apps/')) return undefined;
   const app = appFromPath(pathname);
   if (!app) throw bad('not an app name');
-  const r = await factoryCall(() => factory.call(setArgv(app, body)));
+  const r = await factoryCall<Json>(() => factory.call(setArgv(app, body)));
   await factory.forgetApps();
   return r;
 }
