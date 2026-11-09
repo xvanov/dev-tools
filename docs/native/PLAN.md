@@ -1187,7 +1187,7 @@ not in the Map is not done, and a new one gets added there first.
     first dev conversation took 48 turns (76 before). Other personas' prompts were not checked.
     Done: when project.md or navigation.md is missing, only the onboarder persona gets
     "NO CONTEXT AVAILABLE … You are likely the Onboarder persona". Every other persona
-    gets a one-line note to continue from the code and the task.
+    gets a one-line note to continue from the code and the task. (94b9065)
   - [x] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
     delivers a ready PR, and the factory forbids the agent from opening one.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
