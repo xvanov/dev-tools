@@ -336,6 +336,31 @@ function pageHtml(token: string | null = null) {
 }
 
 // Returns true when it answered the request.
+// The voice page is not a meeting. What it says and when it holds the mic go
+// to the logs meeting capture reads (src/audio/selfSpeech.ts): a spoken turn
+// or reply marks the time as yours, and while the page listens its browser is
+// not counted as a call by the meeting gate.
+const talkNoted: Record<string, number> = {};
+function noteTalk(what: string, now: number = Date.now()) {
+  if (now - (talkNoted[what] || 0) < 5000) return;
+  talkNoted[what] = now;
+  require('../audio/selfSpeech.ts').append(config.audio.selfSpeech.talkLog, { at: new Date(now).toISOString(), what }, now);
+}
+
+function noteMic(on: boolean, userAgent: unknown, now: number = Date.now()) {
+  const file = config.audio.selfSpeech.talkMicFile;
+  try {
+    if (!on) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ at: new Date(now).toISOString(), browser: require('../audio/selfSpeech.ts').browserOf(userAgent) }));
+  } catch {
+    /* best effort: the gate then counts the browser, as before */
+  }
+}
+
 async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null }: { send: Ctx['send']; issuePageToken?: Ctx['issuePageToken'] | null }) {
   if (req.method === 'GET' && url.pathname === '/talk') {
     // The fast lane's snapshot of the day is built now, not on the first turn.
@@ -408,6 +433,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
     }
     const fields = sanitizeLatency(body);
     if (fields) log.info('voice turn latency', fields);
+    noteTalk('turn');
     send(res, 202, { ok: !!fields });
     return true;
   }
@@ -420,6 +446,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
     }
     const [p, limit, type] = voicePost;
     if (p === 'endpoint') stopWhisperWarm(); // the user has paused: the transcription is next
+    if (p === 'tts') noteTalk('tts');
     await proxyVoice(req, res, p, { send, limit, contentType: type });
     return true;
   }
@@ -428,7 +455,24 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
       send(res, 403, { error: 'missing X-PA header' });
       return true;
     }
+    noteTalk('turn');
     await turn(req, res, { send });
+    return true;
+  }
+  // The page holds the mic ({on: true}, every 20 s while listening) or let it go.
+  if (req.method === 'POST' && url.pathname === '/api/talk/mic') {
+    if (req.headers['x-pa'] !== '1') {
+      send(res, 403, { error: 'missing X-PA header' });
+      return true;
+    }
+    let body: { on?: unknown } = {};
+    try {
+      body = JSON.parse((await readBody(req, 1024)).toString('utf8') || '{}');
+    } catch {
+      /* malformed: treated as off */
+    }
+    noteMic(body.on === true, req.headers['user-agent']);
+    send(res, 202, { ok: true });
     return true;
   }
   return false;

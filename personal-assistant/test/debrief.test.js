@@ -200,6 +200,34 @@ const meetingStart = '2026-09-02T14:00:00Z'; // a Wednesday
   assert.strictEqual(n.body, '1. To-do: Fix the ledger import (by 2026-09-04)\n2. Done: Migrate cost codes\n3. Decision: Nightly sync');
 }
 
+// ---------------------------------------------- nobody else in it -----
+
+{
+  // A recording of you alone is not a meeting: the model says so and it is
+  // discarded rather than listed (debrief #63, "Solo dictation: …").
+  assert.strictEqual(D.parseDebrief({ others_present: false, title: 'Coding notes' }, { transcript, refs }).solo, true);
+  assert.strictEqual(D.parseDebrief({ others_present: 'false' }, { transcript, refs }).solo, true);
+  assert.strictEqual(D.parseDebrief({ others_present: true, title: 'Solo dictation: plan' }, { transcript, refs }).solo, false, 'the model decides when it answers');
+  // An older reply without the field: a title that says solo.
+  assert.strictEqual(D.isSolo({ title: 'Solo dictation: personal assistant bugs and software factory questions' }), true);
+  assert.strictEqual(D.isSolo({ title: 'Native build architecture dictation (no call)' }), true);
+  assert.strictEqual(D.isSolo({ title: 'Call with Derek Rees' }), false);
+  assert.strictEqual(D.isSolo({ title: 'Dictation feature review' }), false, 'a meeting about dictation is still a meeting');
+  assert.strictEqual(D.isSolo({}), false);
+  assert.match(D.SYSTEM, /others_present/);
+}
+
+{
+  // `pa meeting solo` lists by title what was filed before the check existed.
+  const { LOOKS_SOLO } = require('../src/meetings/debrief.ts');
+  for (const t of ['Solo dictation: OpenClaw evaluation and garage inventory app', 'Solo session — Factory flexibility and UI cleanup', 'Native build architecture dictation (no call)', 'Call: Plan View Settings and Software Factory Dictation', 'Meta Ray-Ban Display glasses review (video playing in background)']) {
+    assert.ok(LOOKS_SOLO.test(t), t);
+  }
+  for (const t of ['Call with Whitney Yvette — Docebo-HubSpot Engagement Card Review', 'Artemis Standup', 'Docebo-Hubspot Integration']) {
+    assert.ok(!LOOKS_SOLO.test(t), t);
+  }
+}
+
 // ------------------------------------------------- episode boundaries -----
 
 const at = (h, m) => new Date(Date.UTC(2026, 8, 2, h, m)).toISOString();

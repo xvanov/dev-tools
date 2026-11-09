@@ -555,13 +555,26 @@
     }
     mic.on = true;
     owner.claim();
+    micBeat(true);
     $('face').title = '';
     notice('');
     if (TOUCH && prefs.handsFree) wakeLock.acquire();
     return true;
   }
 
+  // While the page listens, the PA hears from it every 20 s: the meeting gate
+  // then does not take this browser holding the mic for a call (talk.ts).
+  let micBeatTimer = null;
+  function micBeat(on) {
+    clearInterval(micBeatTimer);
+    micBeatTimer = null;
+    const post = () => fetch('api/talk/mic', { method: 'POST', headers: { 'X-PA': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) }).catch(() => {});
+    post();
+    if (on) micBeatTimer = setInterval(post, 20_000);
+  }
+
   function stopMic() {
+    if (mic.on) micBeat(false);
     if (mic.cap) mic.cap.stop();
     mic.cap = null;
     mic.on = false;

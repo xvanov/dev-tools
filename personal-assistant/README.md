@@ -805,11 +805,18 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
 4. **Once.** The generic distiller skips meeting and call recordings (the debrief owns them). A
    meeting that keeps going after its debrief is debriefed again once it has grown by a page of
    speech; the second pass sees the first one's to-dos as open commitments.
+5. **Nobody else in it: discarded.** The model also says whether anyone but you takes part
+   (`others_present`). When nobody does — dictation, talking with the assistant, a video playing —
+   nothing is applied and the recording is discarded: its transcript item, audio and any earlier
+   debrief go, and the episode stays only as a `solo` marker the audio pass will not store again.
 
 ```
 pa meeting debrief [episode-id|last] [--dry-run] [--notify]
 pa meeting debriefs [--days 7]
 pa meeting undo <debrief-id> <n>
+pa meeting solo [--days 30]          debriefs whose title says you were alone (read-only)
+pa meeting solo --apply              remove those: undo what they applied, delete debrief, transcript, audio
+pa meeting discard <debrief-id>...   the same for debriefs you name
 ```
 
 `PA_DEBRIEF=0` turns it off.
@@ -1177,8 +1184,26 @@ device, except while a calendar meeting with other people in it is on (from two 
 its start to five after its end) or another app holds the microphone. The second is the
 unplanned call: a Teams ring, a Zoom link in chat, a Meet tab. Windows records which app holds
 the mic, and the gate reads that every 20 s; our own recorder and voice-dictation (Python) do
-not count. After a call lets go it waits two minutes before pausing, so a dropped call that
-rejoins stays one recording. `PA_AUDIO_MEETING_GATE=0` goes back to always-on.
+not count, nor do dictation apps (`PA_AUDIO_GATE_IGNORE_APPS`, default Wispr Flow and
+voice-dictation's folder), nor the browser the voice page (`/talk`) is listening in while it
+says so (`POST /api/talk/mic` every 20 s). After a call lets go it waits two minutes before
+pausing, so a dropped call that rejoins stays one recording. `PA_AUDIO_MEETING_GATE=0` goes back
+to always-on.
+
+**Only conversations with someone else in them are kept.** Your push-to-talk dictation while
+coding, a conversation with Jarvis and Jarvis's replies on the speakers are already in your
+sessions; they are not meetings. Three logs say when they happened (`src/audio/selfSpeech.ts`):
+voice-dictation's transcribe server writes one line per request (`speech-activity.jsonl` in its
+data dir, `PA_DICTATION_LOG`; times and lengths, no text) — every dictation path goes through it —
+the voice page logs its turns and spoken replies (`talk-activity.jsonl`), and the gate logs the
+apps it counted as a call while they held the mic (`mic-calls.jsonl`). A speech group that is
+mostly inside your dictation or the voice page is dropped before episodes are made. An episode
+heard only through the mic is a call only when a call app held the mic during it (the far end
+on the speakers), or a meeting when it overlaps a calendar meeting with other people in it;
+otherwise it is you alone (`solo`) and is not stored — no transcript item, no debrief — and its
+sidecars and speech audio are deleted once `PA_AUDIO_SOLO_SETTLE_MINUTES` (30) have passed and
+transcription has moved past it. Recordings filed as meetings before this, `pa meeting solo`
+lists (read-only) and `pa meeting solo --apply` removes.
 
 The mic stream records **the mic the call is using**, not Windows' default recording device:
 Teams talks through the headset while the default stays the laptop array, and that once

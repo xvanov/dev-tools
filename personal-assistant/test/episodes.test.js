@@ -69,9 +69,18 @@ const at = (mins, secs = 0) =>
   const call = classify({ started_at: at(120), ended_at: at(130), streams: ['loopback', 'mic'] }, events);
   assert.strictEqual(call.kind, 'call');
 
-  // Mic only: you talking in a room. Real, and not a failure to classify.
-  const ambient = classify({ started_at: at(120), ended_at: at(125), streams: ['mic'] }, events);
-  assert.strictEqual(ambient.kind, 'ambient');
+  // Mic only, no calendar meeting, no call app on the mic: you alone
+  // (dictation, thinking aloud). Not a meeting, and never stored.
+  const solo = classify({ started_at: at(120), ended_at: at(125), streams: ['mic'] }, events);
+  assert.strictEqual(solo.kind, 'solo');
+  // Mic only while a call app held the mic: the far end heard through the mic.
+  const calls = [{ start: Date.parse(at(119)), end: Date.parse(at(126)), why: 'ms-teams.exe' }];
+  assert.strictEqual(classify({ started_at: at(120), ended_at: at(125), streams: ['mic'] }, events, { calls }).kind, 'call');
+  // Mic only inside a calendar meeting with others: in the room, a meeting.
+  assert.strictEqual(classify({ started_at: at(5), ended_at: at(20), streams: ['mic'] }, events).kind, 'meeting');
+  // A focus block (nobody else invited) you dictate through is not a meeting.
+  const focus = [{ ...events[0], external_id: 'focus', subject: 'Focus time', raw: { ...events[0].raw, attendees: [] } }];
+  assert.strictEqual(classify({ started_at: at(5), ended_at: at(20), streams: ['mic'] }, focus).kind, 'solo');
 
   // Loopback only is genuinely unknown — a video playing, most likely.
   const unknown = classify({ started_at: at(200), ended_at: at(205), streams: ['loopback'] }, events);

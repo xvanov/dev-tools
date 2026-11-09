@@ -14,6 +14,14 @@ Configure via environment variables:
   IDLE_TIMEOUT_SEC    Seconds before unloading (default: 1800)
   CUDA_RETRY_SEC      Seconds to stay on CPU after a GPU failure (default: 600)
   VD_SERVER_LOG       Log file path (default: server.log beside this script)
+  VD_ACTIVITY_LOG     Speech-activity log (default: speech-activity.jsonl in the
+                      data dir: %LOCALAPPDATA%/voice-dictation or ~/.local/voice-dictation)
+
+Every request is also one line in the speech-activity log: when its audio
+ended (the file's mtime) and how long it was. Everything that dictates goes
+through this server (the hotkey, termhub's mic, the PA's voice page), so the
+PA's meeting capture reads the log to tell your own dictation from a meeting
+(personal-assistant/src/audio/selfSpeech.ts). Times and lengths only, no text.
 """
 import gc
 import os
@@ -39,6 +47,19 @@ LOG_PATH = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"),
 )
 LOG_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _data_dir() -> str:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    else:
+        base = os.path.join(os.path.expanduser("~"), ".local")
+    return os.path.join(base, "voice-dictation")
+
+
+ACTIVITY_LOG = os.environ.get("VD_ACTIVITY_LOG", os.path.join(_data_dir(), "speech-activity.jsonl"))
+ACTIVITY_MAX_BYTES = 1024 * 1024
+ACTIVITY_KEEP_SEC = 3 * 86400
 
 _model = None
 _lock = threading.Lock()
@@ -155,6 +176,8 @@ def _transcribe(audio_path: str) -> str:
             try:
                 _load()
                 audio = _read_audio(audio_path)
+                if attempt == 1:
+                    note_activity(audio_path, None if audio is None else len(audio) / RATE)
                 source = audio_path if audio is None else audio
                 segments, _info = _model.transcribe(source, **_options(audio))
                 text = " ".join(seg.text.strip() for seg in segments)
@@ -170,6 +193,55 @@ def _transcribe(audio_path: str) -> str:
                     _unload()
                     continue
                 raise
+
+
+def _iso(t: float) -> str:
+    import datetime as dt
+
+    return dt.datetime.fromtimestamp(t, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def note_activity(audio_path: str, seconds, now: float = None, path: str = None) -> None:
+    """One line per request: {at, end, seconds, file}. `end` is the audio file's
+    mtime — when that speech ended, even when the request waited behind a long
+    one. Past ACTIVITY_MAX_BYTES only the last ACTIVITY_KEEP_SEC is kept.
+    Never raises: a lost line must not fail a transcription."""
+    import json
+
+    path = path or ACTIVITY_LOG
+    now = time.time() if now is None else now
+    try:
+        end = os.path.getmtime(audio_path)
+    except OSError:
+        end = now
+    entry = {
+        "at": _iso(now),
+        "end": _iso(end),
+        "seconds": None if seconds is None else round(float(seconds), 2),
+        "file": os.path.basename(audio_path),
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        if os.path.getsize(path) > ACTIVITY_MAX_BYTES:
+            import datetime as dt
+
+            keep = []
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        at = dt.datetime.fromisoformat(json.loads(line)["at"].replace("Z", "+00:00")).timestamp()
+                    except Exception:
+                        continue
+                    if now - at < ACTIVITY_KEEP_SEC:
+                        keep.append(line if line.endswith("\n") else line + "\n")
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(keep)
+            os.replace(tmp, path)
+    except Exception:
+        pass
 
 
 def _no_throttle() -> bool:

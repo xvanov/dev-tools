@@ -121,6 +121,7 @@
           "POST /api/talk/tts (speech out)",
           "POST /api/talk/warm when an utterance starts (at most every 3 s): Kokoro warmed, whisper handed silence every 400 ms until the end-of-turn check",
           "POST /api/talk/latency after each turn (end of speech to first audio, logged by the PA)",
+          "POST /api/talk/mic every 20 s while the page holds the mic, and when it lets go: the meeting gate does not count that browser as a call (talk-mic.json); turns and replies are logged to talk-activity.jsonl so meeting capture drops them (src/audio/selfSpeech.ts)",
           "POST /api/chat/permission (a spoken yes or no to the chat's action prompt)"
         ],
         "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side.",
@@ -818,8 +819,8 @@
         "GitHub": "the gh CLI (PA_GH_BIN), every 300 s",
         "Jira": "API token, falling back to its connector, every 900 s",
         "Sessions": "local Claude Code and Cursor transcripts; other machines' Claude sessions through their termhub (GET /api/claude/transcripts)",
-        "Meetings": "capture.py records, the audio pass trims and transcribes with faster-whisper",
-        "Rule": "capture is append-only and raw payloads are kept"
+        "Meetings": "capture.py records while the meeting gate is open (a calendar meeting with others, or a call app on the mic: not dictation apps, not the browser the voice page listens in), the audio pass trims and transcribes with faster-whisper. Only conversations with someone else are stored: speech groups inside your dictation (voice-dictation speech-activity.jsonl) or the voice page (talk-activity.jsonl) are dropped, a mic-only episode is a call only when a call app held the mic (mic-calls.jsonl, written by the gate), else solo and not stored; its sidecars and speech audio are deleted once settled (PA_AUDIO_SOLO_SETTLE_MINUTES, 30). A debrief that finds nobody else in it (others_present false) discards the recording; `pa meeting solo` lists older ones, `--apply` removes them",
+        "Rule": "capture is append-only and raw payloads are kept, except recordings of you alone, which are not meetings and are deleted"
       },
       "code": [
         "personal-assistant/src/ingest/index.ts",
@@ -827,9 +828,16 @@
         "personal-assistant/src/ingest/teamsLocal.ts",
         "personal-assistant/src/ingest/github.ts",
         "personal-assistant/src/ingest/jira.ts",
-        "personal-assistant/src/ingest/remoteSessions.ts"
+        "personal-assistant/src/ingest/remoteSessions.ts",
+        "personal-assistant/src/ingest/audio.ts",
+        "personal-assistant/src/audio/selfSpeech.ts",
+        "personal-assistant/src/audio/gate.ts"
       ],
       "env": [
+        {
+          "name": "PA_AUDIO_SOLO_SETTLE_MINUTES",
+          "default": "30"
+        },
         {
           "name": "PA_SESSIONS",
           "default": "1"

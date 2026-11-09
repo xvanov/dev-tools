@@ -208,7 +208,41 @@ function create(db: Db) {
         [endedAt, speechSeconds, kind, calendarEventId, state, sourceItemId, id]
       );
     },
+
+    /**
+     * Removes a recording of you alone that was stored as a meeting or call:
+     * its debriefs and its transcript item go, and the row stays as a
+     * kind 'solo', state 'discarded' marker without links, so the audio pass
+     * never stores it again. Run it inside a transaction, after undoing what
+     * its debriefs applied. Null when there is no such episode.
+     * @param {number|string} id
+     * @returns {Promise<{files: string[]}|null>} the audio files it pointed at, for the caller to delete
+     */
+    async discardSolo(id: number | string) {
+      const row = await db.one(
+        `select e.audio_path, e.transcript_path, e.source_item_id, si.raw as item_raw
+           from audio_episode e left join source_item si on si.id = e.source_item_id where e.id = $1`,
+        [id]
+      );
+      if (!row) return null;
+      await db.query('delete from meeting_debrief where episode_id = $1', [id]);
+      if (row.source_item_id != null) await db.query('delete from source_item where id = $1', [row.source_item_id]);
+      await db.query(
+        `update audio_episode set kind = 'solo', state = 'discarded', source_item_id = null,
+                audio_path = null, transcript_path = null where id = $1`,
+        [id]
+      );
+      return { files: audioFiles(row) };
+    },
   };
+}
+
+// The files a stored episode points at: its first speech group and sidecar,
+// and every speech group its transcript item lists.
+function audioFiles(row: Row) {
+  const raw = (typeof row.item_raw === 'string' ? JSON.parse(row.item_raw) : row.item_raw) || {};
+  const files = [row.audio_path, row.transcript_path, ...(Array.isArray(raw.audioPaths) ? raw.audioPaths : [])];
+  return [...new Set(files.filter((f): f is string => typeof f === 'string' && f !== ''))];
 }
 
 module.exports = { create };

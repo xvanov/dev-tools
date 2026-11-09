@@ -7,17 +7,24 @@
 // group of *their* speech is one conversation, and it is worth exactly one
 // entry in the store rather than two half-transcripts nobody can align.
 //
-// Classification is deliberately evidence-based and admits ignorance. An
-// episode overlapping a calendar entry is a meeting and inherits its title and
-// attendees. One with both streams and no calendar entry is a call. One with
-// only the mic is you talking — to someone in the room, or to a dictation
-// hotkey. Anything else is ambient, which is a real category and not a failure.
+// Classification is deliberately evidence-based and admits ignorance, and a
+// recording is a meeting only when someone else is in it. An episode
+// overlapping a calendar meeting (when heard only through the mic, one with
+// other people in it) is a meeting and inherits its title and attendees.
+// One with both streams and no calendar
+// entry is a call. One with only the mic is a call only when a call app held
+// the microphone during it (the gate's log, src/audio/selfSpeech.ts) — the
+// far end heard through the mic; otherwise it is you alone (`solo`):
+// dictation, talking to Jarvis, thinking aloud — already in your sessions,
+// and never stored. Loopback alone is unknown: a video, most likely.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 type Row = import('../repo/types.ts').Row;
 /** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
 type Json = import('../types.ts').Json;
+
+const { heldByCall } = require('./selfSpeech.ts');
 
 const DEFAULT_GAP_SECONDS = 90;
 
@@ -91,6 +98,15 @@ function attendable(event: any) {
   return end - start < 12 * 3600_000;
 }
 
+// An event worth recording: attendable, and with someone else in it — a solo
+// focus block is not a conversation.
+function meetingEvent(event: any) {
+  if (!attendable(event)) return false;
+  const raw = event.raw || {};
+  const attendees = Array.isArray(raw.attendees) ? raw.attendees.length : Number(raw.attendees) || 0;
+  return attendees > 0 || raw.isOnlineMeeting === true;
+}
+
 /**
  * Cuts episodes where a calendar meeting starts in the middle of them.
  *
@@ -162,8 +178,10 @@ function episodeChanged(row: any, episode: any, meta: any) {
 /**
  * @param {object} episode from toEpisodes
  * @param {Array} calendarEvents [{external_id, subject, occurred_at, raw:{end:{dateTime}, attendees, categories}}]
+ * @param {object} [evidence]
+ * @param {Array} [evidence.calls] windows when a call app held the mic (selfSpeech.callWindows)
  */
-function classify(episode: any, calendarEvents: any = []) {
+function classify(episode: any, calendarEvents: any = [], { calls = [] }: { calls?: any[] } = {}) {
   const start = ms(episode.started_at);
   const end = ms(episode.ended_at);
 
@@ -175,8 +193,12 @@ function classify(episode: any, calendarEvents: any = []) {
   // half of the shorter of the two.
   let best = null;
   let bestOverlap = -1;
+  // Heard only through the mic, the slot is the only evidence of other people:
+  // it must have someone else in it. A focus block you dictate through is not
+  // a meeting.
+  const fits = (episode.streams || []).includes('loopback') ? attendable : meetingEvent;
   for (const event of calendarEvents) {
-    if (!attendable(event)) continue;
+    if (!fits(event)) continue;
     const ev = eventRange(event);
     const overlap = Math.min(end, ev.end) - Math.max(start, ev.start);
     if (overlap < 0) continue;
@@ -199,7 +221,10 @@ function classify(episode: any, calendarEvents: any = []) {
     return { kind: 'call', calendarEventId: null, title: null, attendees: [] };
   }
   if (episode.streams.length === 1 && episode.streams[0] === 'mic') {
-    return { kind: 'ambient', calendarEventId: null, title: null, attendees: [] };
+    // The far end of a call heard through the mic (speakers, or loopback on
+    // the wrong device) — only when a call app held the mic. Else: you alone.
+    const call = heldByCall(episode, calls);
+    return { kind: call ? 'call' : 'solo', calendarEventId: null, title: null, attendees: [] };
   }
   return { kind: 'unknown', calendarEventId: null, title: null, attendees: [] };
 }
@@ -223,4 +248,4 @@ function isSubstantial(episode: any, { minSeconds = 20 }: { minSeconds?: number 
   );
 }
 
-module.exports = { toEpisodes, splitAtEvents, episodeChanged, classify, attendable, eventRange, renderTranscript, isSubstantial, DEFAULT_GAP_SECONDS };
+module.exports = { toEpisodes, splitAtEvents, episodeChanged, classify, attendable, meetingEvent, eventRange, renderTranscript, isSubstantial, DEFAULT_GAP_SECONDS };

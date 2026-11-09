@@ -87,6 +87,10 @@ function create(db: Db) {
     },
 
     /** The newest debrief of an episode that did not fail. */
+    async debriefsForEpisode(episodeId: number | string) {
+      return db.rows('select * from meeting_debrief where episode_id = $1 order by created_at, id', [episodeId]);
+    },
+
     async lastDebrief(episodeId: number | string) {
       return db.one('select * from meeting_debrief where episode_id = $1 and error is null order by created_at desc, id desc limit 1', [episodeId]);
     },

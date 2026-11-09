@@ -23,6 +23,11 @@ const HELP = `pa meeting — pre-meeting briefs
         [--notify]                    also deliver it (toast + dashboard feed)
   pa meeting debriefs [--days 7]      recent debriefs and what they applied
   pa meeting undo <debrief-id> <n>    take back item n of a debrief
+  pa meeting solo [--days 30]         debriefs that look like you alone (dictation, no call);
+                                      read-only
+        [--apply]                     remove those: what they applied is undone, then the
+                                      debrief, transcript and audio are deleted
+  pa meeting discard <debrief-id>...  the same for debriefs you name
 `;
 
 function make(out: any, fail: any) {
@@ -103,6 +108,7 @@ function make(out: any, fail: any) {
         const dryRun = dry !== undefined && dry !== false && dry !== 'false';
         const r = await debrief.debrief(target, { dryRun, deliver: flagBool(flags, 'notify', false) });
         out(`${local(r.meeting.start)} · ${r.meeting.title} · episode ${r.episode.id} (${r.meeting.kind})${dryRun ? ' · DRY RUN, nothing written' : ''}`);
+        if (r.solo) return out(dryRun ? '  nobody else in it: not a meeting; it would be discarded' : '  nobody else in it: not a meeting; discarded (transcript and audio deleted)');
         const { itemLine } = require('../meetings/debriefCore.ts');
         const items = r.debrief ? r.debrief.applied.items : r.plan.items;
         if (!items.length) out('  nothing for you in this one');
@@ -122,6 +128,37 @@ function make(out: any, fail: any) {
         for (const d of list) {
           out(`#${d.id}  ${local(d.startedAt)} · ${d.title} — ${d.counts.todos} to-dos, ${d.counts.updates} updated, ${d.counts.decisions} decisions`);
           for (const it of d.items) out(`    ${it.index + 1}. ${it.line}${it.undone_at ? '  (undone)' : ''}`);
+        }
+        return;
+      }
+
+      if (sub === 'solo' || sub === 'discard') {
+        const debrief = require('../meetings/debrief.ts');
+        let list;
+        if (sub === 'solo') {
+          list = await debrief.soloCandidates({ days: flagInt(flags, 'days', 30) });
+        } else {
+          const ids = args.slice(1).map(Number).filter((n: number) => Number.isInteger(n) && n > 0);
+          if (!ids.length) return fail('usage: pa meeting discard <debrief-id>...');
+          list = [];
+          for (const id of ids) {
+            const d = await debrief.get(id);
+            if (!d) return fail(`no debrief #${id}`);
+            list.push(d);
+          }
+        }
+        if (!list.length) return out('no debriefs that look like you alone');
+        const apply = sub === 'discard' || flagBool(flags, 'apply', false);
+        for (const d of list) {
+          out(`#${d.id}  episode ${d.episodeId}  ${local(d.startedAt)} · ${d.title} — ${d.counts.todos} to-dos, ${d.counts.updates} updated, ${d.counts.decisions} decisions`);
+        }
+        if (!apply) return out(`\n${list.length} listed; nothing changed. \`pa meeting solo --apply\` removes them (or \`pa meeting discard <id>...\` some).`);
+        const done = new Set();
+        for (const d of list) {
+          if (done.has(d.episodeId)) continue;
+          done.add(d.episodeId);
+          const r = await debrief.discard(d.episodeId);
+          out(r ? `episode ${d.episodeId}: removed (${r.undone} item(s) undone, ${r.files} file(s) deleted)` : `episode ${d.episodeId}: not found`);
         }
         return;
       }

@@ -15,6 +15,12 @@
 //     a Zoom link in chat, a Meet tab — plus PA_AUDIO_GATE_CALL_GRACE_SECONDS
 //     after it lets go, so a dropped call that rejoins stays one recording.
 //
+// Not every app on the mic is a call: dictation apps (PA_AUDIO_GATE_IGNORE_APPS)
+// never are, and neither is the browser the voice page (/talk) is listening
+// in while it says so (src/audio/selfSpeech.ts readTalkMic). The apps that do
+// count are logged while they hold the mic, so the audio pass can tell a call
+// heard only through the mic from you dictating alone.
+//
 // Its lever is the pause file capture already honours, written with the
 // marker GATE_MARKER so a pause the gate made is told apart from one you made.
 // The gate never removes your pause (`pa mic pause`): silence you asked for
@@ -31,7 +37,8 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
 const { logger } = require('../log.ts');
-const { attendable, eventRange } = require('./episodes.ts');
+const { eventRange, meetingEvent } = require('./episodes.ts');
+const selfSpeech = require('./selfSpeech.ts');
 const platform = require('../platform');
 
 const log = logger('meeting-gate');
@@ -54,15 +61,6 @@ function readPause(file: any = config.audio.pauseFile) {
   return { state: 'user', until };
 }
 
-// An event worth recording: attendable, and with someone else in it — a solo
-// focus block is not a conversation.
-function meetingEvent(event: any) {
-  if (!attendable(event)) return false;
-  const raw = event.raw || {};
-  const attendees = Array.isArray(raw.attendees) ? raw.attendees.length : Number(raw.attendees) || 0;
-  return attendees > 0 || raw.isOnlineMeeting === true;
-}
-
 // Pure: is a calendar meeting on at `now`?
 function calendarActive(events: any, now: any, { leadMs, graceMs }: { leadMs?: any; graceMs?: any }) {
   return events
@@ -77,6 +75,32 @@ function calendarActive(events: any, now: any, { leadMs, graceMs }: { leadMs?: a
 // never counts, or the gate would hold itself open forever.
 // Pure, kept here for its tests: the Windows registry parser.
 const micHolders = platform.select('win32').parseMicHolders;
+
+const BROWSERS: Record<string, RegExp> = {
+  msedge: /msedge/i,
+  chrome: /chrome/i,
+  firefox: /firefox/i,
+  opera: /opera/i,
+  browser: /msedge|chrome|chromium|firefox|opera|brave|vivaldi|arc\.exe/i,
+};
+
+/**
+ * Pure: the mic holders that are a call. Dictation apps are not; nor is the
+ * browser the voice page holds the mic in (`talkMic`, while it says so).
+ *
+ * @param {string[]} holders  app paths or names (platform micHolders)
+ * @param {{ignore?: string, talkMic?: {browser: string}|null}} opts
+ */
+function callHolders(holders: string[], { ignore = '', talkMic = null }: { ignore?: string; talkMic?: { browser: string } | null } = {}) {
+  let skip: RegExp | null = null;
+  try {
+    skip = ignore ? new RegExp(ignore, 'i') : null;
+  } catch {
+    skip = null;
+  }
+  const browser = talkMic ? BROWSERS[talkMic.browser] || BROWSERS.browser : null;
+  return holders.filter((app) => !(skip && skip.test(app)) && !(browser && browser.test(app)));
+}
 
 /**
  * Pure: what the gate should do now.
@@ -98,7 +122,19 @@ function decide({ calendar, call, pause, wanted }: { calendar?: any; call?: any;
 }
 
 async function currentMicHolders() {
-  return platform.capture.micHolders().catch(() => []);
+  const all = await platform.capture.micHolders().catch(() => []);
+  return callHolders(all, { ignore: config.audio.gate.ignoreApps, talkMic: selfSpeech.readTalkMic(config.audio.selfSpeech.talkMicFile) });
+}
+
+// The call evidence the audio pass reads: a line when the apps change, and
+// every 30 s while they hold the mic.
+let lastLogged = { at: 0, apps: '' };
+function logCall(holders: string[], now: number) {
+  const apps = holders.map((a) => String(a).split(/[\\/]/).pop()).sort();
+  const key = apps.join('|');
+  if (key === lastLogged.apps && now - lastLogged.at < 30_000) return;
+  lastLogged = { at: now, apps: key };
+  selfSpeech.append(config.audio.selfSpeech.callLog, { at: new Date(now).toISOString(), apps }, now);
 }
 
 async function upcomingEvents(now: any) {
@@ -111,7 +147,10 @@ let lastCallAt = 0;
 async function tick({ now = Date.now() }: { now?: number } = {}) {
   const g = config.audio.gate;
   const holders = await currentMicHolders();
-  if (holders.length) lastCallAt = now;
+  if (holders.length) {
+    lastCallAt = now;
+    logCall(holders, now);
+  }
   const calendar = calendarActive(await upcomingEvents(now), now, {
     leadMs: g.leadMinutes * 60_000,
     graceMs: g.graceMinutes * 60_000,
@@ -137,4 +176,4 @@ async function tick({ now = Date.now() }: { now?: number } = {}) {
   return d;
 }
 
-module.exports = { tick, decide, readPause, micHolders, calendarActive, meetingEvent, GATE_MARKER };
+module.exports = { tick, decide, readPause, micHolders, callHolders, calendarActive, meetingEvent, GATE_MARKER };

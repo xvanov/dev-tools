@@ -9,6 +9,13 @@
 //   debrief(target, opts)       one debrief, for an episode id or 'last'
 //   undo(debriefId, index)      take back one applied item
 //   recent({days})              debriefs for the dashboard
+//   discard(episode)            remove a recording of you alone (see below)
+//   soloCandidates({days})      debriefs that look like you alone (`pa meeting solo`)
+//
+// A recording with nobody else in it is not a meeting. When the model says so
+// (others_present: false), nothing is applied and the recording is discarded:
+// its transcript, its audio and any earlier debrief of it go, and the episode
+// stays only as a 'solo' marker the audio pass will not store again.
 //
 // One model call per meeting (debriefCore.SYSTEM) sees the whole transcript
 // with your open commitments, PRs and tickets beside it, so news about an
@@ -215,7 +222,7 @@ async function prepare(ep: any, { now = new Date() }: { now?: any } = {}) {
   }
   for (const d of parsed.decisions) plan.items.push({ type: 'decision', text: d.text, quote: d.quote });
 
-  return { meeting: m, plan, ctx, attendees, transcriptChars: transcript.length };
+  return { meeting: m, plan, ctx, attendees, transcriptChars: transcript.length, solo: parsed.solo };
 }
 
 // ------------------------------------------------------------- applying ----
@@ -335,6 +342,12 @@ async function debrief(target: any, { dryRun = false, deliver: shouldDeliver = f
     if (!dryRun) await recordError(ep, m, err);
     throw err;
   }
+  if (prepared.solo) {
+    // Nobody else in it: not a meeting. Discarded, not listed.
+    if (!dryRun) await discard(ep);
+    log.info('not a meeting: you alone', { episode: ep.id, discarded: !dryRun });
+    return { episode: ep, meeting: prepared.meeting, plan: prepared.plan, debrief: null, solo: true };
+  }
   if (dryRun) return { episode: ep, meeting: prepared.meeting, plan: prepared.plan, debrief: null };
   let row = await apply(ep, prepared);
   if (shouldDeliver) row = await deliver(row);
@@ -373,6 +386,62 @@ async function undo(debriefId: any, index: any) {
   });
   log.info('debrief item undone', { debrief: debriefId, index, type: it.type });
   return { ok: true, result, item: it };
+}
+
+// ------------------------------------------------------------- discard ----
+
+// The sidecar beside each trimmed speech file (audio/process.py).
+function withSidecars(files: string[]) {
+  const out = new Set<string>();
+  for (const f of files) {
+    out.add(f);
+    if (/\.speech\.wav$/i.test(f)) out.add(f.replace(/\.wav$/i, '.json'));
+  }
+  return [...out];
+}
+
+/**
+ * Removes a recording of you alone that was filed as a meeting or call: undoes
+ * every item its debriefs applied, deletes the debriefs, the transcript item
+ * and the audio (speech groups and sidecars), and leaves the episode as a
+ * 'solo' marker.
+ * @param {object|number|string} target episode row or id
+ * @returns {Promise<{episodeId, undone: number, files: number}|null>}
+ */
+async function discard(target: any) {
+  const id = typeof target === 'object' && target?.id ? target.id : Number(target);
+  const fs = require('fs');
+  let undone = 0;
+  for (const d of await repo.meetings.debriefsForEpisode(id)) {
+    const items = d.applied?.items || [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].undone_at) continue;
+      await undo(d.id, i);
+      undone++;
+    }
+  }
+  const r = await repo.withTx((tx: any) => tx.audio.discardSolo(id));
+  if (!r) return null;
+  let files = 0;
+  for (const f of withSidecars(r.files)) {
+    try {
+      fs.unlinkSync(f);
+      files++;
+    } catch {
+      /* already gone */
+    }
+  }
+  log.info('recording of you alone discarded', { episode: id, undone, files });
+  return { episodeId: id, undone, files };
+}
+
+// Debriefs stored before others_present existed, whose title says it was you
+// alone. A list for you to check (`pa meeting solo`), never acted on unasked.
+const LOOKS_SOLO = /\bsolo\b|\bdictat(ion|ing|ed)\b|\(no call\)|\bmonologue\b|\bvoice (memo|note)\b|\bvideo playing\b/i;
+
+async function soloCandidates({ days = 30 }: { days?: number } = {}) {
+  const list = await repo.meetings.recentDebriefs(days, 1000);
+  return list.filter((d: any) => LOOKS_SOLO.test(String(d.title || ''))).map(view);
 }
 
 // ---------------------------------------------------------------- views ----
@@ -470,4 +539,4 @@ async function pass({ now = new Date() }: { now?: any } = {}) {
   return { debriefed };
 }
 
-module.exports = { pass, debrief, due, undo, recent, get, view, rollIfUseful, loadEpisode };
+module.exports = { pass, debrief, due, undo, recent, get, view, rollIfUseful, loadEpisode, discard, soloCandidates, LOOKS_SOLO };

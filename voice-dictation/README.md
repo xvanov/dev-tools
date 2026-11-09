@@ -125,6 +125,17 @@ Open history from the Done overlay (**History** button) or without recording:
 
 Cancelled recordings and "No speech detected" results are **not** saved.
 
+### Speech-activity log
+
+The transcribe server also appends one line per request to `speech-activity.jsonl` in the same
+folder (`VD_ACTIVITY_LOG` overrides): `at` (when it was served), `end` (the audio file's mtime,
+when that speech ended), `seconds` and the file's name. No text. Everything that dictates goes
+through the server (the hotkey, termhub's mic, the PA's voice page), so the personal assistant's
+meeting capture reads it to tell your dictation from a meeting
+(`personal-assistant/src/audio/selfSpeech.ts`). Past 1 MB only the last three days are kept.
+The installed copy of `transcribe_server.py` is what runs: re-run the installer (or copy the file
+into the install folder and restart the server) after updating.
+
 ## Files
 
 | Path | Purpose |

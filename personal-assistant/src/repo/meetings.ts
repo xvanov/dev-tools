@@ -150,6 +150,14 @@ function create(db: Db) {
     },
 
     /**
+     * Every debrief of an episode, failed ones too, oldest first.
+     * @returns {Promise<DebriefRow[]>}
+     */
+    async debriefsForEpisode(episodeId: number | string) {
+      return db.rows('select * from meeting_debrief where episode_id = $1 order by created_at, id', [episodeId]);
+    },
+
+    /**
      * The newest debrief of an episode that did not fail.
      * @returns {Promise<DebriefRow|null>}
      */

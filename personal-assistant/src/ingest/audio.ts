@@ -12,6 +12,13 @@
 // table: a promise made out loud and a promise made in writing are the same
 // kind of thing to everyone downstream.
 //
+// Only conversations with someone else in them are stored. Speech groups that
+// are your own dictation or the voice page (src/audio/selfSpeech.ts) are left
+// out before episodes are made, and an episode that is you alone (`solo`) is
+// not stored at all; once transcription has moved past them, their sidecars
+// and speech audio are deleted. A row stored before this rule is left for
+// `pa meeting solo` to list and remove.
+//
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 type Row = Record<string, any>;
@@ -24,8 +31,38 @@ const repo = require('../repo');
 const { saveItems } = require('./store.ts');
 const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes.ts');
 const { logger } = require('../log.ts');
+const selfSpeech = require('../audio/selfSpeech.ts');
+const spool = require('../audio/spool.ts');
 
 const log = logger('audio');
+
+/**
+ * Pure: may a recording that ended at `endedAt` be deleted? Old enough, and
+ * transcription has moved past it (or has nothing left to do), so no speech of
+ * another stream can still join it.
+ */
+function settled(endedAt: any, { now, coverage, pending, settleMs, gapMs }: { now: number; coverage: number | null; pending: boolean; settleMs: number; gapMs: number }) {
+  const end = new Date(endedAt).getTime();
+  if (!Number.isFinite(end) || now - end < settleMs) return false;
+  return !pending || (coverage != null && coverage >= end + gapMs);
+}
+
+// Deletes the sidecars and trimmed speech audio of a recording of you alone.
+function forget(parts: any[]) {
+  let n = 0;
+  for (const p of parts) {
+    for (const f of [p.__file, p.audio_path]) {
+      if (!f) continue;
+      try {
+        fs.unlinkSync(f);
+        n++;
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  return n;
+}
 
 function sidecarFiles(spool: any) {
   const found: any[] = [];
@@ -81,8 +118,24 @@ async function run() {
   const files = sidecarFiles(spool);
   if (!files.length) return 0;
 
-  const sidecars = files.map(readSidecar).filter(Boolean);
-  if (!sidecars.length) return 0;
+  const all = files.map(readSidecar).filter(Boolean);
+  if (!all.length) return 0;
+
+  const evidence = selfSpeech.load(config.audio.selfSpeech);
+  const { kept: sidecars, self } = selfSpeech.splitSelfSpeech(all, evidence.self);
+  const now = Date.now();
+  const settle = {
+    now,
+    coverage: spool.coverage(config.audioDir, { rollMinutes: config.audio.rollMinutes, now }),
+    pending: spool.needsProcessing(config.audioDir),
+    settleMs: config.audio.selfSpeech.settleMinutes * 60_000,
+    gapMs: config.audio.episodeGapSeconds * 1000,
+  };
+  let forgotten = forget(self.filter((p: any) => settled(p.ended_at, settle)));
+  if (!sidecars.length) {
+    if (forgotten) log.info('dictation and voice-page audio deleted', { files: forgotten });
+    return 0;
+  }
 
   const joined = toEpisodes(sidecars, { gapSeconds: config.audio.episodeGapSeconds });
   const first = joined[0].started_at;
@@ -91,19 +144,27 @@ async function run() {
   const episodes = splitAtEvents(joined, events);
 
   const claimed = new Set<any>();
+  const stored: any[] = [];
   let changed = 0;
+  let solo = 0;
 
   for (const episode of episodes) {
     const stream = episode.streams.join('+');
-    const meta = classify(episode, events);
-    if (meta.kind === 'ambient' && config.audio.gate.enabled && episode.speech_seconds >= 60) {
-      meta.kind = 'call';
-    }
+    const meta = classify(episode, events, { calls: evidence.calls });
     // An episode grows while its meeting goes on: each finished capture file
     // adds speech groups to it. It is updated in place — once frozen at its
     // first fifteen minutes, a meeting's debrief would read a fraction of it.
     const existing = await existingFor(episode, claimed);
     if (existing) claimed.add(existing.id);
+    // You alone: not a meeting, and not stored. A row stored before is left
+    // as it is (`pa meeting solo` lists it); one a debrief discarded as solo
+    // stays discarded.
+    if (meta.kind === 'solo' || existing?.kind === 'solo') {
+      if (!existing && settled(episode.ended_at, settle)) forgotten += forget(episode.parts);
+      solo++;
+      continue;
+    }
+    stored.push(episode);
     if (existing && !episodeChanged(existing, episode, meta)) continue;
 
     // A thirty-second exchange of "yep, sounds good" is real speech and no
@@ -114,7 +175,7 @@ async function run() {
     if (substantial) {
       const subject =
         meta.title ||
-        (meta.kind === 'call' ? 'Call' : meta.kind === 'ambient' ? 'Conversation' : 'Recording') +
+        (meta.kind === 'call' ? 'Call' : 'Recording') +
           ` — ${new Date(episode.started_at).toLocaleString()}`;
       const externalId = existing?.item_external_id || `${episode.started_at}/${stream}`;
       changed += await saveItems(
@@ -183,7 +244,8 @@ async function run() {
     log.info('episode updated', { episode: existing.id, kind: meta.kind, speechSeconds: Math.round(episode.speech_seconds) });
   }
 
-  await supersedeLeftovers(episodes, claimed);
+  await supersedeLeftovers(stored, claimed);
+  if (forgotten) log.info('recordings of you alone deleted', { episodes: solo, selfSpeechGroups: self.length, filesDeleted: forgotten });
 
   await saveItems('audio', [], {
     source: 'audio',
@@ -195,4 +257,4 @@ async function run() {
   return changed;
 }
 
-module.exports = { run, id: 'audio', sidecarFiles };
+module.exports = { run, id: 'audio', sidecarFiles, settled };

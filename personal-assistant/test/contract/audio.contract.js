@@ -188,6 +188,27 @@ module.exports = {
     assert.ok(b);
   },
 
+  'discardSolo: deletes its debriefs and transcript, keeps a solo marker, returns its audio files': async ({ repos, seed, assert, db }) => {
+    const item = await seed.item({ source: 'audio', body: long(), raw: { audioPaths: ['/s/a.speech.wav', '/s/b.speech.wav'] } });
+    const id = await seed.episode({ itemId: item, kind: 'call', stream: 'mic', startedAt: new Date('2095-06-01T10:00:00Z') });
+    await db.query(`update audio_episode set audio_path = '/s/a.speech.wav', transcript_path = '/s/a.speech.json' where id = $1`, [id]);
+    const other = await seed.episode({ kind: 'call', stream: 'mic', startedAt: new Date('2095-06-01T12:00:00Z') });
+    const base = { eventExternalId: null, sourceItemId: item, title: 'Solo dictation', startedAt: '2095-06-01T10:00:00Z', endedAt: '2095-06-01T10:10:00Z', transcriptChars: 500, applied: { items: [] }, dropped: 0, extractedBy: 'contract' };
+    await repos.meetings.upsertDebrief({ ...base, episodeId: id, contentHash: 'x' });
+    await repos.meetings.upsertDebrief({ ...base, episodeId: other, sourceItemId: null, contentHash: 'x' });
+
+    const r = await repos.withTx((tx) => tx.audio.discardSolo(id));
+    assert.deepStrictEqual(r.files.sort(), ['/s/a.speech.json', '/s/a.speech.wav', '/s/b.speech.wav']);
+    const e = await db.one('select * from audio_episode where id = $1', [id]);
+    assert.deepStrictEqual([e.kind, e.state, e.source_item_id, e.audio_path, e.transcript_path], ['solo', 'discarded', null, null, null]);
+    assert.strictEqual(await db.one('select id from source_item where id = $1', [item]), null, 'the transcript is gone');
+    assert.deepStrictEqual(await repos.meetings.debriefsForEpisode(id), [], 'its debriefs are gone');
+    assert.strictEqual((await repos.meetings.debriefsForEpisode(other)).length, 1, 'another episode keeps its debrief');
+    // Not listed any more, not debriefed again.
+    assert.ok(!(await repos.audio.awaitingDebrief(new Date('2095-06-01T11:00:00Z'))).some((x) => Number(x.id) === id));
+    assert.strictEqual(await repos.audio.discardSolo(999999999), null);
+  },
+
   'updateKeepingKey: updates everything but the key and paths': async ({ repos, seed, assert, db }) => {
     const a = await seed.episode({ startedAt: new Date('2094-05-01T10:00:00Z'), stream: 'mic' });
     await db.query(`update audio_episode set audio_path = '/keep.wav' where id = $1`, [a]);

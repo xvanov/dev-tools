@@ -23,6 +23,7 @@ const SYSTEM = `You debrief one engineer after a recorded meeting. You get the t
 The transcript has two streams. "Me:" lines are the engineer's microphone. "Them:" lines are everyone else on the call mixed into one stream: speakers are not separated, and a "Them:" line is never the engineer. "Them:" is whatever the computer played, so it can be the engineer's own AI assistant reading its reply aloud (it talks about sessions, runs, the software factory, the dashboard, "I put the details on the dashboard", "option A, option B"). An assistant is not a person: nothing it says it will do is owed_to_me — if you return such an item at all, its "owner" is "assistant". When the assistant reports that something the engineer's own tools need is not set up (not configured, not registered, no access), that is a todo for the engineer only when the engineer asked for it or must do it themselves. If the prompt notes that only the microphone stream was captured (speakerphone), "Me:" lines include everyone on the call — attribute a todo to the engineer only when the words and context make it clearly the engineer's own task. Speech recognition makes mistakes, especially with names.
 
 Write:
+- others_present: true only when at least one other person takes part — speaks on the call or in the room, or is clearly being talked with. false when the engineer is alone: dictating to a computer or a coding agent, talking with an AI assistant (including one heard on the speakers), thinking aloud, or with only a video, podcast or recording playing. When false, return empty lists.
 - title: a concise title for the meeting or call. Keep the calendar title when the transcript matches it; if the recording is an untitled call or an ad-hoc call that overlapped another calendar slot (check "Recent Teams messages around this call"), name the actual call (e.g. "Call with Tim Sublette — Docebo & Engineering KPIs").
 - summary: 2–3 sentences summarizing what happened in the meeting, what was discussed, and the main outcomes.
 
@@ -39,7 +40,8 @@ Every todo, owed_to_me, update and decision needs "quote": a short excerpt copie
 "due" only when a date is said or unambiguous ("by Friday", "end of day"): resolve it against the meeting date and give YYYY-MM-DD. Otherwise null.
 
 Return ONLY JSON:
-{"title": "<short meeting or call title>",
+{"others_present": true | false,
+ "title": "<short meeting or call title>",
  "summary": "<2-3 sentences: what happened in the meeting, what was discussed, and the main outcomes>",
  "todos": [{"summary": "<imperative, standalone, under 15 words>", "owner": "me", "counterparty": "<attendee email, or a name, or null>", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
  "owed_to_me": [{"summary": "<what they will do, standalone>", "owner": "<their attendee email, or name, or \"assistant\", or null>", "to": "me", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
@@ -148,6 +150,17 @@ function isMe(v: any) {
 // set up the factory" aloud became "Someone owes you" (card #6757).
 function isAssistant(v: any) {
   return /^(the |my |an? )?(ai|pa|personal assistant|(ai |voice |chat )?assistant|claude( code)?|agent|bot|computer)$/i.test(String(v ?? '').trim());
+}
+
+// A recording with nobody else in it is not a meeting (the engineer
+// dictating, or talking with the assistant): it is discarded, not listed.
+// The model's others_present decides; without it, a title that says solo does.
+const SOLO_TITLE = /^\s*solo\b|\bsolo (dictation|session|recording)\b|\(no call\)/i;
+function isSolo(parsed: any) {
+  const v = parsed?.others_present;
+  if (v === false || v === 'false' || v === 'no') return true;
+  if (v === true || v === 'true' || v === 'yes') return false;
+  return SOLO_TITLE.test(String(parsed?.title || ''));
 }
 
 function normaliseRef(ref: any) {
@@ -263,7 +276,7 @@ function parseDebrief(parsed: any, { transcript, refs = new Set(), meetingStart 
   const title = parsed?.title ? clip(parsed.title, 160) || null : null;
   const summary = parsed?.summary ? clip(parsed.summary, 800) || null : null;
 
-  return { title, summary, todos, owedToMe, updates, decisions, dropped };
+  return { title, summary, solo: isSolo(parsed), todos, owedToMe, updates, decisions, dropped };
 }
 
 // ---------------------------------------------------------- similarity -----
@@ -445,6 +458,7 @@ module.exports = {
   UPDATE_KINDS,
   buildPrompt,
   parseDebrief,
+  isSolo,
   parseDue,
   similarity,
   duplicateOf,

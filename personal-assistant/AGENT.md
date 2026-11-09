@@ -479,6 +479,17 @@ marker `meeting-gate` and removes only a file holding that marker: it never lift
 made, and it never pauses mid-meeting. A capture file is never opened for writing twice
 (`audio/naming.py`).
 
+**Only meetings with other people are stored.** A recording of the user alone — push-to-talk
+dictation while coding, the voice page, Jarvis on the speakers — is not a meeting: it is already
+in their sessions. The evidence is in `src/audio/selfSpeech.ts` (voice-dictation's speech-activity
+log, the voice page's activity log, the gate's log of call apps on the mic): self speech is
+dropped before episodes are made, a mic-only episode is `solo` unless a call app held the mic or a
+calendar meeting with others overlaps it, and a `solo` episode gets no row, no transcript item
+and no debrief, and its audio is deleted once settled. The debrief's `others_present: false`
+discards what slips through (`debrief.discard`). Do not reintroduce a rule that turns mic-only
+speech into a call because the gate was open (the old ambient→call promotion): the gate opens for
+any browser on the mic.
+
 **Agents propose memory; humans decide it.** The MCP server's only memory write is `remember`, which
 stores a `pending_review` claim (`origin = 'agent'`) that no read path believes and no
 consolidation sees until it is approved in the dashboard. An agent's note may be something it

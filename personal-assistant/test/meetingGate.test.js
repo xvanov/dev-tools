@@ -8,7 +8,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { decide, readPause, micHolders, calendarActive, meetingEvent, GATE_MARKER } = require('../src/audio/gate.ts');
+const { decide, readPause, micHolders, callHolders, calendarActive, meetingEvent, GATE_MARKER } = require('../src/audio/gate.ts');
+const { config } = require('../src/config.ts');
 
 // --- decide -----------------------------------------------------------------
 
@@ -76,6 +77,27 @@ const reg = [
 ].join('\r\n');
 assert.deepStrictEqual(micHolders(reg), ['MSTeams_8wekyb3d8bbwe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe']);
 assert.deepStrictEqual(micHolders(''), []);
+
+// --- which holders are a call -------------------------------------------------
+
+{
+  const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+  const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  const wispr = 'C:\\Users\\k\\AppData\\Local\\WisprFlow\\app-1.5.308\\Wispr Flow.exe';
+  const sox = 'C:\\Users\\k\\AppData\\Local\\voice-dictation\\sox.exe';
+  const teams = 'MSTeams_8wekyb3d8bbwe';
+  const ignore = config.audio.gate.ignoreApps;
+  // Dictation apps are never a call.
+  assert.deepStrictEqual(callHolders([teams, wispr, sox], { ignore }), [teams]);
+  // The voice page listening in Edge: Edge is not a call; Chrome (a Meet tab) still is.
+  assert.deepStrictEqual(callHolders([edge, chrome, teams], { ignore, talkMic: { browser: 'msedge' } }), [chrome, teams]);
+  // A browser the page could not name: no browser counts while it listens.
+  assert.deepStrictEqual(callHolders([edge, chrome, teams], { ignore, talkMic: { browser: 'browser' } }), [teams]);
+  // The page not listening: a browser on the mic is a call, as before.
+  assert.deepStrictEqual(callHolders([edge], { ignore, talkMic: null }), [edge]);
+  // A broken pattern ignores nothing rather than everything.
+  assert.deepStrictEqual(callHolders([teams], { ignore: '(' }), [teams]);
+}
 
 // --- pause file -------------------------------------------------------------
 

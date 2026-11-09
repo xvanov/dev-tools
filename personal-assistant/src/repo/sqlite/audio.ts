@@ -163,7 +163,33 @@ function create(db: Db) {
         [endedAt, speechSeconds, kind, calendarEventId, state, sourceItemId, id]
       );
     },
+
+    /** Removes a recording of you alone stored as a meeting or call; the row stays as a 'solo' marker. */
+    async discardSolo(id: number | string) {
+      const row = await db.one(
+        `select e.audio_path, e.transcript_path, e.source_item_id, si.raw as item_raw
+           from audio_episode e left join source_item si on si.id = e.source_item_id where e.id = $1`,
+        [id]
+      );
+      if (!row) return null;
+      await db.query('delete from meeting_debrief where episode_id = $1', [id]);
+      if (row.source_item_id != null) await db.query('delete from source_item where id = $1', [row.source_item_id]);
+      await db.query(
+        `update audio_episode set kind = 'solo', state = 'discarded', source_item_id = null,
+                audio_path = null, transcript_path = null where id = $1`,
+        [id]
+      );
+      return { files: audioFiles(row) };
+    },
   };
+}
+
+// The files a stored episode points at: its first speech group and sidecar,
+// and every speech group its transcript item lists.
+function audioFiles(row: Row) {
+  const raw = (typeof row.item_raw === 'string' ? JSON.parse(row.item_raw) : row.item_raw) || {};
+  const files = [row.audio_path, row.transcript_path, ...(Array.isArray(raw.audioPaths) ? raw.audioPaths : [])];
+  return [...new Set(files.filter((f): f is string => typeof f === 'string' && f !== ''))];
 }
 
 module.exports = { create };

@@ -151,6 +151,22 @@ module.exports = {
     assert.strictEqual((await repos.meetings.debriefById(row.id)).title, 'Find me');
   },
 
+  'debriefsForEpisode: every debrief of the episode, failed ones too, oldest first': async (t) => {
+    const { repos, assert } = t;
+    const e = await episode(t);
+    const other = await episode(t);
+    const a = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'a' }));
+    await new Promise((r) => setTimeout(r, 5));
+    await repos.meetings.recordDebriefError({ ...debrief(e, { contentHash: 'b' }), error: 'x' });
+    await repos.meetings.upsertDebrief(debrief(other, { contentHash: 'a' }));
+    const list = await repos.meetings.debriefsForEpisode(e.id);
+    assert.deepStrictEqual(list.map((d) => d.content_hash), ['a', 'b']);
+    assert.strictEqual(String(list[0].id), String(a.id));
+    assert.strictEqual(list[1].error, 'x', 'a failed one too');
+    assert.deepStrictEqual(list[0].applied.items.map((i) => i.type), ['todo', 'decision'], 'applied is JSON');
+    assert.deepStrictEqual(await repos.meetings.debriefsForEpisode(999999999), []);
+  },
+
   'lastDebrief: the newest one that did not fail': async (t) => {
     const { repos, assert } = t;
     const e = await episode(t);

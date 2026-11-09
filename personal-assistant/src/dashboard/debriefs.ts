@@ -32,6 +32,8 @@ async function route(method: string, url: URL, body: Row) {
     const episodeId = Number(body.episodeId);
     if (!Number.isInteger(episodeId) || episodeId <= 0) throw Object.assign(new Error('episodeId required'), { status: 400 });
     const r = await debrief.debrief(episodeId, { deliver: false });
+    // Nobody else in it: discarded, so there is no debrief to show.
+    if (r.solo) return { ok: true, solo: true, discarded: true, episodeId };
     return debrief.get(r.debrief.id);
   }
   return undefined;

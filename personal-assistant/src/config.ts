@@ -545,6 +545,25 @@ const config = {
       leadMinutes: envInt('PA_AUDIO_GATE_LEAD_MINUTES', 2),
       graceMinutes: envInt('PA_AUDIO_GATE_GRACE_MINUTES', 5),
       callGraceSeconds: envInt('PA_AUDIO_GATE_CALL_GRACE_SECONDS', 180),
+      // Apps on the mic that are dictation, never a call (a regex over the
+      // app's path). voice-dictation's own recorder is Python, left out anyway.
+      ignoreApps: env('PA_AUDIO_GATE_IGNORE_APPS', 'Wispr Flow|[\\\\/]voice-dictation[\\\\/]'),
+    },
+    // Evidence of who is in a recording (src/audio/selfSpeech.ts): your
+    // dictation (voice-dictation's transcribe server logs each request), the
+    // voice page's turns and replies, and the apps the gate counted as a call.
+    selfSpeech: {
+      dictationLog: env('PA_DICTATION_LOG', path.join(
+        process.platform === 'win32' ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local') : path.join(os.homedir(), '.local'),
+        'voice-dictation',
+        'speech-activity.jsonl'
+      )),
+      talkLog: path.join(dataDir, 'talk-activity.jsonl'),
+      talkMicFile: path.join(dataDir, 'talk-mic.json'),
+      callLog: path.join(dataDir, 'mic-calls.jsonl'),
+      // A recording of you alone is deleted (sidecars and speech audio) once
+      // it is this old and transcription has moved past it.
+      settleMinutes: envInt('PA_AUDIO_SOLO_SETTLE_MINUTES', 30),
     },
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.
