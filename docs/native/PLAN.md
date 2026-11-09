@@ -1659,6 +1659,14 @@ not in the Map is not done, and a new one gets added there first.
     paid 57 s more. Another agent's `pytest -n auto` ran meanwhile, so re-measure on an idle
     machine, then cut what remains: scope the baseline to the diff's tool, and reuse a warm
     runtime.
+    Partly (pending-8451): a story that names a top-level tool other than
+    software-factory no longer runs `cd software-factory && uv run --all-extras
+    ruff check .` (the 95 s baseline, and the same command in the conversation).
+    A software-factory path replaces `ruff check .` with those paths; a story
+    that names no tool keeps the full command. A worktree cut in the last minute
+    is not fetched and merged again before the dev step. A software-factory
+    story still pays `uv sync` on a fresh worktree, and the 140 s before the
+    agent's first event (a warm runtime) is not this cut.
   - [x] **8.4.52 deepseek-pr: the tech_writer's context update is lost.** Step 70 rewrote
     `apps/dev-tools/context/navigation.md` (adding `src/cli/version.ts`), and
     `apply_context_updates` writes into the story's worktree. PR #72 has only the three code

@@ -42,6 +42,9 @@ deploy:
 gates:
   # --all-extras: ruff is a dev extra; a story worktree's fresh (or half-made)
   # .venv would otherwise lack it and the lint gate would fail on a missing tool.
+  # Solo scopes this to the tool the story names (a top-level directory). A story
+  # that does not touch software-factory does not run it (8.4.51): a full
+  # `ruff check .` here syncs the factory tree, it does not check the story's tool.
   lint_command: "cd software-factory && uv run --all-extras ruff check ."
   format_check_command: ""
   type_check_command: ""

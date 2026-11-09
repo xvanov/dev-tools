@@ -159,6 +159,20 @@ def _writing_worktree(
     # human pushed to it since the last dispatch are built on, not overwritten.
     base = story_into(story, app_config)
     refresh = [str(story.pickup_branch), base] if pickup else [base]
+    # ensure_worktree_for_story just fetched the base to cut this directory.
+    # Fetching and merging it again is the minute before solo_checks on a dev
+    # step that has not written a diff yet (8.4.51). A pickup, or a worktree
+    # left from an earlier attempt, still refreshes.
+    import time
+
+    fresh = False
+    if not pickup:
+        try:
+            fresh = (time.time() - wt.stat().st_ctime) < 60
+        except OSError:
+            fresh = False
+    if fresh:
+        return wt
     try:
         for ref in refresh:
             subprocess.run(
@@ -2832,8 +2846,17 @@ def _handle_dev_once(
         # brief. Read from the spawn stamp only.
         solo_kwargs: dict[str, Any] = {}
         if _solo.is_solo(story):
+            _scope_text = _solo.story_scope_text(story_file_path_obj, dev_direction)
+            _tools = _solo.touched_tools(Path(repo_path), _scope_text)
+            _static = _solo.scope_static_gates(
+                Path(repo_path),
+                _solo.static_gate_commands(app_config),
+                _tools,
+                _scope_text,
+            )
             leaks = _solo.oracle_leak_precheck(app_config, Path(repo_path))
-            plan = _solo.checks_plan(app_config, story)
+            plan = _solo.checks_plan(app_config, story, static=_static)
+            plan["touched_tools"] = sorted(_tools)
             plan["oracle_leak_precheck"] = (
                 "not applicable (acceptance oracle disabled for this app)"
                 if leaks is None
@@ -2862,7 +2885,6 @@ def _handle_dev_once(
             )
             _require_delta = _solo.requires_production_delta(app_config)
             _base = app_config.default_branch or "main"
-            _static = _solo.static_gate_commands(app_config)
             _static_baseline = _solo.static_gate_baseline(Path(repo_path), _base, _static)
             if _static:
                 log_story_event(

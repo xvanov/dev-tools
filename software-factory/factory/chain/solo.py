@@ -728,6 +728,87 @@ def static_gate_commands(app_config: Any) -> list[tuple[str, str]]:
     return out
 
 
+# A path prefix is a tool only when it is a real top-level directory. A bare
+# word (``desktop``) and a nested dir (``src/``) are not.
+_TOOL_PATH = re.compile(r"(?:^|[\s`'\"(\[])([A-Za-z0-9][A-Za-z0-9_.-]*)[/\\]")
+_RUFF_TARGET = re.compile(r"(ruff\s+check\s+)\.")
+_CD_FACTORY = re.compile(r"(?:^|&&|\|\||;)\s*cd\s+software-factory\b")
+_FACTORY_REL = re.compile(r"software-factory[/\\]([A-Za-z0-9_./\\-]+)")
+
+
+def story_scope_text(story_file: Path | None, direction: Any) -> str:
+    """The story file and the direction, the text that names the tools."""
+    parts: list[str] = []
+    if story_file is not None:
+        try:
+            parts.append(Path(story_file).read_text(encoding="utf-8", errors="replace")[:50_000])
+        except OSError:
+            pass
+    if direction is not None:
+        for attr in ("title", "why", "raw_body"):
+            val = getattr(direction, attr, None)
+            if val:
+                parts.append(str(val))
+        parts.extend(str(a) for a in (getattr(direction, "acceptance", None) or []))
+    return "\n".join(parts)
+
+
+def touched_tools(repo: Path, text: str) -> frozenset[str]:
+    """Top-level directories ``text`` names as ``tool/`` or ``tool\\``.
+
+    Empty when nothing in the text is a top-level directory of ``repo``
+    (fail safe: the caller keeps the full gate).
+    """
+    try:
+        tops = {
+            p.name
+            for p in Path(repo).iterdir()
+            if p.is_dir() and not p.name.startswith(".") and p.name != "node_modules"
+        }
+    except OSError:
+        return frozenset()
+    return frozenset(m.group(1) for m in _TOOL_PATH.finditer(text or "") if m.group(1) in tops)
+
+
+def scope_static_gates(
+    _repo: Path,
+    gates: list[tuple[str, str]],
+    tools: frozenset[str],
+    text: str,
+) -> list[tuple[str, str]]:
+    """Drop or narrow a factory-wide lint when the story names its tools.
+
+    ``cd software-factory && uv run --all-extras ruff check .`` syncs the
+    factory tree even for a personal-assistant diff (8.4.51). No named tool
+    keeps every command. A named tool other than software-factory drops that
+    command. A software-factory path in the text replaces ``ruff check .``.
+    ``_repo`` is the worktree the tools were resolved against.
+    """
+    if not tools:
+        return list(gates)
+    out: list[tuple[str, str]] = []
+    for name, cmd in gates:
+        if "software-factory" not in tools and _CD_FACTORY.search(cmd):
+            continue
+        if "software-factory" in tools:
+            cmd = _scope_ruff_check(cmd, text)
+        out.append((name, cmd))
+    return out
+
+
+def _scope_ruff_check(cmd: str, text: str) -> str:
+    if not _RUFF_TARGET.search(cmd):
+        return cmd
+    paths: list[str] = []
+    for m in _FACTORY_REL.finditer(text or ""):
+        rel = m.group(1).replace("\\", "/").strip(".,);:`'\"")
+        if rel and rel not in paths:
+            paths.append(rel)
+    if not paths:
+        return cmd
+    return _RUFF_TARGET.sub(lambda m: m.group(1) + " ".join(paths), cmd, count=1)
+
+
 _FINDING_RE = re.compile(
     r"(?<![\w@.+/-])((?:[\w@.+-]+/)*[\w@.+-]+\.(?:[cm]?[jt]sx?|py|pyi|md|mdx|json|ya?ml|css|scss|html|vue|svelte|go|rs|rb|java|kt|swift|toml|sql|prisma))(?=[\s:(\[,]|$)"
 )
@@ -926,8 +1007,16 @@ def oracle_leak_precheck(app_config: Any, worktree: Path) -> list[str] | None:
         return [f"<leak check failed: {exc!r}>"[:300]]
 
 
-def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
-    """What independently gates this solo story — logged as ``solo_checks``."""
+def checks_plan(
+    app_config: Any,
+    story: Any,
+    static: list[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    """What independently gates this solo story — logged as ``solo_checks``.
+
+    ``static`` is the scoped lint/format/type list (see
+    :func:`scope_static_gates`). Omitted, the app's configured commands.
+    """
     gates = getattr(app_config, "gates", None)
     oracle_on = bool(getattr(gates, "acceptance_oracle", False))
     try:
@@ -939,8 +1028,9 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
     in_conv = ["test_command", "non_empty_change"]
     if requires_production_delta(app_config):
         in_conv.append("production_delta")
-    in_conv.extend(name for name, _ in static_gate_commands(app_config))
-    return {
+    gates_static = static if static is not None else static_gate_commands(app_config)
+    in_conv.extend(name for name, _ in gates_static)
+    plan = {
         "pipeline": SOLO,
         "reviewer": (
             f"independent review before delivery (max {SOLO_MAX_REVIEW_CYCLES} cycles: "
@@ -962,6 +1052,9 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
         "merge_gates_required": required,
         "ci": "required checks via the auto-merge worker (tests-green reads CI)",
     }
+    if static is not None:
+        plan["static_commands"] = dict(gates_static)
+    return plan
 
 
 __all__ = [

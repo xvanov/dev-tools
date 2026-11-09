@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -363,3 +364,123 @@ def test_summarize_checks_latest_run_wins_and_stale_ignored() -> None:
     stale = {**old, "name": "other", "conclusion": "STALE"}
     assert summarize_checks([old, new, stale])["state"] == "passing"
     assert summarize_checks([new, old])["state"] == "passing"
+
+
+_FACTORY_LINT = "cd software-factory && uv run --all-extras ruff check ."
+
+
+def _tool_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "personal-assistant").mkdir(parents=True)
+    (repo / "software-factory").mkdir()
+    (repo / "node_modules").mkdir()
+    return repo
+
+
+def test_a_personal_assistant_story_drops_the_factory_ruff_gate(tmp_path: Path) -> None:
+    repo = _tool_repo(tmp_path)
+    text = "Change personal-assistant/src/dispatch/factory.ts"
+    tools = solo.touched_tools(repo, text)
+    assert tools == frozenset({"personal-assistant"})
+    scoped = solo.scope_static_gates(repo, [("lint", _FACTORY_LINT), ("type_check", "tsc")], tools, text)
+    assert scoped == [("type_check", "tsc")]
+    plan = solo.checks_plan(
+        AppConfig(name="p", repo="o/p", gates=AppGatesConfig(lint_command=_FACTORY_LINT)),
+        None,
+        static=scoped,
+    )
+    assert "lint" not in plan["in_conversation_checks"]
+    assert plan["static_commands"] == {"type_check": "tsc"}
+
+
+def test_a_software_factory_story_narrows_ruff_to_the_named_path(tmp_path: Path) -> None:
+    repo = _tool_repo(tmp_path)
+    text = "See software-factory/factory/chain/solo.py and software-factory/factory/chain/handlers.py."
+    tools = solo.touched_tools(repo, text)
+    assert tools == frozenset({"software-factory"})
+    scoped = solo.scope_static_gates(repo, [("lint", _FACTORY_LINT)], tools, text)
+    assert scoped == [(
+        "lint",
+        "cd software-factory && uv run --all-extras ruff check "
+        "factory/chain/solo.py factory/chain/handlers.py",
+    )]
+
+
+def test_text_that_names_no_tool_keeps_the_full_lint_command(tmp_path: Path) -> None:
+    repo = _tool_repo(tmp_path)
+    text = "make the button blue, and look at src/foo.ts"
+    assert solo.touched_tools(repo, text) == frozenset()
+    assert solo.scope_static_gates(repo, [("lint", _FACTORY_LINT)], frozenset(), text) == [
+        ("lint", _FACTORY_LINT)
+    ]
+
+
+def test_empty_static_gates_do_not_check_out_a_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(solo, "_git_ro", lambda *a, **k: calls.append(a) or (0, ""))
+    assert solo.static_gate_baseline(tmp_path, "main", []) == {}
+    assert calls == []
+
+
+def test_a_just_cut_worktree_is_not_fetched_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain.handlers import _writing_worktree
+    from factory.chain.state_machine import StoryRecord
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    calls: list[Any] = []
+
+    def _run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(
+        "factory.chain.handlers.ensure_worktree_for_story", lambda *a, **k: wt
+    )
+    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr("factory.chain.pickup.is_pickup", lambda story: False)
+    monkeypatch.setattr("factory.chain.pickup.story_into", lambda story, cfg: "main")
+    monkeypatch.setattr("factory.chain.delivery_gate.stack_parent", lambda *a, **k: None)
+    story = StoryRecord(
+        direction_id="1", app="dev-tools", title="t", slug="s", scope="backend",
+        github_issue_number=1,
+    )
+    cfg = AppConfig(name="dev-tools", repo="o/r")
+    assert _writing_worktree(cfg, tmp_path, story) == wt
+    assert calls == []
+
+
+def test_an_older_worktree_still_refreshes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain.handlers import _writing_worktree
+    from factory.chain.state_machine import StoryRecord
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    calls: list[Any] = []
+
+    def _run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args[0] if args else kwargs.get("args"))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(time, "time", lambda: wt.stat().st_ctime + 120)
+    monkeypatch.setattr(
+        "factory.chain.handlers.ensure_worktree_for_story", lambda *a, **k: wt
+    )
+    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda *a, **k: tmp_path)
+    monkeypatch.setattr("factory.chain.pickup.is_pickup", lambda story: False)
+    monkeypatch.setattr("factory.chain.pickup.story_into", lambda story, cfg: "main")
+    monkeypatch.setattr("factory.chain.delivery_gate.stack_parent", lambda *a, **k: None)
+    story = StoryRecord(
+        direction_id="1", app="dev-tools", title="t", slug="s", scope="backend",
+        github_issue_number=1,
+    )
+    assert _writing_worktree(AppConfig(name="dev-tools", repo="o/r"), tmp_path, story) == wt
+    assert any("fetch" in str(c) for c in calls)
