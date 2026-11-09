@@ -18,7 +18,7 @@ assert.strictEqual(defaults['deepseek-pr'], 2);
 {
   const e = wl.effective(arch, [{ workflow: 'deepseek-pr', max_usd: '0' }, { workflow: 'gone', max_usd: 9 }]);
   assert.deepStrictEqual(e['deepseek-pr'], { default: 2, override: 0, effective: 0, custom: true });
-  assert.deepStrictEqual(e.research, { default: 0, override: null, effective: 0, custom: false });
+  assert.deepStrictEqual(e.research, { default: 0.05, override: null, effective: 0.05, custom: false });
   assert.ok(!('gone' in e) && !('phone' in e));
 }
 
@@ -80,7 +80,7 @@ function fakeRepo() {
   assert.deepStrictEqual(r.body.limits['deepseek-pr'], { default: 2, override: 5, effective: 5, custom: true });
   r = await call('GET', {});
   assert.strictEqual(r.body.limits['deepseek-pr'].effective, 5);
-  assert.strictEqual(r.body.limits.research.effective, 0, 'others keep their default');
+  assert.strictEqual(r.body.limits.research.effective, 0.05, 'others keep their default');
   r = await call('POST', { 'x-pa': '1' }, { workflow: 'deepseek-pr', max_usd: null });
   assert.deepStrictEqual(r.body.limits['deepseek-pr'], { default: 2, override: null, effective: 2, custom: false });
   assert.strictEqual(repo.rows.size, 0);
