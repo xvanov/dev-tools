@@ -28,7 +28,8 @@
 #      a different signature's problem), and NOT an ancestor of this script. Re-probe it
 #      with a longer timeout; only a holder that still does not answer is stopped.
 #      Anything that fails identification -> exit 1 and escalate, untouched. So does a
-#      node_modules\node-pty that will not load: a replacement could not start.
+#      node_modules\ws that will not load: a replacement could not start. ptyd is the
+#      PTY host; node-pty is gone (Exit 5).
 #   3. Confirm-Sessiond starts a fresh sessiond and proves the pid answering is the one
 #      it spawned.
 #   4. The front is left running - it holds no PTYs, and it reaches the new sessiond on
@@ -66,9 +67,9 @@
 # connect() call runs synchronously on the main thread. With that file gone the
 # worker never starts, so nothing reads the pipe, connect() blocks, and the event
 # loop stops. That is the deadlock the worker exists to prevent. It matches the
-# evidence: zero CPU and a conhost with no shell. Hence the guard below. Before
-# stopping a hung sessiond, prove a NEW one could load node-pty; otherwise the kill
-# only turns "hung" into "gone".
+# evidence: zero CPU and a conhost with no shell. That addon is retired (Exit 5).
+# The guard below still refuses to stop a hung sessiond unless a new one could
+# load `ws`; otherwise the kill only turns "hung" into "gone".
 # Ruled out:
 #   - not a crash / not "down": the process was alive and bound the whole time;
 #   - not EADDRINUSE / a squatter: the holder was the pid sessiond.pid recorded;
@@ -192,19 +193,20 @@ if ($holder) {
     exit 1
   }
 
-  # Can a replacement even start? node-pty on disk is what a fresh sessiond loads,
-  # and a broken install (2026-11-06) is also what hangs a running one. Stopping the
-  # hung supervisor when its successor cannot load is all cost, no repair.
+  # Can a replacement even start? It loads ws and talks to ptyd. The 2026-11-06
+  # hang was a gutted node-pty; that addon is gone (Exit 5), and a missing ws
+  # still means a new sessiond cannot serve. Stopping the hung supervisor when
+  # its successor cannot load is all cost, no repair.
   # EAP Continue: under 'Stop', PS 5.1 turns the first native stderr line into a
   # terminating NativeCommandError (AGENT.md, "Native git output is not an error").
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  $ptyCheck = & (Get-NodePath) -e "require(process.argv[1] + '/node_modules/node-pty'); require('fs').accessSync(process.argv[1] + '/node_modules/node-pty/lib/worker/conoutSocketWorker.js')" $ProjectDir 2>&1
-  $ptyOk = ($LASTEXITCODE -eq 0)
+  $wsCheck = & (Get-NodePath) -e "require(process.argv[1] + '/node_modules/ws')" $ProjectDir 2>&1
+  $wsOk = ($LASTEXITCODE -eq 0)
   $ErrorActionPreference = $eap
-  if (-not $ptyOk) {
-    Write-Host "remedy: node_modules\node-pty does not load ($(($ptyCheck | Select-Object -Last 1)))."
-    Write-Host "remedy: that is the likely reason sessiond hung, and a new sessiond would fail the same way - NOT stopping pid $holder."
-    Write-Host "remedy: reinstall it (stop the tiers first if conpty.node is locked: move node_modules\node-pty aside, then 'npm install --omit=dev --ignore-scripts --no-audit --no-fund' and 'git checkout -- package-lock.json'), then re-run."
+  if (-not $wsOk) {
+    Write-Host "remedy: node_modules\ws does not load ($(($wsCheck | Select-Object -Last 1)))."
+    Write-Host "remedy: a new sessiond would fail the same way - NOT stopping pid $holder."
+    Write-Host "remedy: from a normal PowerShell: cd $ProjectDir; npm ci"
     exit 1
   }
 
@@ -249,7 +251,7 @@ if ($holder) {
 # ---- 3. start a fresh sessiond ----------------------------------------------
 # A sessiond whose node_modules was deleted under it hangs on its next spawn; a new
 # one would just crash on require('ws'). Reinstalling is not a 60s unattended job.
-$missing = @('node_modules\ws\package.json', 'node_modules\node-pty\lib\worker\conoutSocketWorker.js') |
+$missing = @('node_modules\ws\package.json') |
   Where-Object { -not (Test-Path (Join-Path $ProjectDir $_)) }
 if ($missing) {
   Write-Host "remedy: termhub's dependencies are damaged (missing: $($missing -join ', ')). A human must run, from a NORMAL PowerShell: cd $ProjectDir; npm ci; .\windows\start.ps1 -PublishPort $PublishPort"

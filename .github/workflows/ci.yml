@@ -228,10 +228,11 @@ jobs:
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
         shell: bash
 
-  # ptyd (plan 5.1): the Rust terminal host. Lint, unit tests, then the termhub
-  # protocol conformance suite against the built binary (sessiond, ptyd and
-  # sessiond-on-ptyd legs; PTYD_REQUIRED=1 makes a missing binary a failure,
-  # where the termhub job above SKIPs those legs) and the sessiond-restart test.
+  # ptyd (plan 5.1, Exit 5): the only PTY host. Lint, unit tests, then the termhub
+  # protocol conformance suite against the built binary (ptyd and sessiond-on-ptyd;
+  # the node-pty sessiond leg is retired). PTYD_REQUIRED=1 makes a missing binary
+  # a failure, where the termhub job above SKIPs the legs that spawn a PTY. Also
+  # the termhub tests that spawn one (front swap, screen, csrf, session env).
   # Compiles go through sccache (GitHub cache backend); rust-cache keeps the
   # cargo registry and git deps.
   ptyd:
@@ -290,7 +291,7 @@ jobs:
           sccache --show-stats || true
       - run: npm ci
         working-directory: termhub
-      - name: conformance (sessiond, ptyd, sessiond+ptyd)
+      - name: conformance (ptyd, sessiond+ptyd)
         working-directory: termhub
         shell: bash
         env:
@@ -303,6 +304,16 @@ jobs:
         env:
           PTYD_REQUIRED: '1'
         run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/ptydBackend.test.js
+      - name: termhub tests that spawn a PTY
+        working-directory: termhub
+        shell: bash
+        env:
+          PTYD_REQUIRED: '1'
+        run: |
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/frontSwap.test.js
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/screen.test.js
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/csrf.test.js
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/sessionEnv.test.js
 
   # Build pipeline (plan T7): `node scripts/build.js` builds every compiled target
   # (ptyd; the Tauri desktop shell's installers, plan 7.6: NSIS on Windows, .deb

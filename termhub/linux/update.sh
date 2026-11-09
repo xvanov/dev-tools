@@ -6,9 +6,10 @@
 # THE CONSTRAINT THAT SHAPES THIS WHOLE SCRIPT
 #
 # On Linux termhub is ONE process (`server.js`) under a systemd --user unit, and the
-# Update button runs this script inside a termhub PTY. So
-# `systemctl --user restart termhub` kills the terminal this script is running in,
-# mid-line. Anything sequenced after the restart never happens.
+# Update button runs this script inside a termhub terminal. The shells live in ptyd,
+# so that restart does not end them. The verify step is still detached (`--finish`):
+# a dropped view must not be what decides whether the new build stayed up.
+# Anything sequenced after the restart, in this process, is not how the verify runs.
 #
 # That is why the restart is LAST, why everything else (pull, deps, CLI, watchdog)
 # happens before it, and why the restart itself is handed to a DETACHED re-exec of
@@ -387,11 +388,13 @@ say "confirming the watchdog installation"
 bash "$PROJECT_DIR/watchdog/install-watchdog.sh" --ensure 2>&1 || \
   say "the watchdog could not be installed - termhub will still update; it just won't be watched."
 
-# 4b) ptyd (plan 5.1 / Exit 5). When lib/ptyHost.js resolves to ptyd here, make
-# sure its own unit runs, so the restart below no longer ends the terminals. It
-# never restarts a running ptyd. Prints what the PTY host will be after restart.
-bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure 2>&1 || \
-  say "ptyd could not be set up - the restart below may fall back to node-pty (node lib/ptyHost.js to see why)."
+# 4b) ptyd (plan 5.1 / Exit 5). It is the only PTY host. Make sure its unit runs
+# so the restart below does not end the terminals. It never restarts a running
+# ptyd. A failure stops the update: there is no other host to restart onto.
+bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure 2>&1 || {
+  say "ptyd could not be set up. node-pty was retired; not restarting termhub."
+  exit 1
+}
 
 # 4c) The front's runtime (TERMHUB_FRONT in termhub/.env, lib/launch.ts): the
 # pinned Bun for a jarvisd front. Without it server.js serves the Node front.
@@ -400,15 +403,13 @@ bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure 2>&1 || \
 
 # 5) Restart, detached, so the verify/rollback logic outlives this PTY.
 say ""
-if (cd "$PROJECT_DIR" && node -e "process.exit(require('./lib/ptyHost').plan().ptyd ? 0 : 1)") 2>/dev/null \
-   && curl -sS -m 2 "http://127.0.0.1:${TERMHUB_PTYD_PORT:-7020}/api/ping" 2>/dev/null | grep -q '"entry":"ptyd"'; then
-  say "restarting '$SERVICE' now. The terminals live in ptyd and survive it; this one"
-  say "reconnects when the new build is up. The result is logged to:"
-else
-  say "restarting '$SERVICE' now. THIS TERMINAL WILL DIE - that is expected: on Linux"
-  say "termhub is one process, so every terminal (including this one) ends with the"
-  say "restart. Reopen termhub in a moment; the result is logged to:"
+if ! curl -sS -m 2 "http://127.0.0.1:${TERMHUB_PTYD_PORT:-7020}/api/ping" 2>/dev/null | grep -q '"entry":"ptyd"'; then
+  say "ptyd is not answering on 127.0.0.1:${TERMHUB_PTYD_PORT:-7020}. Not restarting"
+  say "(that would end terminals, and the new sessiond has no other host)."
+  exit 1
 fi
+say "restarting '$SERVICE' now. The terminals live in ptyd and survive it; this one"
+say "reconnects when the new build is up. The result is logged to:"
 say "  $UPDATE_LOG"
 say ""
 

@@ -1,13 +1,14 @@
 # ptyd as a logon task (plan 5.1 / Exit 5): the Windows counterpart of
 # linux/ptyd-unit.sh. update.ps1 runs -Ensure; the rest are by hand.
 #
-#   .\windows\ptyd.ps1 [-Ensure]  when termhub will use ptyd (lib\ptyHost.js: TERMHUB_PTYD=1 in
-#                                 termhub\.env, or ptyHost=ptyd): build ptyd if its sources are
+#   .\windows\ptyd.ps1 [-Ensure]  ptyd is the only PTY host: build it if its sources are
 #                                 newer than the build (cargo), install the build for ptyd's next
 #                                 start (lib\ptyHost.js install), register the termhub-ptyd task,
-#                                 and start it when nothing answers on the port. Otherwise nothing.
+#                                 and start it when nothing answers on the port.
+#                                 TERMHUB_PTYD=0 or ptyHost=node-pty is an error (node-pty is gone).
 #   .\windows\ptyd.ps1 -Restart   stop ptyd and start the installed copy. ENDS EVERY TERMINAL IN IT.
-#   .\windows\ptyd.ps1 -Remove    stop ptyd, unregister the task (after a rollback to node-pty).
+#   .\windows\ptyd.ps1 -Remove    stop ptyd and unregister the task. ENDS EVERY TERMINAL IN IT.
+#                                 Not a rollback: node-pty is gone. Rollback is the previous commit.
 #   -DryRun                       print what would happen; change nothing.
 #
 # -Ensure never restarts a running ptyd: that would end every terminal in it. A new build waits
@@ -32,8 +33,8 @@ function Get-PtydPing {
 }
 
 function Get-PtydPlan {
-  $json = & $Node -e "const h=require(process.argv[1]);const r=h.plan();process.stdout.write(JSON.stringify({ptyd:r.ptyd,bin:r.bin,reason:r.reason,installed:h.installedBinary(),build:h.buildBinary()}))" $PtyHostJs
-  if ($LASTEXITCODE -ne 0 -or -not $json) { throw "lib\ptyHost.js did not answer" }
+  $json = & $Node -e "const h=require(process.argv[1]);const r=h.plan();if(r.error){console.error(r.error);process.exit(2)}process.stdout.write(JSON.stringify({ptyd:r.ptyd,bin:r.bin,reason:r.reason,error:r.error||'',installed:h.installedBinary(),build:h.buildBinary()}))" $PtyHostJs
+  if ($LASTEXITCODE -ne 0 -or -not $json) { throw "lib\ptyHost.js did not answer (node-pty was retired; ptyd is required)" }
   return ($json | ConvertFrom-Json)
 }
 
@@ -132,8 +133,7 @@ if ($Restart) {
 
 # -Ensure (the default).
 if (-not $plan.ptyd) {
-  Write-Host "ptyd: not used here ($($plan.reason)); nothing to do"
-  exit 0
+  throw "ptyd is required ($($plan.reason)). node-pty was retired; there is no other host."
 }
 if (Test-PtydBuildStale $plan.build) {
   if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {

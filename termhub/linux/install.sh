@@ -21,8 +21,8 @@ if ! command -v tailscale >/dev/null 2>&1; then
   echo "WARNING: tailscale CLI not found. termhub will fall back to loopback unless you set TERMHUB_BIND." >&2
 fi
 
-# --- dependencies (builds node-pty native module) --------------------------
-echo "termhub: installing npm dependencies (this compiles node-pty)…"
+# --- dependencies (ptyd, below, is the PTY host; nothing here is native) ---
+echo "termhub: installing npm dependencies…"
 ( cd "$DIR" && npm install --omit=dev --no-audit --no-fund )
 # npm rewrites the lockfile into the local npm's preferred shape even when nothing
 # installed changed, which leaves a fresh clone dirty and blocks its first
@@ -46,8 +46,8 @@ sed -e "s#__DIR__#$DIR#g" -e "s#__NODE__#$NODE#g" \
 echo "termhub: wrote $UNIT_DIR/termhub.service"
 
 systemctl --user daemon-reload
-# ptyd first (only where termhub will use it: lib/ptyHost.js), so termhub finds it.
-bash "$SCRIPT_DIR/ptyd-unit.sh" --ensure || echo "NOTE: ptyd unit not installed; termhub falls back to what lib/ptyHost.js resolves."
+# ptyd first, so termhub finds it. It is the only PTY host: a failure stops the install.
+bash "$SCRIPT_DIR/ptyd-unit.sh" --ensure
 systemctl --user enable --now termhub.service
 echo "termhub: service enabled and started."
 

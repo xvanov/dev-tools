@@ -3,15 +3,10 @@
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
-type Json = import('./types.ts').Json;
-
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const pty = require('node-pty');
-const { execFile } = require('child_process');
 const { defaultShell, shellArgs } = require('./shell.ts');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel.ts');
 const cursorModel = require('./cursorModel.ts');
@@ -19,7 +14,6 @@ const opencodeModel = require('./opencodeModel.ts');
 const opencodeApi = require('./opencodeApi.ts');
 const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore.ts');
 const { ScreenMirror } = require('./screenMirror.ts');
-const { applyEnvSpec } = require('./sessionEnv.ts');
 const ptydClient = require('./ptydClient.ts');
 const { RemotePty } = ptydClient;
 
@@ -56,17 +50,6 @@ function resolveCwd(input: any) {
     return { cwd: home, notice: `directory '${dir}' not found — starting in ${home}` };
   }
 }
-
-// Environment variables that identify the agent session termhub itself was
-// launched from. Stripped from every PTY we spawn — see _spawn().
-const PARENT_AGENT_ENV = [
-  'CLAUDECODE',
-  'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_SESSION_ID',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_PID',
-  'CLAUDE_EFFORT',
-];
 
 // The command's first token — the program actually being run — unquoted so a
 // path can be matched against without the wrapping ' or ".
@@ -376,60 +359,27 @@ class Session {
   }
 
   _spawn() {
-    // TERMHUB_SESSION_ID marks the terminal as termhub-owned, so a script can
-    // tell it is running inside a PTY that a given action would destroy —
-    // windows/restart-sessiond.ps1 refuses to kill the supervisor from one of
-    // its own terminals on the strength of it. Always assigned, never inherited:
-    // a nested termhub must not hand its parent's session id to its children.
-    const env: Json = {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      TERMHUB_SESSION_ID: this.id,
-    };
-    // A termhub terminal is a *fresh* terminal, never a continuation of whatever
-    // launched termhub. If termhub was started from inside a Claude Code session
-    // (easy to do — run `node server.js` from a termhub terminal), these inherited
-    // vars tell every nested `claude` it is a child of that session: it prints
-    // "⚠ Transcript saving is off" and writes no transcript at all, which silently
-    // breaks the model badge and spoken announcements, both of which read it.
-    // Only the parent-identity vars go; user preferences (CLAUDE_CONFIG_DIR,
-    // CLAUDE_CODE_ENABLE_TELEMETRY, …) are deliberately left alone.
-    for (const key of PARENT_AGENT_ENV) delete env[key];
-    // Last, so a caller's removals hold over everything above.
-    const spawnEnv = applyEnvSpec(env, this.envSpec);
-    // No rc files: the shell's own flag, plus whatever variable makes it source
-    // one anyway (sh reads $ENV). Removed last, after the caller's own sets.
+    // ptyd is the only PTY host. It builds the environment from its own (inherited
+    // from the sessiond that started it): TERM, TERMHUB_SESSION_ID (this id, so a
+    // script can tell it is inside a terminal a restart would affect), the
+    // parent-agent variables stripped, rc variables removed for noRc. It is sent
+    // only the caller's changes. There is no in-process fallback.
+    if (!ptydClient.enabled()) {
+      throw new Error('ptyd is the only PTY host and TERMHUB_PTYD is not 1. '
+        + 'node-pty was retired (Exit 5). A production sessiond sets this from lib/ptyHost.js; '
+        + 'a test must point TERMHUB_PTYD_PORT at a spare ptyd.');
+    }
     const launch = shellArgs(this.shell, { noRc: this.noRc });
     this.rcSkipped = launch.rcSkipped;
-    for (const name of launch.unsetEnv) {
-      for (const k of Object.keys(spawnEnv)) {
-        if (k === name || (process.platform === 'win32' && k.toUpperCase() === name)) delete spawnEnv[k];
-      }
-    }
-    if (ptydClient.enabled()) {
-      // ptyd builds the environment by the same rules from its own (which it
-      // inherited from the sessiond that started it): TERM, TERMHUB_SESSION_ID
-      // (it is given this id), the parent-agent variables stripped, rc
-      // variables removed for noRc. So it is sent only the caller's changes.
-      const spec = this.envSpec || {};
-      this.pty = new RemotePty({
-        id: this.id,
-        create: {
-          cwd: this.cwd, shell: this.shell, cols: this.cols, rows: this.rows, title: this.title,
-          noRc: this.noRc, links: this.links,
-          ...(this.envSpec ? { env: spec.env || {}, unsetEnv: spec.unset || [] } : {}),
-        },
-      });
-    } else {
-      this.pty = pty.spawn(this.shell, launch.args, {
-        name: 'xterm-256color',
-        cols: this.cols,
-        rows: this.rows,
-        cwd: this.cwd,
-        env: spawnEnv,
-      });
-    }
+    const spec = this.envSpec || {};
+    this.pty = new RemotePty({
+      id: this.id,
+      create: {
+        cwd: this.cwd, shell: this.shell, cols: this.cols, rows: this.rows, title: this.title,
+        noRc: this.noRc, links: this.links,
+        ...(this.envSpec ? { env: spec.env || {}, unsetEnv: spec.unset || [] } : {}),
+      },
+    });
     this.alive = true;
 
     // Surface a bad working directory in the terminal itself (buffered so it also
@@ -891,29 +841,6 @@ class Session {
     // Returns a promise that settles once ptyd has (sessiond's DELETE awaits it,
     // as callers rely on the tree being gone, e.g. to remove the cwd next).
     if (this.pty && this.pty.remote) return this.pty.kill();
-    if (!this.alive) return undefined;
-    const release = () => {
-      try {
-        this.pty.kill();
-      } catch {
-        // already gone
-      }
-    };
-    // Windows: pty.kill() closes the pseudoconsole but leaves the shell's children running, still
-    // holding the cwd. Take the whole tree down first and wait for it, so a caller that removes the
-    // directory next can (sessiond's DELETE awaits this). pty.kill() still runs afterwards: it
-    // releases node-pty's native handles (without it the process cannot exit). On Node 26 +
-    // node-pty 1.1.0 its console-list agent then prints "AttachConsole failed" to stderr for a
-    // shell that is already gone; that is harmless.
-    // Asynchronous on purpose: it used to be spawnSync('taskkill') plus a busy-wait, which held
-    // sessiond's event loop for 0.7-2.3 s per kill, so every other request (a create) waited.
-    if (process.platform === 'win32' && this.pty.pid) {
-      return killTreeWin(this.pty.pid).then((gone) => {
-        if (gone) this._handleExit(null);
-        release();
-      });
-    }
-    release();
     return undefined;
   }
   info() {
@@ -956,22 +883,6 @@ class Session {
 
 function baseName(p: any) {
   return String(p).split(/[\\/]/).pop() || p;
-}
-
-// Kills pid and every descendant (taskkill /T /F). Resolves true once it is gone, false after
-// ~3 s. Never blocks the event loop.
-function killTreeWin(pid: any) {
-  return new Promise<any>((resolve) => {
-    execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, () => {
-      const until = Date.now() + 3000;
-      const poll = () => {
-        try { process.kill(pid, 0); } catch { return resolve(true); }
-        if (Date.now() >= until) return resolve(false);
-        setTimeout(poll, 25);
-      };
-      poll();
-    });
-  });
 }
 
 module.exports = { Session, resolveCwd };

@@ -14,7 +14,7 @@
 type Json = import('./types.ts').Json;
 
 // Nothing here touches a PTY — it is all string surgery on command lines, kept
-// free of the node-pty require chain so the tests are a plain `node` run.
+// free of any PTY client so the tests are a plain `node` run.
 
 // Insert flags right after the claude executable token (the same position
 // classifyCommand's own regex matches), so they land before any trailing prompt

@@ -255,7 +255,7 @@ $cargo = Get-Command cargo -ErrorAction SilentlyContinue
 Report 'cargo' ([bool]$cargo) "$(if ($cargo) { $cargo.Source })" 'install Rust with rustup (https://rustup.rs): it builds ptyd'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $msvc = if (Test-Path $vswhere) { (Invoke-Capture -Exe $vswhere -Arguments @('-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath')).Lines | Select-Object -First 1 } else { $null }
-Report 'msvc' ([bool]$msvc) "$msvc" "install Visual Studio Build Tools with 'Desktop development with C++' (cargo's linker for ptyd; node-pty)"
+Report 'msvc' ([bool]$msvc) "$msvc" "install Visual Studio Build Tools with 'Desktop development with C++' (cargo's linker for ptyd)"
 $python = Get-Command python -ErrorAction SilentlyContinue
 Report 'python' ([bool]$python) "$(if ($python) { $python.Source })" 'install Python 3 for the PA''s always-on capture and Teams cache venvs (skipped without it)'
 $claude = Get-Command claude -ErrorAction SilentlyContinue
@@ -320,7 +320,7 @@ Section 'dependencies'
 foreach ($d in @(
     @{ Name = 'personal-assistant'; Dir = $PaDir; Omit = $false },
     @{ Name = 'jarvisd'; Dir = $JdDir; Omit = $false },
-    # termhub's own installer and update install without dev packages and build node-pty themselves.
+    # termhub's own installer and update install without dev packages. ptyd is cargo, below.
     @{ Name = 'termhub'; Dir = $ThDir; Omit = $true })) {
   if (-not (Test-Path (Join-Path $d.Dir 'package.json'))) { Warn "$($d.Name): no package.json; skipped"; continue }
   $f = Get-Facts (@('deps', $d.Dir) + $(if ($d.Omit) { @('--omit-dev') } else { @() }))
@@ -338,9 +338,6 @@ foreach ($d in @(
   if ($code -ne 0) { Fail-Step "npm $npmVerb in $($d.Name)" "exit $code"; continue }
   # npm rewrites the lockfile into the local npm's shape; a dirty tree blocks the next pull.
   if ($npmVerb -eq 'install' -and $lockClean) { $null = Invoke-Capture -Exe 'git' -Arguments @('-C', $d.Dir, 'checkout', '--', 'package-lock.json') }
-}
-if ((Test-Path (Join-Path $ThDir 'package.json')) -and -not (Test-Path (Join-Path $ThDir 'node_modules\node-pty\build\Release\pty.node'))) {
-  Say "termhub: node-pty is not built (termhub\windows\install.ps1 builds it with MSBuild); sessiond does not need it with TERMHUB_PTYD=1"
 }
 
 # The jarvisd front's Bun, pinned by jarvisd/package.json, into jarvisd\.bun\<version>.
@@ -509,7 +506,7 @@ $termhubInstalled = $false
 if ($th -ne 'ok' -and (Test-Blocked 'Termhub')) {
   Need-Owner "the Termhub task is $th and was registered from an elevated shell: run termhub\windows\install.ps1 from an elevated PowerShell"
 } elseif ($th -ne 'ok') {
-  # A full install: npm, node-pty, the task or launcher, the watchdog, then both tiers started.
+  # A full install: npm, ptyd, the task or launcher, the watchdog, then both tiers started.
   Say "$verb termhub\windows\install.ps1 (the Termhub task is $th)"
   if (-not $DryRun) {
     if ((Invoke-Script (Join-Path $ThDir 'windows\install.ps1')) -ne 0) { Fail-Step 'termhub install' 'termhub\windows\install.ps1 failed (above)' } else { $termhubInstalled = $true }
@@ -585,7 +582,9 @@ elseif (-not $paVer) {
 $frontHealth = Get-Json "http://127.0.0.1:$($thState.activeFrontPort)/api/health"
 $sess = Get-Json "http://127.0.0.1:$($thState.sessiondPort)/api/ping"
 $wantFront = Get-Effective 'TERMHUB_FRONT' @($ThEnv, $RootEnv)
-$wantPtyd = (Get-Effective 'TERMHUB_PTYD' @($ThEnv, $RootEnv)) -eq '1'
+$ptySetting = Get-Effective 'TERMHUB_PTYD' @($ThEnv, $RootEnv)
+if ($ptySetting -eq '0') { Fail-Step 'ptyd' 'TERMHUB_PTYD=0 asks for node-pty, which was retired. Delete that line. Rollback is the previous commit.' }
+$wantPtyd = $true
 $frontPid = if ($frontHealth -and $frontHealth.self) { [int]$frontHealth.self.pid } else { 0 }
 $frontRuntime = if (-not $frontPid) { 'none' } elseif (Test-JarvisdFront $frontPid) { 'jarvisd' } else { 'node' }
 $frontCommit = if ($frontHealth -and $frontHealth.self) { $frontHealth.self.commit } else { $null }

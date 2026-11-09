@@ -5,9 +5,9 @@ PTYs (ConPTY on Windows, a Unix PTY on Linux, through `portable-pty`) and speaks
 of termhub sessiond's protocol on loopback, so anything that talks to sessiond about terminals can
 talk to ptyd instead.
 
-**Status: landing, opt-in.** Nothing runs it by default. termhub uses it only with
-`TERMHUB_PTYD=1` (see *Using it from termhub*); switching termhub over and retiring node-pty is the
-rest of plan 5.1 / Exit 5.
+**Status: the only PTY host.** sessiond keeps every terminal here. Unset and
+`TERMHUB_PTYD=1` both select it; `TERMHUB_PTYD=0` is an error (node-pty was retired,
+Exit 5). The lead still deploys that commit on both stacks before Exit 5 is ticked.
 
 ## Build and run
 
@@ -71,44 +71,36 @@ output is lost.
 ## Using it from termhub
 
 ```powershell
-cd ptyd; cargo build --release
-$env:TERMHUB_PTYD = '1'        # then (re)start sessiond as usual
+node scripts/build.js --only ptyd   # from the repo root; cargo build --release also works
+# then (re)start sessiond. Unset already means ptyd.
 ```
 
-sessiond (`termhub/lib/ptydClient.js`) then creates every PTY in the ptyd on
-`TERMHUB_PTYD_PORT` (7020), starting one detached (`TERMHUB_PTYD_BIN`, default
-`ptyd/target/release/ptyd`, then `debug`) if none answers; its output goes to
+sessiond (`termhub/lib/ptydClient.js`) creates every PTY in the ptyd on
+`TERMHUB_PTYD_PORT` (7020). Production sets `TERMHUB_PTYD=1` (`lib/ptyHost.js`). If nothing
+answers, sessiond starts one (`TERMHUB_PTYD_BIN`, else the installed copy, `dist/<os>-<arch>/`,
+then `ptyd/target/{release,local,debug}`) and exits if it never answers. Its output goes to
 `<dataDir>/logs/ptyd.out.log`. On start, sessiond adopts the sessions ptyd still has.
-`/api/ping` on sessiond reports `ptyHost: "ptyd"` or `"node-pty"`.
+`/api/ping` on sessiond reports `ptyHost: "ptyd"`.
 
-## Cutover (Exit 5): switching a stack, and rolling back
+## Exit 5: the only host, and rolling back
 
-Production starts (`node sessiond.js` on Windows, `node server.js` in the Linux unit) pick the
-PTY host from a persistent setting, `ptyHost` in `<dataDir>/settings.json`
-(`termhub/lib/ptyHost.js`). An explicit `TERMHUB_PTYD=1|0` wins: from the environment, else
-`termhub/.env` or the repo's `.env` (the one-line switch the update scripts read). A value a
-running sessiond exported into its terminals is not a choice and is skipped, so a script run
-from a termhub terminal still reads the file.
+Production starts (`node sessiond.js` on Windows, `node server.js` in the Linux unit) use ptyd.
+The setting `ptyHost` in `<dataDir>/settings.json` (`termhub/lib/ptyHost.js`) is `ptyd` when
+unset. An explicit `TERMHUB_PTYD=1` is the same choice, from the environment else `termhub/.env`
+or the repo's `.env`. A value a running sessiond exported into its terminals is not a choice and
+is skipped, so a script run from a termhub terminal still reads the file. `TERMHUB_PTYD=0` and
+`ptyHost=node-pty` error. A stored `auto` means ptyd; it no longer falls back.
 
-| `ptyHost` | next sessiond start uses |
-|---|---|
-| `node-pty` (default) | node-pty, always: today's behaviour, and the rollback |
-| `ptyd` | ptyd, always: the cutover |
-| `auto` (opt-in) | ptyd **if a release binary is on the machine** (`TERMHUB_PTYD_BIN`, `dist/<os>-<arch>/`, `ptyd/target/release/`), else node-pty |
-
-The cutover is always an explicit `ptyd` setting. `auto` is deliberately not the default: with
-it, merely building a release ptyd in a deployed checkout (a deploy, a test run) would switch
-the host on the next sessiond restart and end every live terminal. `node lib/ptyHost.js` (in
-`termhub/`) prints the setting, what the next start resolves to, and what the running sessiond
-uses (`ptyHost` in its `/api/ping`); `update.ps1` and `restart-sessiond.ps1` print the same.
-
-**Switch a stack:** the runbook is in [JARVISD.md](../docs/native/JARVISD.md) (*Runbook:
-switching a stack's termhub to jarvisd front and ptyd*): `TERMHUB_PTYD=1` in `termhub/.env`, the
-normal update script, then one sessiond restart (the last one that ends terminals). ptyd runs
-as its own long-lived process: the `termhub-ptyd` logon task on Windows (`windows/ptyd.ps1`),
+`node lib/ptyHost.js` (in `termhub/`) prints the setting, what the next start resolves to, and
+what the running sessiond uses (`ptyHost` in its `/api/ping`). The runbook is in
+[JARVISD.md](../docs/native/JARVISD.md) (*Runbook: jarvisd front, and ptyd*). ptyd runs as its
+own long-lived process: the `termhub-ptyd` logon task on Windows (`windows/ptyd.ps1`),
 `termhub-ptyd.service` on Linux (`linux/ptyd-unit.sh`). Both update scripts keep it in place
 (`-Ensure`/`--ensure`: build when the sources are newer, install, register, start if down) and
 never restart a running one.
+
+Rollback is the previous commit (the one that still has node-pty). `TERMHUB_PTYD=0` is not a
+rollback on this commit: sessiond refuses to start.
 
 **Updating ptyd itself:** the running ptyd uses an installed copy,
 `<dataDir>/bin/ptyd-<hash>` (named by `<dataDir>/bin/ptyd-current`; `node lib/ptyHost.js

@@ -1561,7 +1561,7 @@
       "id": "sessiond",
       "layer": "sessions",
       "name": "sessiond",
-      "role": "Owns the sessions. The PTYs live in ptyd, so a front update and a sessiond restart do not end them; sessiond mirrors metadata to sessions.json for restore after a reboot.",
+      "role": "Owns terminal metadata, the screen mirror and the archive. The PTYs live in ptyd, so a sessiond restart adopts them and a front update does not touch them. Mirrors metadata to sessions.json for restore after a reboot that also restarted ptyd.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1578,7 +1578,7 @@
           "on the factory machine: claude_session runs"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
-        "Restart": "With TERMHUB_PTYD=1 (both stacks since 2026-11-08) the PTYs live in ptyd and a restarted sessiond adopts them. node-pty is the host only when that flag is unset, and it is the rollback (TERMHUB_PTYD=0); a sessiond restart then ends the terminals",
+        "Restart": "restarting sessiond adopts the terminals ptyd still has (same id). It does not restart ptyd. Do it on purpose. A sessiond process from before the node-pty retirement that is not yet on ptyd ends its terminals once",
         "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
@@ -1619,7 +1619,7 @@
       "id": "ptyd",
       "layer": "sessions",
       "name": "ptyd",
-      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. With TERMHUB_PTYD=1 (both stacks since 2026-11-08) sessiond keeps its PTYs here, so a sessiond restart no longer ends the terminals. Exit 5, retiring the node-pty host from the code path, is still open.",
+      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. The only PTY host: sessiond keeps every terminal here, so a sessiond restart adopts them. node-pty is retired (Exit 5 code; the lead deploys before that box is ticked).",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1649,12 +1649,12 @@
           "PATCH/DELETE /api/sessions/:id, POST /api/sessions/:id/input, POST /api/sessions/:id/notice (extension)",
           "WebSocket /ws/term/:id: input/resize up; replay (screen: raw), output, size, exit down"
         ],
-        "Conformance": "termhub/test/ptydConformance.test.js runs one black-box suite against sessiond, ptyd and sessiond on ptyd; CI's ptyd job runs it on Windows and Linux",
+        "Conformance": "termhub/test/ptydConformance.test.js runs one black-box suite against ptyd and sessiond on ptyd (the node-pty sessiond leg is retired); CI's ptyd job runs it on Windows and Linux",
         "Restart survival": "termhub/test/ptydBackend.test.js: sessiond is killed mid-command and restarted; the new one adopts the session from ptyd under the same id and loses no output",
         "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
         "Build": "node scripts/build.js --only ptyd (rustup, MSVC build tools on Windows); the update scripts build it when its sources are newer than the build",
         "Installed copy": "<dataDir>/bin/ptyd-<hash>, named by <dataDir>/bin/ptyd-current (node termhub/lib/ptyHost.js install): ptyd runs this, so a build never writes over the running binary; a new one is used from ptyd's next start (ptyd.ps1 -Restart, ptyd-unit.sh --restart, both end its terminals)",
-        "Cutover (Exit 5)": "TERMHUB_PTYD=1|0 (environment, else termhub/.env or the repo's .env) wins over ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty when TERMHUB_PTYD is unset (that is the rollback), ptyd when it is 1, or opt-in auto. ptyd runs as its own long-lived process (logon task on Windows, user unit on Linux) that the update scripts keep in place and never restart. Both stacks switched on 2026-11-08 (TERMHUB_PTYD=1): ptyd is the host, node-pty is the unset flag and the rollback. The runbook is in docs/native/JARVISD.md"
+        "Host": "ptyd is the only host and the default when nothing is set. TERMHUB_PTYD=1 (environment, else termhub/.env or the repo's .env) is the same choice; TERMHUB_PTYD=0 and ptyHost=node-pty error. A stored auto means ptyd. ptyd runs as its own long-lived process (logon task on Windows, user unit on Linux) that the update scripts keep in place and never restart. Both stacks have run it since 2026-11-08. Rollback of the node-pty retirement is the previous commit. The runbook is in docs/native/JARVISD.md"
       },
       "code": [
         "ptyd/src/main.rs",

@@ -15,6 +15,55 @@ const https = require('https');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
+const PTYD_EXE = process.platform === 'win32' ? 'ptyd.exe' : 'ptyd';
+
+/** A built ptyd: PTYD_BIN, else target/{release,local,debug}. Never the live port. */
+function findPtyd() {
+  if (process.env.PTYD_BIN && fs.existsSync(process.env.PTYD_BIN)) return process.env.PTYD_BIN;
+  const base = path.join(ROOT, '..', 'ptyd', 'target');
+  for (const profile of ['release', 'local', 'debug']) {
+    const p = path.join(base, profile, PTYD_EXE);
+    if (fs.existsSync(p)) return p;
+  }
+  const dist = path.join(ROOT, '..', 'dist');
+  if (fs.existsSync(dist)) {
+    for (const name of fs.readdirSync(dist)) {
+      const p = path.join(dist, name, PTYD_EXE);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
+}
+
+function ptydMissing() {
+  const why = 'no ptyd binary (node scripts/build.js --only ptyd, or set PTYD_BIN)';
+  if (process.env.PTYD_REQUIRED === '1') throw new Error(`PTYD_REQUIRED=1 but ${why}`);
+  return why;
+}
+
+// A ptyd on a free loopback port, for tests. Not detached: close() kills it.
+// Does not use 7020, even when the parent shell inherited TERMHUB_PTYD_PORT.
+async function startSparePtyd(dir) {
+  const bin = findPtyd();
+  if (!bin) {
+    const why = ptydMissing();
+    if (why) return null;
+  }
+  const port = await freePort();
+  const env = { ...process.env };
+  delete env.TERMHUB_PTYD_PORT;
+  const child = spawn(bin, ['--port', String(port)], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  let out = '';
+  child.stdout.on('data', (c) => (out += c));
+  child.stderr.on('data', (c) => (out += c));
+  child.output = () => out;
+  child.exited = new Promise((r) => child.once('exit', r));
+  await waitFor(async () => (await getJson(port, '/api/ping')).status === 200, 20_000, `spare ptyd (output: ${out.slice(0, 300)})`);
+  return {
+    bin, port, child,
+    stop: async () => { child.kill(); await child.exited; },
+  };
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -87,8 +136,18 @@ function jarvisdFront(port, sessiondPort, env) {
 
 async function startSpareTermhub() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-spare-'));
-  const env = { ...process.env, TERMHUB_DATA_DIR: dir };
+  const ptyd = await startSparePtyd(dir);
+  if (!ptyd) throw new Error(ptydMissing() || 'no ptyd binary');
+  const env = {
+    ...process.env,
+    TERMHUB_DATA_DIR: dir,
+    TERMHUB_PTYD: '1',
+    TERMHUB_PTYD_PORT: String(ptyd.port),
+    TERMHUB_PTYD_BIN: ptyd.bin,
+  };
   delete env.TERMHUB_BIND;
+  delete env.TERMHUB_PTYD_RESOLVED;
+  delete env.TERMHUB_SESSION_ID;
   const sessiondPort = await freePort();
   const sessiond = proc(`require('./sessiond').startSessiond({ port: ${sessiondPort}, entry: 'sessiond' })`, env);
   await waitFor(async () => (await getJson(sessiondPort, '/api/ping')).status === 200, 60_000, 'sessiond');
@@ -123,6 +182,7 @@ async function startSpareTermhub() {
     for (const f of fronts) f.kill();
     sessiond.kill();
     await Promise.all([sessiond.exited, ...fronts.map((f) => f.exited)]);
+    await ptyd.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
@@ -176,4 +236,4 @@ function missingTicks(ticks, max) {
   return out;
 }
 
-module.exports = { startSpareTermhub, freePort, getJson, waitFor, watchTerminal, ticksIn, missingTicks };
+module.exports = { startSpareTermhub, startSparePtyd, findPtyd, ptydMissing, freePort, getJson, waitFor, watchTerminal, ticksIn, missingTicks };

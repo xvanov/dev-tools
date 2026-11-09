@@ -60,7 +60,7 @@ every step skips work already done.
 | Step | Detail |
 |------|--------|
 | Hostname | `NEW_HOSTNAME` (optional) via `hostnamectl` |
-| Base pkgs | `git curl jq build-essential python3` (build-essential/python3 let termhub compile `node-pty`) |
+| Base pkgs | `git curl jq build-essential python3` (build-essential is cargo's linker for ptyd) |
 | Node.js | `NODE_MAJOR` (default 20) via NodeSource, with a fallback to the distro's `nodejs`/`npm` — guarantees ≥18 |
 | Tailscale | official installer + `tailscale up` (auth key, else interactive; non-fatal if it fails) |
 | GitHub | installs `gh`, runs `gh auth login` (device-code flow), wires gh as git's credential helper, rewrites `git@github.com:`→HTTPS, sets `user.name`/`user.email` from your GitHub account, clones `REPOS` into `REPO_ROOT` |

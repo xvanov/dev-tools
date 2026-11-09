@@ -81,15 +81,14 @@
 #     because Task Scheduler terminates the whole tree - which includes node processes
 #     started by a remedy, since Start-TermhubNode does not break them out of the job.
 #
-# A RED HERRING worth naming, because the escalation bundle tails this file and the
-# next reader will see it: a *healthy* sessiond's stderr routinely contains
+# A RED HERRING in logs from a sessiond that predates the node-pty retirement: that
+# process's stderr routinely contained
 #   node_modules\node-pty\lib\conpty_console_list_agent.js:13
 #   Error: AttachConsole failed
-# That is node-pty's console-list helper, which windowsPtyAgent.js `fork`s as its own
-# short-lived process (there can only be one console attached per process) and whose
-# stderr is inherited into sessiond's log. It dies, sessiond does not - the sessiond
-# carrying that trace was serving three live sessions at the time. A stack trace in
-# sessiond.err.log is not by itself evidence that sessiond fell over.
+# That was node-pty's console-list helper, forked as its own short-lived process.
+# This tree does not load that addon. A new line of that shape means the running
+# sessiond has not been restarted onto this commit. A stack trace in sessiond.err.log
+# is not by itself evidence that sessiond fell over.
 # ---------------------------------------------------------------------------
 
 param(
@@ -155,7 +154,7 @@ while ($true) {
   } catch {
     # Not fatal on its own. The boot scripts throw when a tier misses its own 12s
     # health window, and a tier that is merely slow - cold page cache right after a
-    # boot, node-pty loading - is often listening by the time we verify below.
+    # boot, the first ptyd connect - is often listening by the time we verify below.
     Write-Host "remedy: the boot script reported: $($_.Exception.Message)"
   }
 

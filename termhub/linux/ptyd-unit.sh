@@ -2,13 +2,11 @@
 # ptyd as a systemd --user unit (plan 5.1 / Exit 5). Called by install.sh and
 # update.sh; safe to run any time.
 #
-#   bash linux/ptyd-unit.sh --ensure   install + start the unit when termhub will
-#                                      use ptyd (lib/ptyHost.js says so: a release
-#                                      ptyHost=ptyd, or opt-in ptyHost=auto with a
-#                                      release binary; the default node-pty never);
-#                                      otherwise leave everything as it is
-#   bash linux/ptyd-unit.sh --remove   stop, disable and delete it (after a
-#                                      rollback to node-pty; ends ptyd's terminals)
+#   bash linux/ptyd-unit.sh --ensure   install + start the unit. ptyd is the only
+#                                      PTY host (lib/ptyHost.js). TERMHUB_PTYD=0 or
+#                                      ptyHost=node-pty is an error.
+#   bash linux/ptyd-unit.sh --remove   stop, disable and delete it. ENDS its
+#                                      terminals. Not a rollback: node-pty is gone.
 #   bash linux/ptyd-unit.sh --restart  restart ptyd onto the installed copy. ENDS
 #                                      EVERY TERMINAL IN IT; only on purpose.
 #   --dry-run (after the action)       print what would happen; change nothing
@@ -59,17 +57,21 @@ plan() {
   (cd "$DIR" && node -e "
     const h = require('./lib/ptyHost');
     const r = h.plan();
-    process.stdout.write([r.ptyd ? 'ptyd' : 'node-pty', r.bin || '', r.reason, h.buildBinary() || ''].join('\t'));
+    if (r.error) { console.error(r.error); process.exit(2); }
+    process.stdout.write(['ptyd', r.bin || '', r.reason, h.buildBinary() || ''].join('\t'));
   ")
 }
-decision="$(plan)"
+if ! decision="$(plan)"; then
+  echo "ptyd: required, but the host setting was refused (node-pty was retired)" >&2
+  exit 1
+fi
 host="$(printf '%s' "$decision" | cut -f1)"
 reason="$(printf '%s' "$decision" | cut -f3)"
 build="$(printf '%s' "$decision" | cut -f4)"
 
 if [[ "$host" != ptyd ]]; then
-  echo "ptyd: not used here ($reason); nothing to install"
-  exit 0
+  echo "ptyd: required ($reason). node-pty was retired; there is no other host." >&2
+  exit 1
 fi
 
 # Build when a ptyd source is newer than the build (or there is none).

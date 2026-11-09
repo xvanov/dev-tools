@@ -1,7 +1,7 @@
 'use strict';
 
 // lib/launch.ts, lib/dotenv.ts and the ptyHost parts the deploy switches use:
-// TERMHUB_FRONT=jarvisd|node and TERMHUB_PTYD=1|0 as one line in termhub/.env.
+// TERMHUB_FRONT=jarvisd|node and TERMHUB_PTYD (unset or 1: ptyd; 0 is an error).
 //
 // The properties that matter: a jarvisd front without its pinned Bun falls back
 // to node (a missing Bun must never leave a stack without a front); a value a
@@ -44,8 +44,11 @@ assert.strictEqual(ptyHost.chosen({}, files).value, '0');
 assert.strictEqual(ptyHost.chosen({ TERMHUB_PTYD: '1', TERMHUB_PTYD_RESOLVED: '1' }, files).value, '0');
 assert.strictEqual(ptyHost.chosen({ TERMHUB_PTYD: '1', TERMHUB_SESSION_ID: 'abc' }, files).value, '0');
 assert.strictEqual(ptyHost.chosen({ TERMHUB_PTYD: '1', TERMHUB_PTYD_RESOLVED: '1' }, []).value, undefined);
+assert.strictEqual(ptyHost.resolve({ envValue: '1', source: 'termhub/.env', mode: 'node-pty' }).ptyd, true, 'an explicit 1 still selects ptyd');
 assert.match(ptyHost.resolve({ envValue: '1', source: 'termhub/.env', mode: 'node-pty' }).reason, /TERMHUB_PTYD=1 in termhub\/\.env/);
-assert.strictEqual(ptyHost.resolve({ envValue: '0', source: 'termhub/.env', mode: 'ptyd' }).ptyd, false, 'an explicit 0 beats the setting');
+const refused = ptyHost.resolve({ envValue: '0', source: 'termhub/.env', mode: 'ptyd' });
+assert.strictEqual(refused.ptyd, false);
+assert.match(refused.error, /retired/, 'TERMHUB_PTYD=0 is the removed node-pty path, not a host');
 
 // The pinned Bun: jarvisd/.bun/<pin> first, node_modules only at the pinned version.
 const jd = path.join(tmp, 'jarvisd');

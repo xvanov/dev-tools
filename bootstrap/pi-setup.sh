@@ -93,7 +93,7 @@ sudo apt-get update -y
 if [[ "$SKIP_UPGRADE" -eq 0 ]]; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 fi
-# build-essential + python3: node-pty (termhub) compiles a native module.
+# build-essential: cargo's linker for ptyd (termhub's PTY host). python3: other tools.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git curl ca-certificates gnupg jq build-essential python3
 

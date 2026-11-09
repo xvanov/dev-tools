@@ -1,16 +1,18 @@
 # termhub restart-sessiond (Windows) - restart the SUPERVISOR tier.
 #
-# THIS ENDS EVERY LIVE TERMINAL, including the one you run it from. PTYs live in
-# sessiond's memory and cannot be migrated. What survives is the session ARCHIVE
-# (sessions.json): after the restart the sidebar lists them under "Restorable",
-# and restoring a claude session resumes that exact conversation.
+# Terminals live in ptyd, not in sessiond. Restarting sessiond adopts the ones
+# ptyd still has (same id, output kept) as long as the next start also uses ptyd,
+# which is the only host. It does not restart ptyd. A sessiond that is still on
+# node-pty (a process from before Exit 5) ends those terminals once; they come
+# back Restorable from sessions.json.
 #
 # Needed because update.ps1 deliberately never restarts sessiond - that's what
-# keeps terminals alive across updates - so sessiond-side changes (sessiond.js,
-# lib/*, a node-pty bump) only take effect here, on purpose.
+# keeps the front swap from touching terminals - so sessiond-side changes
+# (sessiond.js, lib/*) only take effect here, on purpose.
 #
-# Run it from a plain PowerShell window, NOT from a termhub terminal: this script
-# kills that terminal mid-run, and the update it was performing dies with it.
+# Run it from a plain PowerShell window, NOT from a termhub terminal: it restarts
+# the front, which drops the view, and a sessiond that is still on node-pty would
+# end this terminal mid-run.
 #
 #     .\windows\restart-sessiond.ps1 [-Force]
 
@@ -29,15 +31,17 @@ $live  = if ($ident -and $ident.sessions) { [int]$ident.sessions } else { 0 }
 
 Write-Host "termhub restart-sessiond: port $sessiondPort, running $(Format-Commit $ident.commit $ident.dirty), $live live session(s)."
 if ($ident -and "$($ident.ptyHost)" -eq 'ptyd') {
-  Write-Host "Its PTYs live in ptyd: they survive if the next start uses ptyd too (below); a switch to node-pty leaves them behind." -ForegroundColor Yellow
-} else {
-  Write-Host "This ENDS those $live terminal(s). They stay restorable from the sidebar." -ForegroundColor Yellow
+  Write-Host "Its PTYs live in ptyd: they survive this restart (ptyd is not restarted)." -ForegroundColor Yellow
+} elseif ($live -gt 0) {
+  Write-Host "This sessiond is not on ptyd. Restarting it ENDS those $live terminal(s); they stay restorable from the sidebar. The new sessiond uses ptyd only." -ForegroundColor Yellow
 }
-# Where the new sessiond will keep its PTYs (lib/ptyHost.js; rollback: node lib\ptyHost.js node-pty).
-& node (Join-Path $PSScriptRoot '..\lib\ptyHost.js') status 2>$null | ForEach-Object { Write-Host "  pty host $_" }
+# The next start must resolve to ptyd. Exit 2 is the removed node-pty setting; do not kill sessiond then.
+& node (Join-Path $PSScriptRoot '..\lib\ptyHost.js') status | ForEach-Object { Write-Host "  pty host $_" }
+if ($LASTEXITCODE -ne 0) { throw "refusing to restart sessiond: ptyd is not the next host (above). Rollback is the previous commit, not TERMHUB_PTYD=0." }
 
-# Running inside a termhub PTY means this script is about to kill itself. The
-# restart would still happen, but the caller never sees whether it worked.
+# Running inside a termhub terminal: the front restart drops this view, and a
+# sessiond still on node-pty would kill this shell. The caller would not see
+# whether it worked.
 if ($env:TERMHUB_SESSION_ID -and -not $Force) {
   Write-Host ""
   Write-Host "Refusing: this looks like a termhub terminal (TERMHUB_SESSION_ID is set)." -ForegroundColor Red
@@ -49,6 +53,11 @@ if (-not $Force) {
   $answer = Read-Host "Type 'yes' to restart sessiond"
   if ($answer -ne 'yes') { Write-Host "Aborted; nothing changed."; exit 1 }
 }
+
+# ptyd up first, before sessiond is stopped, so a failed -Ensure leaves the
+# current sessiond in place. -Ensure never restarts a running ptyd.
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'ptyd.ps1') -Ensure
+if ($LASTEXITCODE -ne 0) { throw "ptyd -Ensure failed; sessiond was not stopped. node-pty was retired, so there is no other host." }
 
 # Stop the supervisor: by pid file, then by whatever holds the port (covers a
 # monolith `node server.js` and a sessiond whose pid file went missing).
@@ -62,11 +71,6 @@ if (-not (Clear-PortSquatter -Port $sessiondPort -Why 'restarting sessiond')) {
   throw "port $sessiondPort is still held; sessiond cannot restart."
 }
 
-# On ptyd, have the termhub-ptyd task's ptyd up first, so the new sessiond adopts
-# it instead of starting one of its own outside the task (where ptyd.ps1
-# -Restart could not bring it back). Nothing to do on node-pty.
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'ptyd.ps1') -Ensure
-
 $sessiondPort = Confirm-Sessiond -Port $sessiondPort -PublishPort $publishPort
 
 # The front holds no PTYs but does hold pooled connections to the old supervisor;
@@ -76,4 +80,4 @@ Write-Host "termhub: restarting the front so it reconnects cleanly ..."
 
 Write-Host ""
 Write-Host "termhub restart-sessiond OK: sessiond 127.0.0.1:$sessiondPort, front 127.0.0.1:$frontPort." -ForegroundColor Green
-Write-Host "Previous sessions are in the sidebar under 'Restorable (after restart)'."
+Write-Host "Terminals that were in ptyd are still there. A sessiond that was not on ptyd left its terminals under Restorable."

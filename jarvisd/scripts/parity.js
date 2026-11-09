@@ -49,7 +49,7 @@ const FILES = [
 ];
 
 // termhub's front (plan 4.1): jarvisd's `front` role runs termhub/front.js under Bun. Its own
-// tests run under Bun; sessiond, which owns the PTYs (node-pty, or ptyd), stays on Node, so the
+// tests run under Bun; sessiond stays on Node and the PTYs live in ptyd, so the
 // swap test runs under Node with every front it starts in jarvisd (TERMHUB_FRONT_JARVISD=1):
 // a front killed and replaced mid-command, the terminal's output whole through the new one.
 const TERMHUB_FILES = [

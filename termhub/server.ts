@@ -80,9 +80,15 @@ function refuse(lines: any) {
 }
 
 async function main() {
-  // Where the PTYs live (lib/ptyHost.js): with ptyd, a restart of this process
-  // (the Linux unit, an update) no longer ends the terminals.
-  require('./lib/ptyHost.ts').applyToEnv(process.env);
+  // PTYs live in ptyd (lib/ptyHost.js), so a restart of this process (the Linux
+  // unit, an update) adopts them instead of ending them. A removed setting, or a
+  // ptyd that does not answer, refuses to start: there is no other host.
+  try {
+    require('./lib/ptyHost.ts').applyToEnv(process.env);
+    await require('./lib/ptydClient.ts').ensure();
+  } catch (e: any) {
+    return refuse([String(e && e.message ? e.message : e), 'ptyd is the only PTY host; not starting.']);
+  }
   const liveSessiond = await probeSessiond(SESSIOND_PORT);
   if (liveSessiond) {
     return refuse([

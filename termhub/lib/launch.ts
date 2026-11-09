@@ -10,8 +10,9 @@
 //                                jarvisd/package.json pins (`bun jarvisd/src/main.ts
 //                                front`). Restarting the front never touches a
 //                                terminal, so this switch costs a reconnect.
-//   TERMHUB_PTYD=1|0             where sessiond keeps its PTYs (lib/ptyHost.ts; unset,
-//                                the ptyHost setting decides)
+//   TERMHUB_PTYD=1               sessiond keeps its PTYs in ptyd (the default
+//                                when unset; lib/ptyHost.ts). 0 is the removed
+//                                node-pty path and is an error.
 //
 //   node lib/launch.js [plan]            both decisions, and why
 //   node lib/launch.js front --json      the front's command, for the scripts
@@ -142,7 +143,8 @@ function cli(argv: string[] = process.argv.slice(2)) {
       if (json) console.log(JSON.stringify({ front: f, ptyd: p }));
       else {
         console.log(`front: ${f.runtime === 'jarvisd' ? `jarvisd front (${f.exe} ${MAIN} front)` : 'node front.js'} (${f.reason})`);
-        console.log(`ptys:  ${p.ptyd ? `ptyd (${p.bin || 'no release binary'})` : 'node-pty in sessiond'} (${p.reason})`);
+        if (p.error) throw new Error(p.error);
+        console.log(`ptys:  ptyd (${p.bin || 'no release binary'}) (${p.reason})`);
       }
     } else {
       throw new Error(`usage: node lib/launch.js [plan|front|ensure-bun] [--json] [--dry-run]`);

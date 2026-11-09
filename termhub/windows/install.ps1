@@ -16,9 +16,8 @@
 #   - Not admin -> hidden launcher in the Startup folder (runs at logon).
 #   Tailscale Serve config is persisted by tailscaled and restored on boot.
 #
-# Handles the two Windows gotchas that break node-pty's native build:
-#   - NoDefaultCurrentDirectoryInExePath=1 (breaks winpty's GetCommitHash.bat)
-#   - Spectre-mitigated libs required by newer VS toolsets (passes SpectreMitigation=false)
+# PTYs live in ptyd (windows\ptyd.ps1 -Ensure: cargo, then an installed copy
+# the termhub-ptyd task runs). node-pty is not a dependency.
 
 param(
   [int]$Port = 7000
@@ -50,7 +49,7 @@ Write-Host "termhub: node = $NodePath ($(& $NodePath --version))"
 $tailscale = Get-Command tailscale -ErrorAction SilentlyContinue
 if (-not $tailscale) { Write-Error "tailscale CLI not found. Install Tailscale and sign in, then re-run." }
 
-# --- JS deps (skip native build here; we build node-pty deterministically) --
+# --- JS deps (no native addon; ptyd is built below) --
 Write-Host "termhub: installing npm dependencies..."
 Push-Location $Dir
 try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally { Pop-Location }
@@ -59,44 +58,10 @@ try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally {
 # `git pull --ff-only` update. See discard_lock_churn in linux/update.sh.
 & git -C $Dir checkout -- package-lock.json | Out-Null
 
-# --- build node-pty native addon (the part that fails on stock Windows) -----
-function Find-MSBuild {
-  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-  if (Test-Path $vswhere) {
-    $msb = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild `
-      -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-    if ($msb) { return $msb }
-  }
-  $cmd = Get-Command MSBuild.exe -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
-  Write-Error "MSBuild not found. Install Visual Studio Build Tools with the 'Desktop development with C++' workload."
-}
-
-function Build-NodePty {
-  $pty = Join-Path $Dir 'node_modules\node-pty'
-  $bin = Join-Path $pty 'build\Release\pty.node'
-  if (Test-Path $bin) { Write-Host "termhub: node-pty already built"; return }
-  Write-Host "termhub: compiling node-pty (node-gyp + MSBuild)..."
-
-  # Gotcha 1: this env var makes cmd refuse to run winpty's GetCommitHash.bat from cwd.
-  Remove-Item Env:\NoDefaultCurrentDirectoryInExePath -ErrorAction SilentlyContinue
-
-  Push-Location $pty
-  try {
-    & npx node-gyp configure
-    if ($LASTEXITCODE -ne 0) { Write-Error "node-gyp configure failed" }
-    $msb = Find-MSBuild
-    # Gotcha 2: newer VS toolsets demand Spectre-mitigated libs; disable to avoid MSB8040.
-    & $msb (Join-Path $pty 'build\binding.sln') /p:Configuration=Release /p:Platform=x64 `
-      /p:SpectreMitigation=false /m /clp:ErrorsOnly /v:m
-    if ($LASTEXITCODE -ne 0) { Write-Error "MSBuild failed building node-pty" }
-  } finally { Pop-Location }
-
-  if (-not (Test-Path $bin)) { Write-Error "node-pty build produced no pty.node" }
-  Write-Host "termhub: node-pty built OK"
-}
-
-Build-NodePty
+# --- ptyd, the only PTY host (never restarts one that is already running) ---
+Write-Host "termhub: installing ptyd..."
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ScriptDir 'ptyd.ps1') -Ensure
+if ($LASTEXITCODE -ne 0) { Write-Error "ptyd -Ensure failed. node-pty was retired; termhub has no other PTY host." }
 
 # --- bind to loopback (Tailscale Serve proxies to it) ----------------------
 # Only the front binds a port; sessiond is always loopback. The front honours

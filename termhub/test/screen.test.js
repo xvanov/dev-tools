@@ -96,27 +96,38 @@ const render = (snap) => new Promise((resolve) => {
   }
 
   // ---- the session ---------------------------------------------------------
-  let Session;
-  try { ({ Session } = require('../lib/session.ts')); } catch (e) {
-    console.log('screen.test.js: session cases skipped (node-pty unavailable: ' + e.message + ')');
+  const { startSparePtyd, findPtyd, ptydMissing } = require('./spareTermhub');
+  if (!findPtyd()) {
+    const why = ptydMissing();
+    console.log('screen.test.js: session cases skipped (' + why + ')');
     console.log('screen.test.js: ok');
-  process.exit(0); // node-pty's native handles can keep the loop alive after the PTY is killed
     return;
   }
+  const ptyd = await startSparePtyd(os.tmpdir());
+  process.env.TERMHUB_PTYD = '1';
+  process.env.TERMHUB_PTYD_PORT = String(ptyd.port);
+  process.env.TERMHUB_PTYD_BIN = ptyd.bin;
+  delete process.env.TERMHUB_PTYD_RESOLVED;
+  const { Session } = require('../lib/session.ts');
   const s = new Session({ cwd: os.tmpdir(), cols: 80, rows: 24 });
   try {
     const a = []; const b = [];
     const A = s.attach((m) => a.push(m));
     // Output that arrives between attach and the snapshot being sent.
+    // On ptyd this is a round trip (create the session, then POST /notice,
+    // then the bytes come back as output), so wait for it instead of a
+    // fixed gap sized for the old in-process write.
     s.notice('during-attach');
     const B = s.attach((m) => b.push(m));
-    await new Promise((r) => setTimeout(r, 150));
-
+    const sawNotice = (msgs) => msgs.filter((m) => (m.data || '').includes('during-attach')).length;
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && (sawNotice(a) < 1 || sawNotice(b) < 1)) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     const replayA = a.find((m) => m.type === 'replay');
     assert.ok(replayA, 'A got a replay');
     assert.strictEqual(replayA.you, A.id);
     assert.strictEqual(a[0].type, 'replay', 'the replay is the first thing a client sees');
-    const sawNotice = (msgs) => msgs.filter((m) => (m.data || '').includes('during-attach')).length;
     assert.strictEqual(sawNotice(a), 1, 'A sees output from the attach gap exactly once');
     assert.strictEqual(sawNotice(b), 1, 'B (attached after it) sees it exactly once, in its snapshot');
 
@@ -137,7 +148,7 @@ const render = (snap) => new Promise((resolve) => {
     s.resize(60, 20, B.id);
     assert.strictEqual(ptyResizes, 1);
 
-    // Garbage dims are clamped, never passed to node-pty.
+    // Garbage dims are clamped, never passed to the PTY.
     s.resize('nope', -5, B.id);
     assert.deepStrictEqual([s.cols, s.rows], [60, 1]);
 
@@ -147,8 +158,9 @@ const render = (snap) => new Promise((resolve) => {
     assert.strictEqual(a.find((m) => m.type === 'size').owner, null, 'and the others are told');
     A.detach();
   } finally {
-    s.kill();
+    await Promise.resolve(s.kill());
+    await ptyd.stop();
   }
   console.log('screen.test.js: ok');
-  process.exit(0); // node-pty's native handles can keep the loop alive after the PTY is killed
+  process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

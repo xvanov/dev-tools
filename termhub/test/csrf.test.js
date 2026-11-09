@@ -108,6 +108,18 @@ function wsOutcome(port, p, headers = {}) {
 const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () => ok(server.address().port)));
 
 (async () => {
+  const { startSparePtyd, findPtyd, ptydMissing } = require('./spareTermhub');
+  if (!findPtyd()) {
+    const why = ptydMissing();
+    console.log(`csrf.test.js: PTY leg skipped (${why})`);
+    console.log('csrf.test.js ok');
+    return;
+  }
+  const ptyd = await startSparePtyd(tmp);
+  process.env.TERMHUB_PTYD = '1';
+  process.env.TERMHUB_PTYD_PORT = String(ptyd.port);
+  process.env.TERMHUB_PTYD_BIN = ptyd.bin;
+  delete process.env.TERMHUB_PTYD_RESOLVED;
   const sessiond = createSessiond({ entry: 'test', port: 0 });
   const sPort = await listen(sessiond);
   const front = createFront({ sessiondPort: sPort, port: 0, paUrl: '' });
@@ -181,6 +193,7 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
     if (created) await request(fPort, { method: 'DELETE', path: `/api/sessions/${encodeURIComponent(created)}`, headers: { 'X-Termhub': '1' } }).catch(() => {});
     front.close();
     sessiond.close();
+    await ptyd.stop();
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a just-killed PTY can hold the dir a moment
   }
   process.exit(0); // sessiond's idle/voice hubs keep timers alive

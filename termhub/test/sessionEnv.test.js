@@ -90,11 +90,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log('sessionEnv.test.js ok');
     return;
   }
-  try { require('node-pty'); } catch (e) {
-    console.log(`sessionEnv.test.js: PTY leg skipped (node-pty unavailable: ${e.message})`);
+  const { startSparePtyd, findPtyd, ptydMissing } = require('./spareTermhub');
+  if (!findPtyd()) {
+    const why = ptydMissing();
+    console.log(`sessionEnv.test.js: PTY leg skipped (${why})`);
     console.log('sessionEnv.test.js ok');
     return;
   }
+  const ptyd = await startSparePtyd(tmp);
+  process.env.TERMHUB_PTYD = '1';
+  process.env.TERMHUB_PTYD_PORT = String(ptyd.port);
+  process.env.TERMHUB_PTYD_BIN = ptyd.bin;
+  delete process.env.TERMHUB_PTYD_RESOLVED;
   process.env.GH_TOKEN = 'inherited-secret';
   process.env.PA_TEST_KEEP = 'kept';
   const { createSessiond } = require('../sessiond.ts');
@@ -227,6 +234,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (const id of made) await request(fPort, { method: 'DELETE', path: `/api/sessions/${encodeURIComponent(id)}`, headers: { 'X-Termhub': '1' } }).catch(() => {});
     front.close();
     sessiond.close();
+    await ptyd.stop();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
   process.exit(0); // sessiond's idle/voice hubs keep timers alive

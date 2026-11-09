@@ -11,9 +11,15 @@
 
 const assert = require('assert');
 const WebSocket = require('ws');
-const { startSpareTermhub, waitFor, watchTerminal, missingTicks } = require('./spareTermhub');
+const { startSpareTermhub, findPtyd, ptydMissing, waitFor, watchTerminal, missingTicks } = require('./spareTermhub');
 
 const TICKS = 60;
+
+if (!findPtyd()) {
+  const why = ptydMissing();
+  console.log(`frontSwap.test.js: skipped (${why})`);
+  process.exit(0);
+}
 
 (async () => {
   const th = await startSpareTermhub();

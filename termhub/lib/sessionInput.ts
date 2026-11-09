@@ -9,7 +9,7 @@
 // just to write one frame is a lot of ceremony for a keystroke.
 //
 // Split out of `sessiond.js` so the contract can be tested without a PTY: what
-// matters here is *what gets written*, and node-pty has nothing to say about
+// matters here is *what gets written*, and the PTY host has nothing to say about
 // that.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).

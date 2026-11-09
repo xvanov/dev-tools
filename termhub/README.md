@@ -88,7 +88,7 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)  ◄─�
                               │   proxies /api/*, /ws/term/* and /ws/voice to ↓
                               ▼
                           sessiond  (127.0.0.1:7010)
-                              └─► PTYs (node-pty) + scrollback  ← survive every update
+                              └─► ptyd (127.0.0.1:7020)  ← shells survive a front or sessiond restart
 ```
 
 Serve binds only the *tailnet* IP, so the front can hold `127.0.0.1:7000` at the same time: one port
@@ -97,11 +97,11 @@ default (*single-port*) mode. `windows\start.ps1 -BlueGreen` moves the front to 
 Serve re-pointed between them instead, which makes the update cutover atomic at the cost of
 `http://127.0.0.1:7000` no longer being a thing — see `AGENT.md` → *Port modes*.
 
-- **`sessiond`** owns the terminals (the `node-pty` PTYs and their scrollback). It's long-lived
-  and only restarting *it* loses sessions.
+- **`sessiond`** owns terminal metadata, the screen mirror and the archive. The shells live in
+  **ptyd** (`127.0.0.1:7020`), so restarting sessiond adopts them. Restarting ptyd is what ends them.
 - **`front`** serves the web UI and reverse-proxies to `sessiond`. Updates replace it and verify the
   replacement (healthy, *and* the right pid running the commit just pulled) before keeping it — the
-  browser reconnects through the new `front` to the *same* PTYs and replays scrollback.
+  browser reconnects through the new `front` to the *same* terminals and replays the screen.
 
 Sessions still don't survive a full **reboot** (the supervisor restarts) — by design, no tmux.
 For local dev, `node server.js` runs both tiers in one process on `:7000` (no update-survival,
@@ -119,14 +119,14 @@ cd dev-tools/termhub
 ./linux/install.sh
 ```
 
-Compiles `node-pty`, writes `~/.config/systemd/user/termhub.service`, starts it, and installs the
-**watchdog** timer (see *Keeping it up* below). The installer prints the URL
-(`http://<tailscale-ip>:7000`).
+Builds and installs ptyd, writes `~/.config/systemd/user/termhub.service` and
+`termhub-ptyd.service`, starts them, and installs the **watchdog** timer (see *Keeping it up*
+below). The installer prints the URL (`http://<tailscale-ip>:7000`).
 
 Run `sudo loginctl enable-linger $USER` on a headless box, or both termhub and its watchdog stop
-when you log out. On Linux termhub is a **single process** (`server.js`, both tiers in one), so a
-restart — including the one an update does — ends every terminal. That is the one behavioural
-difference from Windows, where `sessiond` keeps them alive across updates.
+when you log out. On Linux termhub's front and sessiond are **one process** (`server.js`). An
+update restarts that unit. The shells are in ptyd, so they survive; the view reconnects. If ptyd
+is not answering, the update refuses to restart the unit.
 
 ### Windows (Tailscale Serve)
 
@@ -148,9 +148,9 @@ Auto-start adapts to privileges: **elevated** → a Scheduled Task (at logon, au
 machine is supervised from the start — run it **elevated** and the watchdog keeps working when
 you're logged off (local accounts only: a domain account always gets an Interactive watchdog, see below).
 
-It also compiles `node-pty` itself, working around two common Windows build failures
-(`GetCommitHash.bat` and Spectre-lib `MSB8040`) — see [AGENT.md](./AGENT.md). Needs the Visual
-Studio Build Tools (Desktop development with C++ workload).
+It also builds and installs ptyd (`windows\ptyd.ps1 -Ensure`: cargo, then the `termhub-ptyd`
+logon task). Needs the Visual Studio Build Tools (Desktop development with C++ workload) as
+cargo's linker, and rustup. A running ptyd is not restarted.
 
 **That's the whole per-machine setup**: `install.ps1` (elevated) handles deps, the native build,
 the `Termhub` logon task, the watchdog task, and brings both tiers up. Prerequisites are Node 18+,
@@ -543,7 +543,7 @@ All optional environment variables:
 | `TERMHUB_SESSIOND_PORT` | `7010` | Supervisor (`sessiond`) loopback port |
 | `TERMHUB_FRONT_PORT` | `7001` | Front loopback port. The Windows scripts set it from `state.json`: the publish port in single-port mode (default), else `7001`⇆`7002` for blue/green |
 | `TERMHUB_FRONT` | `node` | The front's runtime: `node` (`node front.js`) or `jarvisd` (the same front under the pinned Bun, `bun ../jarvisd/src/main.ts front`). Also read from `termhub/.env` or the repo's `.env`; the update scripts honour it. `node lib/launch.js` shows the plan |
-| `TERMHUB_PTYD` | unset | `1`: sessiond keeps its PTYs in ptyd (terminals survive a sessiond restart); `0`: node-pty; unset: the `ptyHost` setting (`node lib/ptyHost.js`). Also read from `termhub/.env` or the repo's `.env` |
+| `TERMHUB_PTYD` | unset (means ptyd) | `1` or unset: sessiond keeps its PTYs in ptyd. `0` is an error (node-pty was retired). Also read from `termhub/.env` or the repo's `.env`. `node lib/ptyHost.js` prints the decision |
 | `TERMHUB_BIND` | auto | Front bind address. Auto-detects the Tailscale IP (`tailscale ip -4`, else a 100.64.0.0/10 interface), falling back to `127.0.0.1`. On Windows the installer pins it to `127.0.0.1` (Tailscale Serve does the exposure). `sessiond` always binds loopback regardless. |
 | `TERMHUB_MACHINE` | hostname | Name shown in the UI |
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
@@ -576,7 +576,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond`, and `/pa/*` to the personal assistant |
 | `lib/paProxy.js` | The `/pa/*` proxy to the personal assistant's loopback dashboard (`TERMHUB_PA_URL`) |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
-| `lib/session.js` | PTY lifecycle (`node-pty`), attach/snapshot, size ownership across browsers |
+| `lib/session.js` | PTY lifecycle (a client of ptyd), attach/snapshot, size ownership across browsers |
 | `lib/screenMirror.js` | Headless-xterm copy of each session's screen, serialized at the current size for reconnecting browsers |
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
@@ -621,8 +621,10 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 
 ## Troubleshooting
 
-- **`node-pty` fails to build** — needs a C/C++ toolchain. Linux: `build-essential`,
-  `python3`. Windows: Visual Studio Build Tools (Desktop development with C++).
+- **ptyd fails to build** — needs cargo and a C toolchain for its linker. Linux: `build-essential`.
+  Windows: Visual Studio Build Tools (Desktop development with C++). Then
+  `node scripts/build.js --only ptyd` from the repo root, or let the installer run `ptyd.ps1 -Ensure`.
+  sessiond does not start if ptyd cannot be reached.
 - **Bound to loopback / unreachable from other devices** — no Tailscale IP detected. Set
   `TERMHUB_BIND` to this machine's tailnet IP (`tailscale ip -4`).
 - **Session disappeared after a reboot** — expected; sessions live in the server's memory.

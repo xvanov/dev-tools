@@ -35,10 +35,11 @@
 #
 # Either way sessiond is never restarted, so PTYs survive all three.
 #
-# What the front runs and where the PTYs live are each one line in termhub\.env
-# (lib/launch.ts): TERMHUB_FRONT=jarvisd|node and TERMHUB_PTYD=1|0. Step 2b
+# What the front runs is one line in termhub\.env (lib/launch.ts):
+# TERMHUB_FRONT=jarvisd|node. PTYs live in ptyd (the only host). Step 2b
 # installs the pinned Bun the jarvisd front needs and keeps ptyd's logon task in
 # place (windows\ptyd.ps1 -Ensure), never restarting a running ptyd.
+# TERMHUB_PTYD=0 is an error: node-pty was retired. Rollback is the previous commit.
 #
 #     .\windows\update.ps1 [-DryRun]   -DryRun: the plan, from what is on disk; changes nothing
 
@@ -185,14 +186,15 @@ if ($changed -match 'package(-lock)?\.json') {
   $null = Invoke-Git -RepoDir $ProjectDir -Arguments @('checkout', '--', 'package-lock.json')
 }
 
-# 2b) The front's runtime and the PTY host (termhub\.env). Neither can fail the
-# update: a jarvisd front without its Bun falls back to node (Start-TermhubFront
-# says so), and ptyd only matters at sessiond's next start.
+# 2b) The front's runtime and ptyd. A jarvisd front without its Bun falls back to
+# node (Start-TermhubFront says so). ptyd cannot: it is the only PTY host, and a
+# failed -Ensure does not continue (there is nothing to fall back to). -Ensure
+# never restarts a running ptyd.
 $bun = Invoke-Native (Get-NodePath) -Arguments @((Join-Path $ProjectDir 'lib\launch.js'), 'ensure-bun')
 $bun.Lines | ForEach-Object { Write-Host "termhub update: $_" }
 $ptyd = Invoke-Native powershell -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'ptyd.ps1'), '-Ensure')
 $ptyd.Lines | ForEach-Object { Write-Host "termhub update: $_" }
-if ($ptyd.Code -ne 0) { Write-Host "termhub update: ptyd -Ensure failed (above); sessiond keeps its current PTY host." -ForegroundColor Yellow }
+if ($ptyd.Code -ne 0) { Fail "ptyd -Ensure failed (above). node-pty was retired, so this update stops. A running ptyd was not restarted." }
 
 if ($mode -eq 'single') {
   # 3-5) SINGLE-PORT: swap the front in place on the published port.

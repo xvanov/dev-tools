@@ -752,8 +752,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   (job `ptyd`, PTYD_REQUIRED=1). Opt-in `TERMHUB_PTYD=1`: sessiond keeps its PTYs in ptyd and
   adopts them after its own restart (`ptydBackend.test.js`). On for both stacks since
   2026-11-08 (`TERMHUB_PTYD=1`, adbe9ff; JARVISD.md runbook): ptyd runs as the termhub-ptyd
-  task / unit, and a work-stack terminal outlived a sessiond restart. Left for Exit 5: retire
-  node-pty; replay is raw bytes (sessiond's mirror covers the UI).
+  task / unit, and a work-stack terminal outlived a sessiond restart. Exit 5's code
+  (this tree, not ticked) retires node-pty: ptyd is the only host. Replay is raw bytes
+  (sessiond's mirror covers the UI).
 - [~] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
   Windows, egress allowlist proxy. — dropped: D22 (the code stays, off). Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
   off): the proxy (cb46b10) and the OS sandbox (421e621): bubblewrap on Linux (used directly,
@@ -777,6 +778,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `push_branch` / `draft_pr` from the delivery level or PA mode; per-owner token via
   `gh_auth`; never runs git in the agent's checkout.
 - [ ] **Exit 5:** termhub's node-pty host retired (the sandbox half dropped: D22).
+  Code is in the tree, not ticked: the lead deploys and verifies on both stacks first
+  (JARVISD.md, *Runbook: jarvisd front, and ptyd*). ptyd is the only PTY host and the
+  default when nothing is set. The in-process node-pty backend, the `node-pty` setting
+  and the update scripts' node-pty branch are gone. A ptyd that cannot start is an error;
+  there is no fallback. Rollback is the previous commit, not `TERMHUB_PTYD=0`.
 
 ## Phase 6: factory into TypeScript
 

@@ -1,12 +1,10 @@
 'use strict';
 
-// Protocol conformance: ONE black-box suite, run against sessiond (the Node
-// terminal host termhub runs today) and against ptyd (its Rust replacement,
-// plan 5.1). Every case speaks only HTTP and WebSocket to a target on a free
-// loopback port; nothing in here knows which implementation it is talking to
-// except the `entry` it reports. Passing on both is what makes the cutover
-// provable: whatever termhub's front, the UI and the personal assistant rely on
-// for terminals behaves the same on either host.
+// Protocol conformance: ONE black-box suite, run against ptyd and against
+// sessiond with its PTYs in ptyd (the only host; the in-process node-pty leg
+// was retired in Exit 5). Every case speaks only HTTP and WebSocket to a target
+// on a free loopback port; nothing in here knows which implementation it is
+// talking to except the `entry` it reports.
 //
 // What is covered (the session protocol): ping identity, info features, the
 // request guard (X-Termhub, simple Content-Types, Host, Origin, websocket
@@ -23,7 +21,8 @@
 // ptyd leg: needs a built binary. PTYD_BIN, else ../ptyd/target/{release,debug}.
 // Without one this leg SKIPs with a note, unless PTYD_REQUIRED=1 (CI's ptyd job),
 // which turns a missing binary into a failure. CONFORMANCE_TARGETS=ptyd (or
-// sessiond) runs one leg only.
+// sessiond+ptyd) runs one leg only. `sessiond` alone was the node-pty leg and
+// is refused.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -390,11 +389,11 @@ function ptydMissing(bin) {
 }
 
 async function main() {
-  const want = (process.env.CONFORMANCE_TARGETS || 'sessiond,ptyd,sessiond+ptyd').split(',').map((s) => s.trim());
+  const want = (process.env.CONFORMANCE_TARGETS || 'ptyd,sessiond+ptyd').split(',').map((s) => s.trim());
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptyd-conf-'));
   const bin = findPtyd();
   const starters = {
-    sessiond: (d) => startSessiond(d),
+    sessiond: () => { throw new Error('the node-pty sessiond leg was retired (Exit 5); use ptyd or sessiond+ptyd'); },
     ptyd: (d) => startPtyd(d, bin),
     'sessiond+ptyd': (d) => startSessiondOnPtyd(d, bin),
   };
@@ -403,7 +402,7 @@ async function main() {
   try {
     for (const name of want) {
       if (!starters[name]) throw new Error(`unknown target ${name}`);
-      const missing = name === 'sessiond' ? null : ptydMissing(bin);
+      const missing = ptydMissing(bin);
       if (missing) {
         console.log(`SKIP ${name} leg: ${missing}`);
         summary.push(`${name} skipped`);

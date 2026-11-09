@@ -1,27 +1,26 @@
 'use strict';
 
-// sessiond's PTY backend when TERMHUB_PTYD=1 (opt-in; plan 5.1): terminals live
-// in ptyd, the Rust terminal host (../ptyd), instead of node-pty inside this
-// process. sessiond keeps everything else it does (the screen mirror, voice,
-// idle tracking, uploads, the archive) and talks to ptyd over the same session
-// protocol it serves itself, which termhub/test/ptydConformance.test.js holds
-// both to.
+// sessiond's PTY backend (plan 5.1, Exit 5): terminals live in ptyd, the Rust
+// terminal host (../ptyd). It is the only host. sessiond keeps everything else
+// it does (the screen mirror, voice, idle tracking, uploads, the archive) and
+// talks to ptyd over the same session protocol it serves itself, which
+// termhub/test/ptydConformance.test.js holds both to.
 //
 // What it buys: ptyd is its own process, so a sessiond restart no longer ends
 // the terminals. On start, sessiond adopts the sessions ptyd still has
 // (adoptSessions in sessiond.js) and their screens come back from ptyd's replay.
 //
-// RemotePty mimics the slice of node-pty's IPty that lib/session.js uses
-// (onData, onExit, write, resize, kill, pid), so Session needs to know very
-// little about where its PTY lives. Creation is asynchronous (an HTTP call)
-// while node-pty's spawn is not: writes, resizes and notices made before ptyd
-// has answered are queued and replayed in order.
+// RemotePty is the PTY Session drives (onData, onExit, write, resize, kill,
+// pid). Creation is asynchronous (an HTTP call): writes, resizes and notices
+// made before ptyd has answered are queued and replayed in order.
 //
 // Environment:
-//   TERMHUB_PTYD=1        use ptyd (anything else: node-pty, as before)
-//   TERMHUB_PTYD_PORT     its loopback port (default 7020)
-//   TERMHUB_PTYD_BIN      the binary to start when none answers (default:
-//                         ../ptyd/target/release/ptyd[.exe], then debug)
+//   TERMHUB_PTYD=1        required. Production sets it (lib/ptyHost.js). Anything
+//                         else is not a host: Session refuses to spawn.
+//   TERMHUB_PTYD_PORT     its loopback port (default 7020; tests use a spare one)
+//   TERMHUB_PTYD_BIN      the binary to start when none answers (default: the
+//                         installed copy, dist/<os>-<arch>/, then
+//                         ptyd/target/{release,local,debug}/ptyd[.exe])
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -113,8 +112,8 @@ function ensure({ logDir }: { logDir?: any } = {}) {
     if (live) return live;
     const bin = findBinary();
     if (!bin || !fs.existsSync(bin)) {
-      throw new Error(`TERMHUB_PTYD=1 but nothing answers on 127.0.0.1:${port()} and no ptyd binary was found `
-        + '(cargo build --release in ptyd/, or set TERMHUB_PTYD_BIN)');
+      throw new Error(`ptyd is the only PTY host, nothing answers on 127.0.0.1:${port()}, and no ptyd binary was found `
+        + '(node scripts/build.js --only ptyd, or set TERMHUB_PTYD_BIN). node-pty was retired; there is no fallback.');
     }
     launch(bin, logDir || path.join(require('./paths.ts').dataDir(), 'logs'));
     const deadline = Date.now() + 15_000;

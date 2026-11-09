@@ -58,8 +58,9 @@ surfaces move only once everything under them is typed.
 7. **termhub front last**: its HTTP/WebSocket server and the `/pa/` proxy move into jarvisd's
    gateway once `ptyd` (5.1) owns the PTYs; termhub's `server.js` then retires. Done as a role:
    `jarvisd front [--port N] [--sessiond-port N] [--host H]` runs `termhub/front.js` under Bun,
-   bundled into the executable. sessiond stays on Node (node-pty aborts Bun; with
-   `TERMHUB_PTYD=1` the terminals are in ptyd anyway). It needed Bun 1.4: on 1.3.13 a
+   bundled into the executable. sessiond stays on Node: the scripts and units start
+   `node sessiond.js`, and the PTYs live in ptyd (the only host; node-pty is retired).
+   It needed Bun 1.4: on 1.3.13 a
    `node:http` server's `upgrade` socket took no writes, so every WebSocket through the front
    hung (terminals, the voice feed). The parity set runs termhub's front tests under Bun and
    `frontSwap.test.js` with every front in jarvisd (`TERMHUB_FRONT_JARVISD=1`).
@@ -244,75 +245,69 @@ Deploys (`windows\redeploy.ps1`) keep working either way. On a stack that uses j
 generation's `bun.exe` is locked, and npm ci, which deletes `node_modules` first, failed the
 2d7fdbf deploy with EPERM.
 
-### Runbook: switching a stack's termhub to jarvisd front and ptyd (and back)
+### Runbook: jarvisd front, and ptyd (the only PTY host)
 
-Two independent switches, each one line in `termhub/.env` (gitignored; the environment or the
-repo's `.env` also work), read by `termhub/lib/launch.ts` and `lib/ptyHost.ts`:
+The front is one line in `termhub/.env` (gitignored; the environment or the repo's `.env` also
+work), read by `termhub/lib/launch.ts`:
 
 - `TERMHUB_FRONT=jarvisd`: the front runs as `bun jarvisd/src/main.ts front` on the pinned Bun,
   installed into `jarvisd/.bun/<pin>/` by the update (`node termhub/lib/launch.js ensure-bun`;
   never `jarvisd/node_modules`, whose Bun may be another version and which a running front
   would lock). A front swap costs a reconnect; no terminal ends. Without its Bun the front falls
-  back to Node and the update says so.
-- `TERMHUB_PTYD=1`: the PTYs live in ptyd, a long-lived process of its own (the `termhub-ptyd`
-  logon task on Windows, `termhub-ptyd.service` on Linux) running an installed copy
-  (`<dataDir>/bin/ptyd-<hash>`). It takes effect at sessiond's next start, which ends the live
-  terminals one last time (they come back Restorable); after that, sessiond restarts, and on
-  Linux every update, keep them. The update scripts build ptyd when its sources are newer
-  (cargo; MSVC on Windows), install it, keep its task or unit in place, and never restart a
-  running ptyd.
+  back to Node and the update says so. Rollback: `TERMHUB_FRONT=node` (or delete the line) and
+  run the update again.
 
-`node termhub/lib/launch.js` prints both decisions. Do the front first (cheap, reversible),
-then ptyd. Proven on spare ports 2026-11-08: the scripted front swap from Node to jarvisd and
-back with a terminal kept, `server.js` running the jarvisd front as a respawned child, ptyd's
-`-Run` wrapper and `-Remove`, and the dry runs; `frontSwap.test.js` (Node and jarvisd fronts),
-`ptydBackend.test.js` and `ptydConformance.test.js` with `PTYD_REQUIRED=1`.
+PTYs live in ptyd, a long-lived process of its own (the `termhub-ptyd` logon task on Windows,
+`termhub-ptyd.service` on Linux) running an installed copy (`<dataDir>/bin/ptyd-<hash>`). It is
+the only host (Exit 5). Unset and `TERMHUB_PTYD=1` both mean ptyd. `TERMHUB_PTYD=0` and
+`ptyHost=node-pty` are errors: node-pty was removed, and sessiond will not start on them.
+`node termhub/lib/launch.js` and `node termhub/lib/ptyHost.js` print the decision. The update
+scripts build ptyd when its sources are newer (cargo; MSVC on Windows), install it beside the
+running binary, keep its task or unit in place, and never restart a running ptyd. `-Restart` /
+`--restart` is the only way onto a new binary, and it ends every terminal in it, so only on
+purpose.
 
-Windows (work stack), in `C:\repos\dev-tools\termhub`:
+Both stacks have been on `jarvisd front` and ptyd since 2026-11-08. Deploying the commit that
+retires node-pty does not move terminals again: they are already in ptyd, and that process is
+not restarted.
 
-1. Update to a commit with this section, still on Node and node-pty:
-   `powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\update.ps1`.
-2. `Add-Content .\.env "TERMHUB_FRONT=jarvisd"` and `Add-Content .\.env "TERMHUB_PTYD=1"`.
-3. Dry run: `powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\update.ps1 -DryRun`.
-   Expect `next: jarvisd (TERMHUB_FRONT=jarvisd in termhub\.env ...)`, `would install Bun 1.4.4
-   into ...\jarvisd\.bun\1.4.4`, ptyd `would build` / `would install` / `would register the
-   termhub-ptyd logon task` / `would start`, and `pty host next start: ptyd`.
-4. `powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\update.ps1`. It installs Bun,
-   builds and installs ptyd, registers and starts `termhub-ptyd` (ptyd on 127.0.0.1:7020, no
-   terminals yet), and swaps the front onto jarvisd (terminals survive; sessiond is untouched).
-   Check: `(Invoke-RestMethod http://127.0.0.1:7000/api/health).self.pid` is a `bun.exe` whose
-   command line ends in `main.ts front` (`Get-CimInstance Win32_Process -Filter "Name='bun.exe'"`);
-   the UI, a terminal and voice work; `Invoke-RestMethod http://127.0.0.1:7020/api/ping` says
-   `entry: ptyd`; `Get-ScheduledTask termhub-ptyd` exists.
-5. Move the terminals into ptyd, from a normal PowerShell window (not a termhub terminal):
-   `.\windows\restart-sessiond.ps1`. This ends the live terminals once. Check: `node
-   lib\ptyHost.js` says `running: ptyd`; open a terminal, start something long, run
-   `.\windows\restart-sessiond.ps1 -Force` again: the terminal is still there with its output.
+**What happens to open terminals.** The shell processes stay in the running ptyd. A front swap
+drops the browser socket; it reconnects and sessiond replays the screen. A sessiond restart
+adopts the same sessions from ptyd (same id, output kept). Linux `update.sh` restarts
+`termhub.service` (sessiond) after ptyd is confirmed up, so those terminals survive that restart
+too. They end only if ptyd itself is restarted or stopped (`ptyd.ps1 -Restart` / `-Remove`,
+`ptyd-unit.sh --restart` / `--remove`), or if a sessiond that is still on node-pty is restarted
+once onto this code (both stacks' sessiond already report `ptyHost: ptyd`, so that case is the
+previous commit, not this deploy).
 
-Rollback, Windows: the front: `TERMHUB_FRONT=node` in `termhub\.env` (or delete the line), then
-`update.ps1` (a front swap; terminals survive). ptyd: `TERMHUB_PTYD=0`, then
-`.\windows\restart-sessiond.ps1` (sessiond back on node-pty; ptyd's terminals come back
-Restorable), then `.\windows\ptyd.ps1 -Remove` (stops ptyd, unregisters the task). Every
-`ptyd.ps1` action takes `-DryRun`; `-Restart` moves a running ptyd onto a newer installed build
-and ends its terminals, so only on purpose.
+Windows (work stack), from a normal PowerShell window, in `C:\repos\dev-tools\termhub`:
+
+1. `powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\update.ps1`. It builds and
+   installs ptyd if the sources are newer, does not restart a running ptyd, and swaps the front
+   (a reconnect). sessiond is not restarted, so it keeps serving the old process until step 2.
+   Open terminals stay up through this step.
+2. `.\windows\restart-sessiond.ps1` (not from a termhub terminal). It runs `ptyd.ps1 -Ensure`
+   first (still no ptyd restart), then restarts sessiond, which adopts ptyd's terminals, then
+   restarts the front. Check: `node lib\ptyHost.js` says `next start: ptyd` and `running: ptyd`;
+   `Invoke-RestMethod http://127.0.0.1:7020/api/ping` says `entry: ptyd`; the terminal from
+   before step 2 is still there with its output. `.\windows\restart-sessiond.ps1 -Force` again:
+   that terminal is still there.
 
 Linux (personal stack), in the checkout's `termhub/`:
 
-1. Update to a commit with this section: the Update button, or `bash linux/update.sh`.
-2. `printf 'TERMHUB_FRONT=jarvisd\nTERMHUB_PTYD=1\n' >> .env`
-3. Dry run: `bash linux/update.sh --dry-run` (the same expectations as on Windows, with
-   `termhub-ptyd.service` in place of the task).
-4. `bash linux/update.sh`. Before its restart it builds and installs ptyd, points
-   `termhub-ptyd.service` at the installed copy and starts it, and installs Bun; the restart of
-   `termhub.service` (which ends the terminals this one last time) brings `server.js` up with
-   sessiond on ptyd and the front as a `bun ... main.ts front` child. Check: `tail
-   ~/.local/termhub/logs/update.log` ends `OK`; `systemctl --user status termhub-ptyd`;
-   `pgrep -af 'main.ts front'`; `node lib/ptyHost.js` says `running: ptyd`. Run the update once
-   more: the terminals now survive it.
+1. The Update button, or `bash linux/update.sh`. It ensures ptyd (no restart of a running one)
+   and then restarts `termhub.service`. Open terminals survive in ptyd; the view reconnects.
+   If ptyd is not answering, the script stops and does not restart the unit.
+2. Check: `tail ~/.local/termhub/logs/update.log` ends `OK`; `systemctl --user status
+   termhub-ptyd`; `node lib/ptyHost.js` says `running: ptyd`; the terminals from before the
+   update are still there. Run the update once more: they survive that too.
 
-Rollback, Linux: the front: `TERMHUB_FRONT=node`, then `bash linux/update.sh` (terminals
-survive on ptyd). ptyd: `TERMHUB_PTYD=0`, then `bash linux/update.sh` (back on node-pty; ptyd's
-terminals come back Restorable), then `bash linux/ptyd-unit.sh --remove`.
+**Rollback.** The front: `TERMHUB_FRONT=node`, then the update (terminals survive in ptyd).
+ptyd itself does not roll back to node-pty: that host is gone. Roll back by checking out the
+commit before this retirement and running the update again (both stacks already have
+`TERMHUB_PTYD=1`, which that commit understands). Do not set `TERMHUB_PTYD=0`; this commit
+refuses to start sessiond on it. Do not `ptyd.ps1 -Remove` / `ptyd-unit.sh --remove` as a
+rollback: that stops ptyd and ends its terminals.
 
 ## Design: the in-process front (Exit 4; not built)
 
@@ -426,6 +421,7 @@ setup; T7's cargo and Bun caches apply.
   - `restart-sessiond.ps1` starts sessiond with the first `node` on PATH. From a shell whose
     PATH starts with another Node (an editor's bundled one) sessiond runs on that; run it from
     a plain PowerShell, or put `C:\Program Files\nodejs` first.
+- [ ] node-pty is retired in the tree (Exit 5's code; ptyd is the only PTY host, default when nothing is set). Not verified on the stacks yet: the lead deploys from the runbook above and only then is Exit 5 ticked. `TERMHUB_PTYD=0` is an error. Rollback is the previous commit.
 - [ ] Left: the in-process front (one jarvisd process owns 7000 and 7300, Exit 4; designed above,
   *Design: the in-process front*; settle `/api/exec`'s privilege first); modules to ES exports
   (then `Repos`, `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API.

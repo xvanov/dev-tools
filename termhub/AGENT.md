@@ -21,7 +21,7 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄─
                               │   proxies /api/*, /ws/term/* and /ws/voice to ↓
                               │   (and /pa/* to the PA dashboard, 127.0.0.1:7300 — see *The PA proxy*)
                               ▼
-                          sessiond  (127.0.0.1:7010)  ──► node-pty PTYs
+                          sessiond  (127.0.0.1:7010)  ──► ptyd PTYs (127.0.0.1:7020)
 ```
 
 - Run termhub on every machine you want terminals on.
@@ -283,45 +283,46 @@ launcher do it). Inspect with `(Get-ScheduledTask Termhub).Actions | Format-List
 
 ### Restarting sessiond on purpose
 
-`windows/restart-sessiond.ps1` is the deliberate counterpart to the safe update: it **ends every
-live terminal** (PTYs are sessiond's memory and can't be migrated) and they come back as
-*Restorable* from `sessions.json`. It refuses to run from inside a termhub terminal —
-`TERMHUB_SESSION_ID` is set in every spawned PTY (`lib/session.js`) — because that terminal is one
-of the ones it kills. Use it for sessiond-side changes; `update.ps1` prints a reminder when a pull
-touched `sessiond.js` or `lib/` while the running supervisor is still on the old commit.
+`windows/restart-sessiond.ps1` is the deliberate counterpart to the safe update. The shells live
+in ptyd, so the restart adopts them (same id, output kept) and does not restart ptyd. It still
+refuses to run from inside a termhub terminal — `TERMHUB_SESSION_ID` is set in every spawned PTY
+(`lib/session.js`) — because the front restart drops that view. Use it for sessiond-side changes;
+`update.ps1` prints a reminder when a pull touched `sessiond.js` or `lib/` while the running
+supervisor is still on the old commit. A sessiond that is not yet on ptyd (a process from before
+the node-pty retirement) ends its terminals once; they come back as *Restorable*.
 
-### ptyd: terminals that survive a sessiond restart (opt-in, plan 5.1)
+### ptyd: the only PTY host (plan 5.1, Exit 5)
 
-`TERMHUB_PTYD=1` moves the PTYs out of sessiond into **ptyd**, the Rust terminal host in
-[`../ptyd`](../ptyd/README.md). sessiond keeps everything else (screen mirror, voice, idle
-tracking, uploads, the archive) and drives ptyd over the same session protocol it serves
-(`lib/ptydClient.js`: a `RemotePty` standing in for node-pty's IPty). On start it adopts the
-sessions ptyd still has, under the same ids and with the archive's metadata, so with the flag on a
-sessiond restart no longer ends terminals. `/api/ping` reports `ptyHost: 'ptyd' | 'node-pty'`.
-`TERMHUB_PTYD_PORT` (7020) and `TERMHUB_PTYD_BIN` (default `../ptyd/target/release/ptyd`, then
-`debug`) say where; with nothing answering, sessiond starts one detached, logging to
-`logs/ptyd.out.log`. Build it first: `cd ptyd && cargo build --release`.
+The PTYs live in **ptyd**, the Rust terminal host in [`../ptyd`](../ptyd/README.md). sessiond
+keeps everything else (screen mirror, voice, idle tracking, uploads, the archive) and drives ptyd
+over the same session protocol it serves (`lib/ptydClient.js`, a `RemotePty`). On start it adopts
+the sessions ptyd still has, under the same ids and with the archive's metadata, so a sessiond
+restart does not end terminals. `/api/ping` reports `ptyHost: 'ptyd'` (or `'unavailable'` if
+`TERMHUB_PTYD` is not 1, which production never leaves that way). `TERMHUB_PTYD_PORT` (7020) and
+`TERMHUB_PTYD_BIN` (an installed copy, else `dist/<os>-<arch>/`, else
+`../ptyd/target/{release,local,debug}`) say where. With nothing answering, sessiond starts one
+detached, logging to `logs/ptyd.out.log`, and exits if it never answers. There is no other host.
+Build it with `node scripts/build.js --only ptyd` from the repo root.
 
-Production starts (`node sessiond.js`, `node server.js`) resolve it from the persistent
-`ptyHost` setting (`lib/ptyHost.js`, `<dataDir>/settings.json`): `node-pty` (default, and the
-rollback), `ptyd` (the cutover, always explicit), or opt-in `auto` (ptyd when a release binary is
-on the machine). `auto` is not the default: building ptyd in a deployed checkout must never
-switch the host by itself, since the next sessiond restart would end every live terminal.
-`node lib/ptyHost.js [node-pty|ptyd|auto]` shows or changes it; `update.ps1` and
-`restart-sessiond.ps1` print it. `TERMHUB_PTYD=1|0` overrides the setting, from the environment
-or `termhub/.env` (`lib/dotenv.ts`); `applyToEnv` marks what it exports
-(`TERMHUB_PTYD_RESOLVED`), and inside a termhub terminal (`TERMHUB_SESSION_ID`) the inherited
-value is skipped, so a script run from one reads the file, not the running sessiond's choice.
-ptyd runs as its own long-lived process from an installed copy (`<dataDir>/bin/ptyd-<hash>`,
-`node lib/ptyHost.js install`): the `termhub-ptyd` logon task on Windows (`windows/ptyd.ps1
--Ensure|-Restart|-Remove [-DryRun]`, a `-Run` wrapper under `conhost --headless`), its own user
-unit on Linux (`linux/ptyd-unit.sh --ensure|--restart|--remove [--dry-run]`,
-`termhub-ptyd.service`), so the restart every update does no longer kills it. The switch and
-the rollback: [JARVISD.md](../docs/native/JARVISD.md) (*Runbook: switching a stack's termhub
-to jarvisd front and ptyd*). Proofs:
-`test/ptydConformance.test.js` runs one black-box protocol suite against sessiond, ptyd and
-sessiond-on-ptyd (the ptyd legs SKIP without a built binary, fail with `PTYD_REQUIRED=1`, as in
-CI's ptyd job); `test/ptydBackend.test.js` kills sessiond mid-command and checks the next one
+Production starts (`node sessiond.js`, `node server.js`) resolve the host in `lib/ptyHost.js`.
+Unset and `ptyHost=ptyd` both mean ptyd. `TERMHUB_PTYD=1` (environment, else `termhub/.env` or the
+repo's `.env`, `lib/dotenv.ts`) is the same choice and wins over a stored `node-pty`, so a stack
+that already set it keeps working. `TERMHUB_PTYD=0` and `ptyHost=node-pty` error; sessiond does
+not start. A stored `auto` means ptyd. `node lib/ptyHost.js` shows the decision (and exits 2 on a
+refusal); `node lib/ptyHost.js ptyd` is the only write it accepts. `applyToEnv` marks what it
+exports (`TERMHUB_PTYD_RESOLVED`), and inside a termhub terminal (`TERMHUB_SESSION_ID`) the
+inherited value is skipped, so a script run from one reads the file, not the running sessiond's
+choice. ptyd runs as its own long-lived process from an installed copy
+(`<dataDir>/bin/ptyd-<hash>`, `node lib/ptyHost.js install`): the `termhub-ptyd` logon task on
+Windows (`windows/ptyd.ps1 -Ensure|-Restart|-Remove [-DryRun]`, a `-Run` wrapper under
+`conhost --headless`), its own user unit on Linux (`linux/ptyd-unit.sh
+--ensure|--restart|--remove [--dry-run]`, `termhub-ptyd.service`). The update scripts keep that
+process in place and never restart a running ptyd. `-Restart` / `--restart` is the only way onto
+a new binary, and it ends every terminal in it. The deploy and the rollback (the previous
+commit; `TERMHUB_PTYD=0` is not one): [JARVISD.md](../docs/native/JARVISD.md) (*Runbook: jarvisd
+front, and ptyd*). Proofs: `test/ptydConformance.test.js` runs one black-box protocol suite
+against ptyd and sessiond-on-ptyd (SKIP without a built binary, fail with `PTYD_REQUIRED=1`, as
+in CI's ptyd job); `test/ptydBackend.test.js` kills sessiond mid-command and checks the next one
 adopts the session without losing output.
 
 ### Session persistence (surviving reboots)
@@ -398,9 +399,11 @@ process just spawned while `self.commit` matches the commit just pulled. Health 
 stale process that happened to own the port. `sessiond` is never restarted, so PTYs (and the terminal
 running the updater) survive either path.
 
-`node-pty` lives only in `sessiond`, so routine front updates need **no native rebuild**. A
-`node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
-sessions — do it intentionally).
+The PTY host is ptyd, a separate process, so a routine front update needs **no native rebuild**
+and does not touch the terminals. A ptyd binary change is installed beside the running one and
+used only on a deliberate `ptyd.ps1 -Restart` / `ptyd-unit.sh --restart`, which ends those
+terminals. A sessiond code change needs `restart-sessiond.ps1` (Windows) or the Linux update's
+unit restart; both adopt the terminals ptyd still has.
 
 ### The install step throws the lockfile rewrite away
 
@@ -1763,28 +1766,20 @@ Non-admin installs use a hidden Startup-folder launcher instead of a task; the i
 it with the absolute project path baked in (a path resolved relative to the .vbs breaks once the
 file is copied into the Startup folder).
 
-## node-pty build prerequisites
+## ptyd build prerequisites
 
-`node-pty` is a native addon and compiles on install:
+ptyd is a Rust binary (`node scripts/build.js --only ptyd` from the repo root, or
+`cargo build --release` in `ptyd/`). The installers and update scripts build and install it
+(`windows/ptyd.ps1 -Ensure`, `linux/ptyd-unit.sh --ensure`) and do not restart a copy that is
+already answering.
 
-- **Linux:** `sudo apt-get install -y build-essential python3` (or distro equivalent).
-- **Windows:** **Visual Studio Build Tools** with the *Desktop development with C++* workload,
-  plus a matching Python. After installing, delete `node_modules` and re-run `npm install`.
+- **Linux:** a C toolchain for cargo's linker (`build-essential` or the distro equivalent) and
+  rustup.
+- **Windows:** **Visual Studio Build Tools** with the *Desktop development with C++* workload
+  (cargo's linker) and rustup. cargo is at `%USERPROFILE%\.cargo\bin`; the update looks on PATH.
 
-`windows\install.ps1` builds the native addon itself (npm runs with `--ignore-scripts`, then
-the installer drives `node-gyp configure` + MSBuild) so it can work around two stock-Windows
-build failures automatically:
-
-- **`'GetCommitHash.bat' is not recognized`** — caused by the environment variable
-  `NoDefaultCurrentDirectoryInExePath=1`, which stops `cmd` from running winpty's batch file
-  from the current directory. The installer clears it for the build.
-- **`MSB8040: Spectre-mitigated libraries are required`** — newer VS toolsets (e.g. 2022/2026)
-  demand Spectre libs that aren't installed by default. The installer passes
-  `/p:SpectreMitigation=false` to MSBuild. To keep the mitigation instead, install
-  *MSVC … Spectre-mitigated libs* from the VS Installer (Individual components) and drop that flag.
-
-If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`, then
-`npx node-gyp configure` and `MSBuild build\binding.sln /p:Configuration=Release /p:Platform=x64 /p:SpectreMitigation=false`.
+node-pty was the previous host and is retired (Exit 5). Its Windows build workarounds
+(`GetCommitHash.bat`, Spectre `MSB8040`) are history; nothing in this tree compiles that addon.
 
 ## One PTY, several screens
 
@@ -2076,8 +2071,8 @@ user actually meant to paste.
 | The whole UI is gone, terminals were fine an hour ago | The `front` died and nothing restarted it — the `Termhub` task runs at logon only | What `watchdog/` exists to fix; install it (`.\watchdog\install-watchdog.ps1`). By hand: `.\watchdog\watchdog.ps1 -Probe` to see the signature, then `.\windows\start-http.ps1` (plain-HTTP) or `.\windows\restart-front.ps1`. `sessiond` keeps the PTYs the whole time, so nothing is lost |
 | A tier died and there is no reason recorded anywhere | Its output went nowhere | Fixed: both tiers write `%LOCALAPPDATA%\termhub\logs\<tier>.{out,err}.log`, with the previous generation in `.prev.log` — the crash you're chasing is usually in `.prev`. Nothing from before 2026-07-31 was captured |
 | **Both** tiers gone at once, both `.err.log`s empty, and the machine never rebooted | Not two crashes — one kill. Something stopped them together: `windows\install.ps1` (it force-stops every `server.js`/`sessiond.js`/`front.js` before rebuilding), a scheduled task being *stopped* (Task Scheduler kills the whole process tree, including tiers a remedy started), or a manual kill | `remedies\both-down.ps1` repairs it in one pass — it runs the machine's own boot script, so `Confirm-Sessiond` reuses a live sessiond and only starts one because this signature means there is none. Check `(Get-CimInstance Win32_OperatingSystem).LastBootUpTime` before believing the signature's "a reboot" wording. Note `Test-TermhubMaintenance` does **not** count `install.ps1` as a deploy, so the watchdog does not stand down for one |
-| `sessiond.err.log` has an `AttachConsole failed` stack trace, but termhub is fine | Not sessiond. `node-pty`'s `conpty_console_list_agent.js` is `fork`ed as its own process (only one console can be attached per process) and its stderr is inherited into sessiond's log | Ignore it — it's normal on a healthy supervisor serving live sessions, and it is in the escalation bundle's log tail, so it's the most likely thing to be misread as a root cause. Confirm with `curl localhost:7010/api/ping`: a `pid` that predates the trace means sessiond never went down |
-| `sessiond-down-front-up`, but sessiond's pid is alive and still holds `127.0.0.1:7010`; `/api/ping` times out, the process uses no CPU, and 7010 piles up `CLOSE_WAIT` sockets | sessiond is **hung**, not gone: its event loop stopped (2026-11-06, LAP-US101, during a PTY spawn: a fresh `conhost.exe` child with no shell under it). The cause: `node_modules` had been gutted at 02:00 by the nightly disk-janitor following a junction in `C:\Temp` (fixed in 69f9cf4). With `lib\worker\conoutSocketWorker.js` gone, nothing drains ConPTY's output pipe while the native `connect()` call blocks the main thread. `Confirm-Sessiond` alone can't fix this, because a new sessiond loses the bind to the hung one (`EADDRINUSE`) | `remedies\sessiond-down-front-up.ps1` identifies the holder (node, named by `sessiond.pid`, not the monolith, not an ancestor), re-probes it, stops it, and runs `Confirm-Sessiond`. Its PTYs come back as Restorable. The remedy refuses to stop it unless `node-pty` (including that worker file) loads, because a successor couldn't start without it. In that case, stop the tiers, run `npm ci`, and boot with `.\windows\start.ps1` |
+| `sessiond.err.log` has an `AttachConsole failed` stack trace, but termhub is fine | A sessiond from before the node-pty retirement. That addon's `conpty_console_list_agent.js` was forked as its own process and its stderr was inherited into sessiond's log. This commit does not load node-pty | A new trace of that shape means the running sessiond has not been restarted onto this commit. On a current sessiond, ignore a leftover line from the previous process's log. Confirm with `curl localhost:7010/api/ping`: `ptyHost` is `ptyd` |
+| `sessiond-down-front-up`, but sessiond's pid is alive and still holds `127.0.0.1:7010`; `/api/ping` times out, the process uses no CPU, and 7010 piles up `CLOSE_WAIT` sockets | sessiond is **hung**, not gone: its event loop stopped (2026-11-06, during a PTY spawn, when `node_modules` had been gutted and node-pty's worker could not drain ConPTY). That addon is retired. `Confirm-Sessiond` alone still can't fix a hung holder, because a new sessiond loses the bind (`EADDRINUSE`) | `remedies\sessiond-down-front-up.ps1` identifies the holder (node, named by `sessiond.pid`, not the monolith, not an ancestor), re-probes it, stops it, and runs `Confirm-Sessiond`. Terminals that were in ptyd are still there. The remedy refuses to stop the holder unless `ws` loads, because a successor could not start. In that case, from a normal PowerShell: `npm ci`, then `.\windows\start.ps1` |
 | A remedy fails `Stop-Process … Access is denied` on a termhub tier whose `Path`/`CommandLine` reads blank | The tier was started from an **elevated** shell and runs at High integrity. The watchdog task runs `RunLevel Limited`, so no remedy can ever stop it, and nothing unattended should try to get around that | A human: stop the pid(s) from an elevated PowerShell, then restart the tiers from a **normal** one (`.\windows\start.ps1`, or `start-http.ps1` in plain-HTTP mode). Don't run `restart-sessiond.ps1`/`restart-front.ps1` elevated, because that leaves tiers the watchdog cannot manage |
 | Bound to `127.0.0.1`, unreachable from other devices | No Tailscale IP detected | `tailscale status` — a **running** `tailscaled` is not the same as a logged-in node, and it keeps its old tailnet sockets open after a logout, so "Logged out." is easy to miss. Fix the login first, then set `TERMHUB_BIND` to the tailnet IP (or re-run `.\windows\start-http.ps1`, which does it) |
 | The watchdog reports `tailnet-ip-unavailable` but termhub works on `http://127.0.0.1:7000` | Plain-HTTP mode has no address to bind the front to — and that check runs *before* anything is probed | Not necessarily an outage at all: it means `tailscale ip -4` answered nothing. `tailscale status` names the cause. First check whether the node is logged out at all. On Windows without "Run unattended" (`tailscale debug prefs` → `ForceDaemon:false`), tailscaled only keeps the profile loaded while a client from the user's session is connected, normally the tray app `tailscale-ipn.exe`. If the tray app has exited, every CLI call loads the profile and drops it again, so the node shows `NoState`/`NeedsLogin` and "logged out … fetch control key: context canceled" while `LoggedOut` is still `false`. Neither `up` nor a service restart clears that. `tailscale up --unattended` does (2026-11-02, LAP-US101). tailscaled's own log is at `%ProgramData%\Tailscale\Logs\tailscale-service-*.txt` (elevated read), and the line to look for is `client disconnected … disconnecting Tailscale`. A **real** logout (`LoggedOut:true`, or a fresh auth URL even with unattended on) needs a human (`tailscale login`). The usual cause on LAP-US101 is a **node key expiry**, which the tailscaled log shows as `nodeKeyExpired=true`. It comes to light whenever tailscaled re-registers, for example after a Tailscale auto-update restarts it (2026-11-03). Keys there have expired about daily, so the lasting fix is "Disable key expiry" for the machine in the Tailscale admin console; `Stopped` is fixed by `tailscale up`; a **PATH** without `C:\Program Files\Tailscale` invents the whole thing, because the watchdog's task PATH is not the interactive one. `remedies\tailnet-ip-unavailable.ps1` handles all but the first (re-stating the profile's non-default flags, e.g. `--accept-dns=false`, when `up` refuses a bare retry), and keeps a loopback front up meanwhile. The remedy turns on unattended mode for the no-tray-client case. A backend wedged in `NoState`/"starting" with unattended mode already on gets one `up` and one service restart; if that doesn't clear it, a human has to look at `tailscaled` itself |
@@ -2118,13 +2113,13 @@ user actually meant to paste.
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |
 | The watchdog keeps escalating for the same failure | The remedy it wrote doesn't actually fix that failure | The prompt tells it to *improve the existing remedy in place* on a repeat, so check `git log watchdog/remedies/`. `escalations.json` shows the outcome per attempt; the budget (≤3/h) stops the bleeding either way |
 | The watchdog logged nothing at all | Not registered, killed by the switch, or the task never ran | `Get-ScheduledTaskInfo TermhubWatchdog` (`LastRunTime`/`LastTaskResult`); check for `%LOCALAPPDATA%\termhub\watchdog\DISABLED`. Registration can fail *while reporting success* on older copies of the installer — see the `WORKGROUP` trap above |
-| (Linux) clicked ⟳ Update and the terminal died mid-output | Expected: one process, so the restart ends every PTY including the updater's | The restart is handed to a detached phase that logs to `~/.local/termhub/logs/update.log` — read that for the result, including a rollback if the new build never became healthy |
+| (Linux) clicked ⟳ Update and the view dropped mid-output | The unit restart drops the websocket. The shell is in ptyd and keeps running; the view reconnects and replays | The verify phase is detached and logs to `~/.local/termhub/logs/update.log`. If that log says the update refused to restart, ptyd was not answering: fix ptyd and run it again. The script does not restart the unit in that case |
 | (Linux) `update.log` stops at the "restart phase" header and says nothing more | The verify phase was killed by the restart it triggered | Fixed: the phase now runs under `systemd-run --user --unit=termhub-update-… --collect`, out of termhub's cgroup. On a build before that fix it was launched with `setsid`, which does not leave the cgroup, so `KillMode=control-group` took it down — the update still applied, but with no health check and **no rollback**. `systemctl --user list-units 'termhub-update-*'` shows the phase while it runs |
 | (Linux) the watchdog reports `not-listening` but termhub works fine | An address-guessing bug this used to have | Fixed: the probe tries `TERMHUB_BIND`, loopback, the tailnet IP and whatever `ss` shows. A default install binds the **tailnet IP**, so a loopback-only check invents an outage. `bash watchdog/watchdog.sh --probe` prints every candidate and its result |
 | (Linux) watchdog timer vanished after logout | `--user` units stop with the session unless lingering is on | `sudo loginctl enable-linger $USER`. termhub itself has the same problem, which is why the installer warns |
 | (Linux) `start request repeated too quickly` | systemd hit `StartLimitBurst` and gave up on the unit | What `service-inactive.sh` exists for: `systemctl --user reset-failed termhub` first, *then* start. A bare `start` on a rate-limited unit fails instantly and looks like the remedy did nothing |
 | The watchdog fixed it but never wrote a remedy | The escalation ran out of context, or ignored step 2 | The log says so explicitly (`service is back but NO remedy was written`). Write it by hand from `escalation-<stamp>.out.txt`; that transcript records what actually repaired it |
-| `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
+| ptyd will not build (`cargo` missing, or a linker error) | No Rust toolchain, or no C toolchain for the linker | See *ptyd build prerequisites*. sessiond will not start without a ptyd it can reach |
 
 ## Security notes
 

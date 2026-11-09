@@ -1,36 +1,26 @@
 'use strict';
 
-// Where a production sessiond keeps its PTYs (plan 5.1 / Exit 5 cutover): in
-// ptyd, or in-process with node-pty. The setting is persistent and rolls back
-// with one command:
+// Where a production sessiond keeps its PTYs (plan 5.1, Exit 5): in ptyd.
+// The in-process node-pty host is retired. There is no fallback.
 //
 //   node lib/ptyHost.js                 status: the setting, what the next start
 //                                       resolves to, what the running sessiond uses
-//   node lib/ptyHost.js auto|ptyd|node-pty   change the setting (effective on the
-//                                       next sessiond start; restart-sessiond.ps1 on
-//                                       Windows, `systemctl --user restart termhub`
-//                                       on Linux; either ends live terminals once)
+//   node lib/ptyHost.js ptyd            the only setting (effective on the next
+//                                       sessiond start)
 //   node lib/ptyHost.js install [--dry-run]  copy the newest ptyd build into place
 //                                       for ptyd's next start (below)
 //
-// Stored as `ptyHost` in <dataDir>/settings.json. The modes:
-//
-//   node-pty (default)  never ptyd: today's behaviour, and the rollback
-//   ptyd            always ptyd (sessions fail loudly if it cannot be started).
-//                   The cutover is setting this, explicitly.
-//   auto            ptyd when a release ptyd binary is on this machine
-//                   (TERMHUB_PTYD_BIN, dist/<os>-<arch>/ from scripts/build.js, or
-//                   ptyd/target/release), else node-pty. Opt-in only: it is NOT
-//                   the default, because then merely building ptyd in a deployed
-//                   checkout (a deploy, a test run) would switch the host at the
-//                   next sessiond restart and end every live terminal.
+// Stored as `ptyHost` in <dataDir>/settings.json. The only mode is `ptyd`, and
+// it is the default when the key is unset or unknown. A stored `auto` (the old
+// "ptyd if a binary exists, else node-pty") reads as ptyd: the fallback is gone.
+// `node-pty`, and TERMHUB_PTYD=0, are the removed path. They error. They do not
+// select a host. Rollback is the previous commit, not a setting.
 //
 // Applied only by the production entrypoints (`node sessiond.js`, `node
-// server.js`: what windows/*.ps1 and the Linux unit run), as TERMHUB_PTYD for
-// lib/ptydClient.js. An explicit TERMHUB_PTYD wins: from the environment, else
-// termhub/.env or the repo's .env (lib/dotenv.ts; the one-line switch the
-// update scripts read). Tests call startSessiond() directly and never consult
-// the setting.
+// server.js`: what windows/*.ps1 and the Linux unit run), as TERMHUB_PTYD=1 for
+// lib/ptydClient.js. An explicit TERMHUB_PTYD=1 is the same choice, from the
+// environment, else termhub/.env or the repo's .env (lib/dotenv.ts). Tests call
+// startSessiond() directly and point TERMHUB_PTYD at a spare ptyd.
 //
 // A long-lived ptyd runs an installed copy, <dataDir>/bin/ptyd-<hash>, named
 // by <dataDir>/bin/ptyd-current (`node lib/ptyHost.js install`): a build then
@@ -49,9 +39,10 @@ const crypto = require('crypto');
 const { dataDir } = require('./paths.ts');
 const dotenv = require('./dotenv.ts');
 
-const MODES = ['auto', 'ptyd', 'node-pty'];
+const MODES = ['ptyd'];
 const EXE = process.platform === 'win32' ? 'ptyd.exe' : 'ptyd';
 const REPO = path.join(__dirname, '..', '..');
+const RETIRED = 'node-pty was retired (Exit 5); ptyd is the only PTY host. Roll back by checking out the previous commit';
 
 function settingsFile(dir: any = dataDir()) {
   return path.join(dir, 'settings.json');
@@ -66,16 +57,22 @@ function readSettings(dir: any) {
   }
 }
 
-const DEFAULT_MODE = 'node-pty';
+const DEFAULT_MODE = 'ptyd';
 
-/** The stored mode, or the default (node-pty) when unset or unknown. */
+/**
+ * The stored mode. `node-pty` is kept visible so the next start can refuse it.
+ * `auto` and anything else unset or unknown read as ptyd, the only host.
+ */
 function readMode(dir?: any) {
   const m = readSettings(dir).ptyHost;
-  return MODES.includes(m) ? m : DEFAULT_MODE;
+  if (m === 'node-pty') return m;
+  if (m === 'auto' || m === 'ptyd') return m === 'auto' ? 'auto' : 'ptyd';
+  return DEFAULT_MODE;
 }
 
 function writeMode(mode: any, dir: any = dataDir()) {
-  if (!MODES.includes(mode)) throw new Error(`ptyHost must be one of ${MODES.join(', ')}`);
+  if (mode === 'node-pty' || mode === 'auto') throw new Error(`ptyHost=${mode} is not a host. ${RETIRED}`);
+  if (!MODES.includes(mode)) throw new Error(`ptyHost must be ptyd. ${RETIRED}`);
   const s = readSettings(dir);
   s.ptyHost = mode;
   fs.mkdirSync(dir, { recursive: true });
@@ -166,21 +163,23 @@ function install(dir: string = dataDir(), { dryRun = false, build = buildBinary(
 }
 
 /**
- * Pure. What a production start should use.
- * @returns {{ptyd: boolean, mode: string, bin: string|null, reason: string}}
+ * Pure. What a production start should use. `error` is set when the choice is
+ * the removed node-pty path; callers must refuse to start, not pick another host.
+ * @returns {{ptyd: boolean, mode: string, bin: string|null, reason: string, error?: string}}
  */
 function resolve({ envValue, source, mode, bin }: { envValue?: any; source?: string; mode?: any; bin?: any }) {
   const where = source || 'the environment';
-  if (envValue === '1') return { ptyd: true, mode, bin, reason: `TERMHUB_PTYD=1 in ${where}` };
-  if (envValue === '0') return { ptyd: false, mode, bin, reason: `TERMHUB_PTYD=0 in ${where}` };
-  if (mode === 'ptyd') return { ptyd: true, mode, bin, reason: 'setting ptyHost=ptyd' };
-  if (mode === 'auto') {
-    return bin
-      ? { ptyd: true, mode, bin, reason: `auto: release binary at ${bin}` }
-      : { ptyd: false, mode, bin, reason: 'auto: no release ptyd binary on this machine' };
+  if (envValue === '0') {
+    return { ptyd: false, mode, bin, reason: `TERMHUB_PTYD=0 in ${where}`, error: `TERMHUB_PTYD=0 in ${where} asks for node-pty. ${RETIRED}` };
   }
-  // node-pty, unset or anything else: the default never switches by itself.
-  return { ptyd: false, mode, bin, reason: `setting ptyHost=${mode || DEFAULT_MODE} (the default; switch with: node lib/ptyHost.js ptyd)` };
+  if (envValue !== '1' && mode === 'node-pty') {
+    return { ptyd: false, mode, bin, reason: 'setting ptyHost=node-pty', error: `setting ptyHost=node-pty. ${RETIRED}` };
+  }
+  const reason = envValue === '1' ? `TERMHUB_PTYD=1 in ${where}`
+    : mode === 'ptyd' ? 'setting ptyHost=ptyd'
+    : mode === 'auto' ? 'ptyHost=auto means ptyd (the node-pty fallback is gone)'
+    : 'ptyd (the default)';
+  return { ptyd: true, mode: mode === 'auto' ? 'auto' : DEFAULT_MODE, bin, reason };
 }
 
 /** What the next production start resolves to (status, lib/launch.ts, linux/ptyd-unit.sh). */
@@ -189,15 +188,19 @@ function plan(env: Env = process.env) {
   return resolve({ envValue: c.value, source: c.source, mode: readMode(), bin: releaseBinary({ TERMHUB_PTYD_BIN: c.bin }) });
 }
 
-/** For the entrypoints: decide, export TERMHUB_PTYD (+ _BIN), say so. */
+/** For the entrypoints: decide, export TERMHUB_PTYD=1 (+ _BIN), say so. Throws on the removed path. */
 function applyToEnv(env: Env = process.env, log: any = (m: any) => console.log(m)) {
   const r = plan(env);
+  if (r.error) {
+    log(`[termhub] PTY host: refused (${r.error})`);
+    throw new Error(r.error);
+  }
   const bin = r.bin;
   if (env.TERMHUB_PTYD_RESOLVED === '1' || env.TERMHUB_SESSION_ID) delete env.TERMHUB_PTYD_BIN;
-  env.TERMHUB_PTYD = r.ptyd ? '1' : '0';
+  env.TERMHUB_PTYD = '1';
   env.TERMHUB_PTYD_RESOLVED = '1';
-  if (r.ptyd && bin && !env.TERMHUB_PTYD_BIN) env.TERMHUB_PTYD_BIN = bin;
-  log(`[termhub] PTY host: ${r.ptyd ? 'ptyd' : 'node-pty'} (${r.reason})`);
+  if (bin && !env.TERMHUB_PTYD_BIN) env.TERMHUB_PTYD_BIN = bin;
+  log(`[termhub] PTY host: ptyd (${r.reason})`);
   return r;
 }
 
@@ -229,18 +232,22 @@ async function main(argv: string[]) {
   const c = chosen();
   const next = plan();
   console.log(`setting:     ${mode}${c.value ? ` (TERMHUB_PTYD=${c.value} in ${c.source} overrides it)` : ''}`);
-  console.log(`next start:  ${next.ptyd ? 'ptyd' : 'node-pty'} (${next.reason})`);
+  console.log(next.error ? `next start:  refused (${next.error})` : `next start:  ptyd (${next.reason})`);
   const port = Number(process.env.TERMHUB_SESSIOND_PORT) || 7010;
   const ping = await pingSessiond(port);
-  const running = ping ? ping.ptyHost || 'node-pty (a sessiond older than ptyHost reporting)' : null;
+  const running = ping ? ping.ptyHost || 'unknown' : null;
   console.log(`running:     ${running ? `${running} (sessiond pid ${ping.pid} on :${port})` : `no sessiond on :${port}`}`);
-  if (ping && running && running.split(' ')[0] !== (next.ptyd ? 'ptyd' : 'node-pty')) {
-    console.log('A sessiond restart is needed for the change to take effect, and it ends the live terminals once.');
+  if (next.error) {
+    console.log('sessiond will not start on this setting.');
+    process.exit(2);
+  }
+  if (ping && running && running.split(' ')[0] !== 'ptyd') {
+    console.log('A sessiond restart is needed. Terminals already in ptyd are adopted; a sessiond still on node-pty ends its terminals once.');
   }
 }
 
 module.exports = {
-  cli, MODES, DEFAULT_MODE, readMode, writeMode, releaseBinary, installedBinary, buildBinary, install,
+  cli, MODES, DEFAULT_MODE, RETIRED, readMode, writeMode, releaseBinary, installedBinary, buildBinary, install,
   chosen, resolve, plan, applyToEnv, settingsFile,
 };
 

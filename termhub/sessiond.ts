@@ -2,11 +2,12 @@
 
 // termhub session supervisor (sessiond) — the PERSISTENT tier.
 //
-// Owns this machine's terminals: the `sessions` Map, the node-pty PTYs, and
-// their in-memory scrollback. It hosts the JSON API and the terminal WebSocket
-// but does NOT serve the web UI — that's the swappable `front` tier, which
-// proxies to this process. Because routine updates only restart the front,
-// these PTYs (and the sessions running in them) survive every update.
+// Owns this machine's terminals: the `sessions` Map, the screen mirror, and the
+// archive. The PTYs themselves live in ptyd (the only host). It hosts the JSON
+// API and the terminal WebSocket but does NOT serve the web UI — that's the
+// swappable `front` tier, which proxies to this process. Because routine updates
+// only restart the front, and a sessiond restart adopts the terminals ptyd still
+// has, those sessions survive both.
 //
 // Binds LOOPBACK ONLY (127.0.0.1) and is never exposed directly; reach it only
 // through the front, which is published on the tailnet via Tailscale Serve.
@@ -260,7 +261,10 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
 
   if (ptydClient.enabled()) {
     adoptPtydSessions(sessions).catch((err: any) => {
-      console.error(`[sessiond] ptyd: ${err && err.message ? err.message : err}`);
+      const msg = err && err.message ? err.message : err;
+      console.error(`[sessiond] ptyd is required and did not start: ${msg}`);
+      console.error('[sessiond] node-pty was retired (Exit 5); there is no other PTY host.');
+      process.exit(1);
     });
   }
 
@@ -302,8 +306,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           commit: build.commit(),
           dirty: build.dirty(),
           startedAt: STARTED_AT,
-          // Where the PTYs live: in this process, or in ptyd (TERMHUB_PTYD=1).
-          ptyHost: ptydClient.enabled() ? 'ptyd' : 'node-pty',
+          // Where the PTYs live. ptyd is the only host; a sessiond started without
+          // TERMHUB_PTYD=1 (a test that has not pointed at one) reports unavailable.
+          ptyHost: ptydClient.enabled() ? 'ptyd' : 'unavailable',
         });
       }
 
@@ -845,10 +850,16 @@ function startSessiond({ port = DEFAULT_SESSIOND_PORT, entry = 'sessiond', claim
 // naming it is the difference between a two-second fix and an afternoon.
 /** `node sessiond.js`: pre-flight the port, then start and claim the pid file (sessiond.js, the entry). */
 function run() {
-  // Production start: ptyd or node-pty per the persistent setting (lib/ptyHost.js).
-  require('./lib/ptyHost.ts').applyToEnv(process.env, (m: any) => console.log(`[sessiond] ${m.replace(/^\[termhub\] /, '')}`));
+  // Production start: ptyd, the only host (lib/ptyHost.js). A removed setting
+  // (TERMHUB_PTYD=0, ptyHost=node-pty) throws. ptyd must answer before we listen.
+  try {
+    require('./lib/ptyHost.ts').applyToEnv(process.env, (m: any) => console.log(`[sessiond] ${m.replace(/^\[termhub\] /, '')}`));
+  } catch (e: any) {
+    console.error(`[sessiond] ${e && e.message ? e.message : e}`);
+    process.exit(1);
+  }
   const port = DEFAULT_SESSIOND_PORT;
-  probeSessiond(port).then((live: any) => {
+  ptydClient.ensure().then(() => probeSessiond(port)).then((live: any) => {
     if (live) {
       const who = live.entry === 'server'
         ? 'a `node server.js` (dev single-process entrypoint)'
@@ -861,6 +872,10 @@ function run() {
       return;
     }
     startSessiond({ port, claimPid: true });
+  }).catch((e: any) => {
+    console.error(`[sessiond] ${e && e.message ? e.message : e}`);
+    console.error('[sessiond] ptyd is the only PTY host; not starting.');
+    process.exit(1);
   });
 }
 
