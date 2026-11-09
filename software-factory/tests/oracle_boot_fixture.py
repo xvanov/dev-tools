@@ -115,8 +115,13 @@ def write_bootable_app(repo: Path, *, impl: str = GOOD_IMPL, subdir: str = "back
 def boot_cfg(
     *,
     subdir: str = "backend",
-    boot_timeout_seconds: int = 15,
-    run_timeout_seconds: int = 20,
+    # ``boot_app`` retries a process that stays up but never answers health
+    # three times, each waiting the full deadline. This fixture's server is
+    # healthy in well under a second; a longer deadline is only paid by a
+    # mutant that leaves the process up and silent (3 × deadline). 3 s still
+    # covers two healthy polls on a loaded box.
+    boot_timeout_seconds: int = 3,
+    run_timeout_seconds: int = 10,
     broken_at_base: bool = False,
     **overrides: object,
 ) -> AcceptanceBootConfig:

@@ -44,6 +44,13 @@ from sqlmodel import Session, select
 from factory.chain.handlers import _is_premodel_infra_failure
 from factory.runner import LLMConfig, Run, _engine, sandbox_run
 
+# ``conversation.run()`` has to still be inside the call when the wall clock
+# (``wall_clock_timeout_s`` below) fires, so the timeout path — not the
+# normal return — is what gets asserted. ``asyncio.run`` then joins the
+# default executor, so this stall IS the test's wall time. It only has to
+# outlive the 0.25 s deadline.
+_STALL_S = 0.75
+
 
 def _only_row(db_path: Path) -> Run:
     with Session(_engine(db_path)) as session:
@@ -74,9 +81,9 @@ def _install_stalling_sdk(
             pass
 
         def run(self) -> None:
-            # Outlives the wall clock in the test. The orphaned worker thread is
-            # reaped when the process exits, exactly as in production.
-            time.sleep(30)
+            # Outlives the wall clock. The executor thread is joined when the
+            # event loop shuts down, so the stall stays just past that deadline.
+            time.sleep(_STALL_S)
 
         def close(self) -> None:
             pass
@@ -227,7 +234,7 @@ def test_unreadable_telemetry_falls_back_to_the_safe_old_shape(
             pass
 
         def run(self) -> None:
-            time.sleep(30)
+            time.sleep(_STALL_S)
 
         def close(self) -> None:
             pass
@@ -285,7 +292,7 @@ def _install_stalling_sdk_with_events(
             pass
 
         def run(self) -> None:
-            time.sleep(30)
+            time.sleep(_STALL_S)
 
         def close(self) -> None:
             pass

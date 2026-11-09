@@ -238,8 +238,11 @@ def test_text_run_dry_run_records_neither_flag(tmp_path: Path) -> None:
 def test_text_run_missing_api_key_records_premodel_infra(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("AZURE_API_KEY", raising=False)
-    monkeypatch.delenv("AZURE_AI_API_KEY", raising=False)
+    for var in ("AZURE_API_KEY", "AZURE_AI_API_KEY", "AZURE_FOUNDRY_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    # Same LiteLLM import as the sandbox missing-key test: ~8 s, and it does
+    # not decide this branch. ``_resolve_api_key`` still runs for real.
+    monkeypatch.setattr("factory.providers.azure_foundry.ensure_bootstrapped", lambda: None)
     db = tmp_path / "state" / "factory.db"
     with pytest.raises(RuntimeError):
         text_run(persona="sm", prompt="hi", model_id="azure/deepseek-v4-pro", db_path=db)
@@ -477,8 +480,23 @@ def test_sandbox_run_flags_unreliable_when_sdk_drops_the_cost_field(
 def test_sandbox_run_missing_api_key_records_premodel_infra(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for var in ("AZURE_API_KEY", "AZURE_AI_API_KEY", "DEEPSEEK_API_KEY"):
+    # ``_resolve_api_key`` for ``azure/`` falls back to ``AZURE_FOUNDRY_API_KEY``
+    # after ``AZURE_API_KEY``. A key left in the operator environment makes this
+    # a real model call (measured ~14-20 s, and it records model work) instead
+    # of the missing-key path the assertions name.
+    for var in (
+        "AZURE_API_KEY",
+        "AZURE_AI_API_KEY",
+        "AZURE_FOUNDRY_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
+    # The missing-key return happens after ``ensure_bootstrapped()``, and that
+    # import of LiteLLM is ~8 s (longer on a loaded box) of pydantic model
+    # construction that does not affect the branch these assertions take.
+    monkeypatch.setattr("factory.providers.azure_foundry.ensure_bootstrapped", lambda: None)
     db = tmp_path / "state" / "factory.db"
     repo = tmp_path / "repo"
     repo.mkdir()

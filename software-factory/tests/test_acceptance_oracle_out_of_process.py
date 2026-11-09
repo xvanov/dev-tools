@@ -166,7 +166,10 @@ def test_head_never_healthy_is_waivable_head_boot_failed(tmp_path: Path) -> None
     repo, _base, head = _bootable_repo(tmp_path)
     root = tmp_path / "factory"
     ref = _store(root)
-    cfg = boot_cfg(health_path="/nonexistent-health-path", boot_timeout_seconds=3)
+    # The server answers 404 on this path immediately. The deadline only has to
+    # cover one unhealthy poll; the old 3 s waited out the full boot timeout
+    # on every boot (base and head, twice — the waiver re-evaluates).
+    cfg = boot_cfg(health_path="/nonexistent-health-path", boot_timeout_seconds=1)
     r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg(boot=cfg))
     assert not r.passed
     assert r.details["unverifiable_kind"] == "head_boot_failed"

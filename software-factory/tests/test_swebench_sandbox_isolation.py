@@ -26,6 +26,7 @@ import contextlib
 import importlib.util
 import os
 import re
+import shutil
 import signal
 import socket
 import ssl
@@ -377,6 +378,31 @@ def test_other_runs_are_invisible_in_the_process_table(A: Any, tree: _Tree) -> N
 # --------------------------------------------------------------------------- #
 
 
+def _host_pi_the_sandbox_mounts() -> str | None:
+    """``pi`` only if it lives on a path ``_sandbox_argv`` bind-mounts.
+
+    The sandbox root starts empty. ``/usr``, ``/bin`` and the two home tool
+    prefixes are mounted; a ``pi`` that exists only under nvm (or is not
+    installed) is not a toolchain this namespace can expose. D17: skip that
+    case instead of asserting a host-specific binary.
+    """
+    found = shutil.which("pi")
+    if not found:
+        return None
+    path = Path(found).resolve()
+    home = Path.home()
+    roots = (
+        Path("/usr"),
+        Path("/bin"),
+        Path("/sbin"),
+        home / ".local" / "bin",
+        home / ".npm-global",
+    )
+    if any(path == root or root in path.parents for root in roots):
+        return str(path)
+    return None
+
+
 @requires_bench_host
 def test_the_toolchain_the_run_needs_is_still_reachable(A: Any, tree: _Tree) -> None:  # noqa: N803
     """uv, its python toolchain, pi, models.json, the prompt library, the ledger.
@@ -384,6 +410,11 @@ def test_the_toolchain_the_run_needs_is_still_reachable(A: Any, tree: _Tree) -> 
     Enumerated at the head of the sandbox section for a reason: a sandbox missing one
     of these does not fail loudly, it produces a mystery arm that scores 0.
     """
+    if _host_pi_the_sandbox_mounts() is None:
+        pytest.skip(
+            "pi is not installed on a path this sandbox bind-mounts "
+            "(/usr, /bin, ~/.local/bin, ~/.npm-global); nothing to prove reachable"
+        )
     script = "\n".join(
         [
             "command -v uv && uv --version",

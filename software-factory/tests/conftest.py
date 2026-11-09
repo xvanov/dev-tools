@@ -165,6 +165,56 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
+def _tick_ci_health_does_not_call_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``tick()`` polls main's required checks once per call (``ci_health.enabled``
+    defaults on). That is one ``gh api``, and on a machine whose checkout owner is
+    in the gh owner map the shim first runs ``gh auth token --user <owner>``.
+
+    Measured 2026-11-08 on the bench host: the token lookup is ~3 s and a
+    non-repo like the tests' ``ssh://placeholder`` makes ``gh api`` spend another
+    ~3 s on "unsupported protocol scheme". A failed query is already
+    "unknown / nothing to report" — the fail-safe the monitor documents — so a
+    unit test that drives ``tick()`` was paying ~6.4 s to learn nothing.
+    ``tests/test_ci_health.py`` calls ``main_ci_health_tick`` directly with a
+    fake ``gh`` and is unaffected (it does not go through this binding).
+    """
+    from factory.chain.ci_health import CiHealthResult
+
+    def _unknown(_root: object, app: str, *_a: object, **_k: object) -> CiHealthResult:
+        return CiHealthResult(app=app, state="unknown", reason="pytest: live gh skipped")
+
+    monkeypatch.setattr("factory.chain.orchestrator.main_ci_health_tick", _unknown)
+
+
+@pytest.fixture(autouse=True)
+def _gh_auth_token_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``gh auth token`` is a local credential lookup, and on a logged-in
+    machine it is the slow one: measured ~3 s before it even prints the token.
+
+    ``tick()`` resolves a GitHub client for issue hygiene (and any other
+    best-effort GitHub call). With no ``FACTORY_GITHUB_TOKEN`` that resolution
+    shells out. A unit test does not need the operator's real token — a miss
+    is already the documented fail-safe (no client, the call is skipped).
+    Tests that assert the lookup itself replace ``subprocess.run`` and so
+    override this wrapper for the duration of the test.
+    """
+    import subprocess
+
+    real_run = subprocess.run
+
+    def _run(args: object, *a: object, **k: object) -> subprocess.CompletedProcess[str]:
+        argv = list(args) if isinstance(args, (list, tuple)) else []
+        exe = str(argv[0]).replace("\\", "/").rsplit("/", 1)[-1].lower() if argv else ""
+        if exe in {"gh", "gh.exe", "gh.cmd"} and argv[1:3] == ["auth", "token"]:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr="pytest: gh auth token skipped"
+            )
+        return real_run(args, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(subprocess, "run", _run)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_factory_state(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
