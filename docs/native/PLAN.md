@@ -930,6 +930,18 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768, OLLAMA_NUM_PARALLEL=2): still open. First piece 669 ms (418-2363, median
     of 9 e2e runs), first token 544 (325-2250), router 150 (76-333; 75 in the first review).
     The answerer alone starts in 57 ms (eval p50).
+    Partly (f657f5a, 6cde69a). The answerer's prefix (its system prompt, the snapshot, the last
+    turns) is now primed alongside the router's: 1.5 s after each turn (sooner, it slowed Kokoro's
+    first byte ~100 ms) and on every snapshot change. POST /api/talk/warm rebuilds a snapshot that
+    would go stale within 20 s, so the rebuild and its primes happen while the user speaks and
+    not in the turn (the snapshot's first line carries the minute). Interleaved e2e, worktree
+    dashboards on a scratch store, live Ollama, before = main, 27 runs a side over three sets:
+    first piece 605 -> 435 ms (223-1039), first token 453 -> 308 (142-910). In the quietest set,
+    router 184 -> 95 ms and answerer wait 249 -> 136, and turns with a gap before the router 3 -> 1
+    of 9. Still over 200: the router call is ~60-180 ms and the answer's first clause another
+    ~150 after its first token. keep_alive is already 24h; `num_ctx` and a prefix shared by
+    router and answerer were not tried (both change the router's prompt or force a model reload,
+    and a shared prefix needs a re-fit).
   - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
@@ -943,6 +955,17 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768): still open. In the page's order, 565 ms per request (471-1912; 499 in
     whisper), median of 9. Back to back after one warm: 267 ms per request (255 in whisper), but
     772 ms for the first call. The slow part is where the call sits on the path, not the model.
+    Partly (14ec7d3, d537f09; voice-dictation's transcriber, so it needs the deployed copy
+    updated and the transcriber restarted, not done here). Profiled in process: a warm request
+    was ~250 ms, of which PyAV decoding 54 (gc.collect 36), features 39, encoder 50, decoding 103.
+    16 kHz mono WAVs are now read with `wave` and clips up to 28 s decode `without_timestamps`;
+    a VAD filter gained nothing. A spare transcriber, medians of 12: back to back 232 -> 167 ms and
+    244 -> 190 (two clips), after 3 s idle 555 -> 420 and 661 -> 470. The transcriber now opts out
+    of Windows power throttling like pa-voice (EcoQoS parked it on efficiency cores beside
+    smart-turn): in the page's order (pings plus smart-turn) 456 -> 299 ms. In the e2e, 27 runs a
+    side: 642 -> 416 ms (187-699). Still over 250 in the page's order; smart-turn runs on the CPU
+    (the voice venv's onnxruntime has no CUDA provider) and costs whisper ~200 ms when they
+    overlap, and running them one after the other was no faster.
   - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
@@ -968,6 +991,16 @@ not in the Map is not done, and a new one gets added there first.
     Re-review (bd7b768): still open. 1807 ms over the whole path (1264-3608, median of 9), 1107 ms
     over. Kokoro's first byte is 487 ms (244-763) during the turn, against 121 ms back to back
     for the same five-word piece.
+    Partly (8.4.3 and 8.4.4's commits). Interleaved e2e, 27 runs a side, end of speech to first
+    audio without the talk-page hop (102-108 ms): 1788 -> 1342 ms (1054-2499). The quietest set
+    (CPU ~50%, 9 a side): whisper 644 -> 327, first piece 512 -> 433, Kokoro's first byte 386 ->
+    384, first audio 1576 -> 1332. Kokoro's first byte did not move whether it ran during or after
+    the answer's stream (785 vs 739 ms to audio, noise), and on the CPU it takes 1.7 s a sentence.
+    700 ms is not reachable on this laptop with these models: the best runs sum to ~1.05 s, and
+    the medians to ~1.35 s. It would take an ASR well under 150 ms (Parakeet TDT 0.6B or
+    Moonshine on ONNX, no 30 s padding), smart-turn off the CPU or off the path, Kokoro's first
+    byte near 100 ms (GPU clocks held up between turns; it drops to P8 within seconds), and a
+    first clause under 200 ms.
   - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
@@ -1350,11 +1383,29 @@ not in the Map is not done, and a new one gets added there first.
     259 ms) during a 3163 ms block. Find which statement or pass holds the loop (the blocks log
     the passes running, not the statement), or keep passes off the serving generation's loop
     ([acceptance/whats-on.md](acceptance/whats-on.md), re-review).
-  - [ ] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
+    Partly. Measured per statement and pass on a scratch copy of the store: the sessions pass
+    took 537 ms a run and now 7 ms warm (4253c9f); `vault.list` read the vault synchronously,
+    683-1445 ms, and is now async (38a5717); the daily spend query took 100-143 ms and 45-58 ms on
+    a covering index (b674e67, migration 009). Left: `ledger.dirty` (120-230 ms idle, 250-480 with
+    live traffic), `micHolders` shelling out to reg.exe (18-177 ms of lag), `freeBytes` via
+    PowerShell (~35-40 ms), and blocks right after a handoff whose statement was not found. Not
+    re-checked against the live supervisor log (no deploy from this work).
+  - [x] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
     session (p(answer_here) 0.775-0.78, threshold 0.85), although the snapshot lists tomorrow's
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
     8.4.2 never run by voice for tomorrow. Add router-eval cases for tomorrow and other named
     days, and re-fit if needed.
+    Done. The snapshot now runs to the end of tomorrow (today's remaining meetings, then
+    tomorrow's, then "Meetings after tomorrow: not in this snapshot."), the router prompt says
+    what's on today or tomorrow is answered here, and a guard (`looksBeyondSnapshot`) hands off
+    questions about this week, the weekend, yesterday or a named day past tomorrow. `pa eval
+    router`, 97 turns (12 new: tomorrow, named days, this week; the set carries its own "now"):
+    3-way accuracy 82.5% -> 90.7%, look-ups answered here 1 -> 0 (a week question, p 0.96), actions
+    0 -> 0, answerable turns handed off 14 -> 8 of 38, all 5 tomorrow turns answered (was p 0.73,
+    handed off). Leave-one-out 89.7%. Re-fit T 0.461, threshold 0.85 -> 0.64 (the fit leaves out
+    turns the guard already hands off). `pa eval answerer` 12 of 12. Not covered: turns with
+    history; in probes a few tomorrow questions after two turns of chat still handed off
+    (p 0.28-0.43). (aa04496)
   - [x] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
     machine, `screens.capture` for Build (`/factory`) never settles. When the 60 s kill timer ends
     the browser, nothing is left on the event loop, and Node exits 0 with the promise pending. So
