@@ -1187,7 +1187,7 @@ not in the Map is not done, and a new one gets added there first.
     first dev conversation took 48 turns (76 before). Other personas' prompts were not checked.
     Done: when project.md or navigation.md is missing, only the onboarder persona gets
     "NO CONTEXT AVAILABLE … You are likely the Onboarder persona". Every other persona
-    gets a one-line note to continue from the code and the task. (94b9065)
+    gets a one-line note to continue from the code and the task. (b4b66e9)
   - [x] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
     delivers a ready PR, and the factory forbids the agent from opening one.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
@@ -1596,7 +1596,7 @@ not in the Map is not done, and a new one gets added there first.
     Done, not re-run live: the API solo reviewer (one call, no tool turns) now gets
     the job's ask verbatim (`artifacts/ask.md`) and the bounded full content of files
     the diff touches plus files the ask, the story or the context names, so it can
-    judge behaviour. (b89470e)
+    judge behaviour. (9ff0703)
   - [ ] **8.4.50 deepseek-pr: a review with no blocker costs a fix round.** Cycle 1 returned
     `request_changes` on one medium and four lows. The medium was a false alarm: `/api/version`
     "has no cited precedent", but `server.ts:290` serves it. The fix round and the second review
@@ -1607,7 +1607,7 @@ not in the Map is not done, and a new one gets added there first.
     Done, not re-run live: a solo review spends the fix round only on a high (or
     `blocking`) finding or on test slop / a score under 0.7. Medium and low findings
     are copied into `comments_to_post` and the story proceeds to tech_writer. The
-    chain's reviewer still treats a medium as a cycle. (0434ba3)
+    chain's reviewer still treats a medium as a cycle. (06421ff)
   - [ ] **8.4.51 deepseek-pr: the dev step takes 5.4 min to start its agent.** The handler started
     at 00:00:27.6. `solo_checks` came 90.6 s later, then the lint baseline (`uv run --all-extras
     ruff check .` in software-factory, for a personal-assistant diff) took 95 s. Another 140 s
@@ -1624,7 +1624,7 @@ not in the Map is not done, and a new one gets added there first.
     Done: the write landed in the story worktree after the dev commit, so the PR
     was cut without it. The update is now committed on the story branch before
     tech_writer advances (and so before the PR is opened). A failed commit bounces
-    the story instead of advancing with the file uncommitted. (2aadaf7)
+    the story instead of advancing with the file uncommitted. (c3a8219)
   - [x] **8.4.53 PA: an e2e dummy card leaks into a real card's blocker verdict.** On the Plan
     board, an unrelated work card shows "You need: Needs the ArgoCD sync to deploy the target
     service before adding the pa version verb." It is a stored block row (`verdict: blocks`,
