@@ -1417,7 +1417,7 @@ async function refresh() {
 const CLAIM_KINDS = ['role', 'expertise', 'ownership', 'preference', 'decision', 'status', 'relationship',
   'blocker', 'reference', 'workflow'];
 const SUBJECT_KINDS = [['person', 'People'], ['project', 'Projects'], ['topic', 'Topics']];
-const mem = { subjects: [], kind: 'person', open: null, history: false, loaded: false };
+const mem = { subjects: [], kind: 'person', open: null, history: false, loaded: false, review: [], decided: new Set() };
 
 async function getJson(path) {
   const res = await fetch(path);
@@ -1494,14 +1494,9 @@ function claimCard(c, { review = false, showSubject = false } = {}) {
   if (review) {
     const ok = el('button', { class: 'primary', title: 'Store it as something the assistant believes. Nothing is run.' }, 'Save to memory');
     const no = el('button', { title: 'Do not believe it; it stays in the table as retracted' }, 'Discard');
-    ok.addEventListener('click', memAct(ok, async () => {
-      const r = await post(`api/memory/claims/${c.id}/approve`);
-      toast(r.pending ? `Saved to memory (#${c.id}). Nothing was run. Its page updates in the background.` : `saved to memory as #${c.id}${outcome(r.claim)} — no action was taken`);
-    }));
-    no.addEventListener('click', memAct(no, async () => {
-      await post(`api/memory/claims/${c.id}/reject`);
-      toast(`discarded #${c.id} — not believed`);
-    }));
+    ok.addEventListener('click', () => reviewDecision(c, 'approve',
+      `Saved to memory (#${c.id}). Nothing was run. Its page updates in the background.`));
+    no.addEventListener('click', () => reviewDecision(c, 'reject', `discarded #${c.id} — not believed`));
     actions.append(ok, no);
   } else if (c.status === 'active' || c.status === 'pending_review') {
     const forget = el('button', { title: 'Retract this claim' }, 'Forget');
@@ -1551,6 +1546,36 @@ function outcome(claim) {
   return ' — added';
 }
 
+// Save or Discard on a review card takes effect on screen at once: the card
+// leaves the list and the counts drop before the request is sent. The server
+// answers in milliseconds, but the tab used to wait for the request and then
+// reload all of memory (overview, review, duplicates, the open page) before
+// the card moved — seconds on a large store. If the request fails, the card
+// comes back and a toast says why. `mem.decided` keeps a card that is still
+// in flight from being drawn again by a reload that raced it.
+function reviewDecision(c, verb, message) {
+  if (mem.decided.has(c.id)) return;
+  mem.decided.add(c.id);
+  renderReview(mem.review);
+  toast(message);
+  post(`api/memory/claims/${c.id}/${verb}`).then(() => {
+    mem.review = mem.review.filter((x) => x.id !== c.id);
+    mem.decided.delete(c.id);
+    reloadMemorySoon();
+  }, (err) => {
+    mem.decided.delete(c.id);
+    renderReview(mem.review);
+    toast(`${verb === 'approve' ? 'Save to memory' : 'Discard'} failed for #${c.id}: ${err.message} — it is back in the list`);
+  });
+}
+
+// One background reload after a burst of decisions, never awaited by a click.
+let memReloadTimer = null;
+function reloadMemorySoon() {
+  clearTimeout(memReloadTimer);
+  memReloadTimer = setTimeout(() => { loadMemory().catch(() => {}); refresh(); }, 800);
+}
+
 // Like act(), but reloads the memory view instead of the Today lists.
 function memAct(button, fn) {
   return async () => {
@@ -1585,7 +1610,9 @@ function renderSubjects() {
   }) : [el('div', { class: 'empty' }, q ? 'Nothing matches.' : 'Nothing here yet.')]));
 }
 
-function renderReview(claims) {
+function renderReview(all) {
+  mem.review = all || [];
+  const claims = mem.review.filter((c) => !mem.decided.has(c.id));
   const sec = document.getElementById('review');
   sec.classList.toggle('quiet', !claims.length);
   sec.querySelector('.n').textContent = claims.length ? String(claims.length) : '';

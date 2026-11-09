@@ -298,7 +298,7 @@ async function route(method: string, url: URL, body: Row = {}, memory: Module = 
       const id = idParam(m[1]);
       if (m[2] === 'approve') {
         const r = await memory.approve(id);
-        return { claim: r.claim, consolidation: r.consolidation };
+        return { claim: r.claim, consolidation: r.consolidation, pending: !!r.pending };
       }
       return memory.forget(id);
     }

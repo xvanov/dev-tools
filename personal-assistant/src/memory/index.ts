@@ -169,18 +169,63 @@ async function approve(claimId: any, { wait = false }: { wait?: boolean } = {}) 
   // rewriting its page are model calls â€” up to a minute â€” and a button that
   // spins that long reads as "nothing happened", so they finish in the
   // background unless the caller asks to wait.
-  const settle = async () => {
-    const decided = await consolidate.consolidateClaims([claim.id]);
-    await pages.refreshSubjects([claim]);
-    return decided;
-  };
   if (!wait) {
-    settle().catch((err: Error) => require('../log.ts').logger('memory').warn('approve: background settle failed', { id: claim.id, message: err.message }));
+    settleLater(claim);
     return { claim: { id: claim.id, status: claim.status, subject_kind: claim.subject_kind, subject_id: claim.subject_id }, consolidation: null, pending: true };
   }
-  const decided = await settle();
+  const decided = await consolidate.consolidateClaims([claim.id]);
+  await pages.refreshSubjects([claim]);
   const after = await repo.memory.claimOutcome(claim.id);
   return { claim: after, consolidation: decided };
+}
+
+// The background half of approve. Not started inside the request: the store
+// is synchronous SQLite in the dashboard's own process, so consolidation's
+// queries (0.4 s on the work stack) would run while the browser's next
+// requests wait behind them. It starts SETTLE_DELAY_MS later, and approvals
+// made meanwhile (a review queue cleared in a few clicks) settle together:
+// one consolidation call and one rewrite per page. Should the process stop
+// first, nothing is lost — the claim is active and unconsolidated, which is
+// exactly what the worker's consolidate pass picks up.
+const SETTLE_DELAY_MS = 1500;
+let settleQueue: Row[] = [];
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+let settling: Promise<void> = Promise.resolve();
+
+function settleLater(claim: Row) {
+  settleQueue.push(claim);
+  if (settleTimer) clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    settleTimer = null;
+    settling = settling.then(settleNow);
+  }, SETTLE_DELAY_MS);
+  settleTimer.unref?.();
+}
+
+async function settleNow() {
+  const batch = settleQueue;
+  settleQueue = [];
+  if (!batch.length) return;
+  try {
+    await consolidate.consolidateClaims(batch.map((c) => c.id));
+    const seen = new Set<string>();
+    await pages.refreshSubjects(batch.filter((c) => {
+      const key = `${c.subject_kind}:${c.subject_id ?? String(c.subject_label || '').toLowerCase()}`;
+      return !seen.has(key) && seen.add(key);
+    }));
+  } catch (err: any) {
+    require('../log.ts').logger('memory').warn('approve: background settle failed', { ids: batch.map((c) => c.id), message: err.message });
+  }
+}
+
+/** Tests: run whatever approvals are waiting to settle, now. */
+async function _flushSettle() {
+  if (settleTimer) {
+    clearTimeout(settleTimer);
+    settleTimer = null;
+    settling = settling.then(settleNow);
+  }
+  await settling;
 }
 
 async function reviewQueue({ limit = 100 }: { limit?: number } = {}) {
@@ -328,6 +373,7 @@ module.exports = {
   resolveSubject,
   rrf,
   approve,
+  _flushSettle,
   reviewQueue,
   subjects,
   item,

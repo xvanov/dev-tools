@@ -866,7 +866,8 @@
         "Blocks pass": "links what someone owes you to the task it holds up (commitment_block), and says who it is really on (commitment_block.owner, sql/040: person, me or system — a setup step such as a repo not registered with the factory, or an assistant's own promise, is on you, never 'Someone owes you'; a row judged before the column is judged once more). The meeting debrief drops an owed-to-you item whose owner is the assistant heard through the speakers. A card whose summary, detail or run ask carries e2e-<uuid> is left out of this pass and the card-context pass; a stored verdict that cites one is left out when the board reads it",
         "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
         "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.ts)",
-        "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose"
+        "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose",
+        "Memory tab saves": "Save to memory and Discard move the card at once and send the request after (a failure puts it back with a toast); approve answers once the row flips and consolidates and rewrites pages 1.5 s later, batched, outside the request (synchronous SQLite shares the dashboard's event loop). sql-sqlite/013 indexes claim by status: the tab's counts went from 1.2 s to 2 ms"
       },
       "code": [
         "personal-assistant/src/distill/index.ts",
