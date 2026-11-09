@@ -792,6 +792,9 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
    yours: to-dos you took or were asked to take, what others owe you, updates to a listed item
    (done, moved, blocked, new information) and decisions that change your work. Others' tasks,
    status of work you do not own, and small talk are left out — an empty debrief is a fine one.
+   The speaker stream can be your own AI assistant reading its reply aloud: what it says it will
+   do is never owed to you (an item whose owner is the assistant is dropped), and a setup step it
+   reports (a repo not registered with the factory) is yours only when you must do it.
 3. **Verify, then apply.** Every item carries a verbatim quote, checked against the transcript
    (case- and whitespace-folded; a near miss is dropped). To-dos and owed-to-me become
    commitments (`extracted_by = debrief-v1`) unless one on your list already says the same;

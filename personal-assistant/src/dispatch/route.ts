@@ -176,12 +176,18 @@ async function forced({
     hit = { app: added.app, repo: added.repo || ctx.slug };
   }
   if (!hit) {
+    // A setup step on you, not anyone's debt: `fix` says what fixes it, so a
+    // caller can offer it (the dashboard's Do asks "register it and send?").
+    if (!app && ctx.slug) {
+      throw Object.assign(
+        new Error(`${ctx.slug} is not registered with the factory — add --register (or \`pa factory add ${ctx.slug}\`) to register it`),
+        { code: 'factory_unregistered', fix: { action: 'register', slug: ctx.slug, command: `pa factory add ${ctx.slug}` } }
+      );
+    }
     throw new Error(
       app
         ? `no factory app "${app}" — registered: ${ctx.apps.map((a) => a.app).join(', ') || 'none'}`
-        : ctx.slug
-          ? `${ctx.slug} is not registered with the factory — add --register (or \`pa factory add ${ctx.slug}\`) to register it`
-          : 'no repository known for this — set one with `pa show <id> --project <name>`, or pass --repo owner/name or --app'
+        : 'no repository known for this — set one with `pa show <id> --project <name>`, or pass --repo owner/name or --app'
     );
   }
   return { route: 'factory', reason: 'you chose the factory', app: hit.app, done: ctx.done, slug: ctx.slug, appPath: hit.path || null };

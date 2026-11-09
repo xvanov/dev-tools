@@ -348,8 +348,14 @@ module.exports = {
     const find = async () => (await repos.commitments.blockCandidates(ALL)).find((r) => Number(r.id) === blocker);
     await repos.commitments.upsertBlockJudged(blocker, null, 'not_mine', 'a', null);
     assert.strictEqual((await find()).verdict, 'not_mine');
+    assert.strictEqual((await find()).owner, null, 'no owner: judged before sql/040');
     await repos.commitments.upsertBlockJudged(blocker, null, 'blocks', 'b', 'Ada');
     assert.strictEqual((await find()).verdict, 'blocks');
+    // Who it is really on: a setup step has no person behind it.
+    await repos.commitments.upsertBlockJudged(blocker, null, 'blocks', 'register it', null, 'system');
+    assert.strictEqual((await find()).owner, 'system');
+    const onBoard = (await repos.commitments.blocksForBoard(3)).find((r) => r.blocker_id === String(blocker));
+    assert.deepStrictEqual([onBoard.owner, onBoard.who], ['system', '']);
     await repos.commitments.upsertBlockManual(blocker, null, 'not_mine', 'mine');
     await repos.commitments.upsertBlockJudged(blocker, null, 'blocks', 'c', 'Ada');
     const row = await find();

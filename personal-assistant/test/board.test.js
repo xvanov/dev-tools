@@ -110,6 +110,41 @@ assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, blocked: 0, settled
   assert.deepStrictEqual(k('2').unblocked.map((y) => y.blocker_id), ['14']);
   assert.deepStrictEqual(ids(x.waiting), ['12']);
   assert.deepStrictEqual(x.counts, { onMe: 5, todo: 2, blocked: 3, settled: 0, waiting: 1 });
+  assert.strictEqual(k('1').blockers[0].owedBy.label, 'Quorvin owes you');
+}
+
+// Who a blocker is really on (card #6757: the PA's own "I'll set up the
+// factory for the raven repo" was shown as "Someone owes you"). A setup step
+// or your own action is on you; a person nobody named is said to be unnamed;
+// "Someone owes you" is never a label.
+{
+  const st = {
+    commitments: [
+      c(1),
+      c(30, { direction: 'owed_to_me', summary: 'Set up the PA Factory for the Raven repo' }),
+      c(31, { direction: 'owed_to_me' }),
+      c(32, { direction: 'owed_to_me' }),
+      c(33, { direction: 'owed_to_me', who: 'Quorvin' }),
+      c(34, { direction: 'owed_to_me' }),
+    ],
+    blocks: [
+      { blocker_id: '30', task_id: '1', verdict: 'blocks', owner: 'system', why: 'Register raven with the factory', status: 'open' },
+      { blocker_id: '31', task_id: null, verdict: 'blocks', owner: 'me', status: 'open' },
+      { blocker_id: '32', task_id: null, verdict: 'blocks', owner: null, status: 'open' }, // judged before sql/040
+      // A counterparty on the commitment is a person, whatever the pass said.
+      { blocker_id: '33', task_id: null, verdict: 'blocks', owner: 'system', status: 'open' },
+      { blocker_id: '34', task_id: null, verdict: 'blocks', owner: 'person', who: 'Talvaro', status: 'open' },
+    ],
+  };
+  const x = build(st, { now });
+  const k = (id) => x.onMe.find((y) => String(y.id) === id);
+  const by = (id) => (k(id) || k('1').blockers.find((y) => String(y.id) === id)).owedBy;
+  assert.deepStrictEqual(by('30'), { kind: 'system', label: 'Setup needed (on you)', flag: 'setup needed' });
+  assert.deepStrictEqual(by('31'), { kind: 'me', label: 'On you', flag: 'on you' });
+  assert.deepStrictEqual(by('32'), { kind: 'person', label: 'Owed to you (who is not known)', flag: 'waiting on someone unnamed' });
+  assert.strictEqual(by('33').label, 'Quorvin owes you');
+  assert.strictEqual(by('34').label, 'Talvaro owes you');
+  for (const id of ['30', '31', '32', '33', '34']) assert.ok(!/someone owes/i.test(by(id).label));
 }
 
 console.log('board: ok');

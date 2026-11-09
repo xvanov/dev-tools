@@ -580,18 +580,29 @@ const ROUTES: Route[] = [
           plain: D.describe(resolved.delivery),
         });
       }
-      const run = await dispatch.start({
-        commitmentId: Number(m?.[1]),
-        mode: body.mode || undefined,
-        machine: body.machine ? String(body.machine) : null,
-        via: body.via ? String(body.via) : null,
-        // The level the page confirmed, pinned: a repo default changing in
-        // between cannot swap in another one.
-        delivery: jobKind && jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
-        confirmedUnattended: confirmed,
-        jobKind,
-        runtime,
-      });
+      let run;
+      try {
+        run = await dispatch.start({
+          commitmentId: Number(m?.[1]),
+          mode: body.mode || undefined,
+          machine: body.machine ? String(body.machine) : null,
+          via: body.via ? String(body.via) : null,
+          // The level the page confirmed, pinned: a repo default changing in
+          // between cannot swap in another one.
+          delivery: jobKind && jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
+          confirmedUnattended: confirmed,
+          jobKind,
+          runtime,
+          // The page asked "register it and send?" and you said yes (below).
+          register: body.register === true,
+        });
+      } catch (e) {
+        // A repo the factory does not know is a setup step on you, with its
+        // fix: the page offers it instead of only showing the error.
+        const err = e as HttpError & { code?: string; fix?: unknown };
+        if (err.code === 'factory_unregistered') return send(res, 409, { error: err.message, fix: err.fix });
+        throw e;
+      }
       return send(res, 200, {
         id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,
         route: run.route || 'claude', routeReason: run.routeReason || null, jobId: run.jobId || null, delivery: run.delivery || null,

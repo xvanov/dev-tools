@@ -536,7 +536,8 @@ async function cardTool({ id }: { id?: number | string | null }) {
   const sessions = (info?.sessions || []).slice(0, 4).map((x: Json) => ({ role: x.role || null, label: clip(x.label || x.title || '', 80), url: x.url || null }));
   if (sessions.length) out.sessions = sessions;
   const blockers = blocks.filter((b: Json) => b.task_id === String(c.id) && b.verdict === 'blocks');
-  if (blockers.length) out.blockers = blockers.map((b: Json) => ({ id: b.blocker_id, who: b.who || null, summary: clip(b.summary, 120), status: b.status }));
+  // owner: who it is really on (sql/040) — 'system' or 'me' is a step on you, not someone's debt.
+  if (blockers.length) out.blockers = blockers.map((b: Json) => ({ id: b.blocker_id, who: b.who || null, owner: b.owner || 'person', summary: clip(b.summary, 120), status: b.status }));
   const holds = blocks.filter((b: Json) => b.blocker_id === String(c.id) && b.verdict === 'blocks' && b.task_id);
   if (holds.length) out.blocks_task = holds.map((b: Json) => b.task_id);
   if (runs.length) {

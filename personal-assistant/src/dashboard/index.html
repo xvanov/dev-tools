@@ -763,9 +763,17 @@ function commitmentCard(c) {
         if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}\n\nNo human step after this. Start it?`)) throw new Error('not started');
         confirmedLevel = pre.delivery;
       }
-      const r = await post(`api/commitments/${c.id}/dispatch`, {
+      const send = (register) => post(`api/commitments/${c.id}/dispatch`, {
         machine: onFactory ? null : machinePick.value || null, mode, via: routePick.value, delivery: report ? null : deliveryPick.value || null, confirmedLevel,
-        kind, runtime: onFactory && !runtimePick.hidden ? runtimePick.value : null,
+        kind, runtime: onFactory && !runtimePick.hidden ? runtimePick.value : null, ...(register ? { register: true } : {}),
+      });
+      // A repo the factory does not know yet is a setup step on you, with
+      // its fix (src/dispatch/route.ts): one click registers it and sends.
+      const r = await send(false).catch((err) => {
+        const fix = err.data?.fix;
+        if (fix?.action !== 'register') throw err;
+        if (!window.confirm(`${fix.slug} is not registered with the software factory.\n\nRegister it now (${fix.command}) and send this?`)) throw err;
+        return send(true);
       });
       toast(r.route === 'factory'
         ? `run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
@@ -797,7 +805,7 @@ function commitmentCard(c) {
 
   const sub = joinParts([
     `#${c.id}`, (c.also || []).length ? `also #${c.also.join(', #')}` : null,
-    c.direction === 'owed_to_me' ? `waiting on ${c.who || 'them'}` : c.who_is_me ? null : c.who,
+    c.direction === 'owed_to_me' ? c.owedBy?.flag || `waiting on ${c.who || 'them'}` : c.who_is_me ? null : c.who,
     SOURCE[c.source] || c.source, c.project, due(c.due_at),
     c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at),
     // The server's links say what each one opens; this is the fallback.
@@ -814,8 +822,9 @@ function commitmentCard(c) {
     asks.some((p) => p.kind !== 'dispatch') ? el('span', { class: 'flag ask' }, 'question for you') : null,
     c.blocked ? blockedFlag(c) : null,
     c.waitingOn ? el('span', { class: 'flag blocked', title: c.block?.pending
-      ? 'Someone owes you this; whether it holds you up is checked within a few minutes'
-      : `You need this from ${c.who || 'them'}${c.block?.why ? `: ${c.block.why}` : ''}` }, `waiting on ${c.who || 'them'}`) : null,
+      ? 'Filed as owed to you; whether it holds you up is checked within a few minutes'
+      : `${c.owedBy && c.owedBy.kind !== 'person' ? 'You need to do this' : `You need this from ${c.who || 'them'}`}${c.block?.why ? `: ${c.block.why}` : ''}` },
+      c.owedBy?.flag || `waiting on ${c.who || 'them'}`) : null,
     (c.unblocked || []).length ? el('span', { class: 'flag unblocked', title: 'What blocked this was delivered' }, 'unblocked') : null,
   ];
   return el('div', { class: settledOnly ? 'item settled' : 'item', id: `card-${c.id}` },
@@ -839,10 +848,12 @@ function commitmentCard(c) {
     ctx);
 }
 
-// "blocked on Drew, Jacob": the people this task waits on. Clicking it opens
-// what exactly is owed and why.
+// "blocked on Drew, Jacob": the people this task waits on ("setup" or "you"
+// when it is on you: board.ts owedBy). Clicking it opens what exactly is
+// owed and why.
+const blockerName = (b) => (b.owedBy?.kind === 'system' ? 'setup' : b.owedBy?.kind === 'me' ? 'you' : b.who || 'someone unnamed');
 function blockedFlag(c) {
-  const names = [...new Set(c.blockers.map((b) => b.who || 'someone'))].join(', ');
+  const names = [...new Set(c.blockers.map(blockerName))].join(', ');
   const f = el('span', { class: 'flag blocked', title: 'Click to see what you are waiting for' }, `blocked on ${names}`);
   f.addEventListener('click', () => {
     const d = f.closest('.item')?.querySelector('details.blockers');
@@ -851,15 +862,20 @@ function blockedFlag(c) {
   return f;
 }
 
-// What a blocked task waits for: each thing someone owes you, why you need
-// it, where it was said, and one click when it arrives.
+// What a blocked task waits for: each thing someone owes you — or a setup
+// step that is on you — why you need it, where it was said, and one click
+// when it arrives.
 function blockersBlock(c) {
+  const label = (b) => b.owedBy?.label || `${b.who || 'Someone unnamed'} owes you`;
   const d = el('details', { class: 'blockers' },
     el('summary', {}, c.blockers.length === 1
-      ? `Waiting on ${c.blockers[0].who || 'them'}: ${c.blockers[0].summary}`
+      ? `${label(c.blockers[0])}: ${c.blockers[0].summary}`
       : `Waiting on ${c.blockers.length} things`),
     ...c.blockers.map((b) => {
-      const got = el('button', { class: 'primary', title: 'They delivered: close it, and this task is unblocked' }, 'They delivered');
+      const onYou = b.owedBy && b.owedBy.kind !== 'person';
+      const got = onYou
+        ? el('button', { class: 'primary', title: 'Done: close it, and this task is unblocked' }, 'Done')
+        : el('button', { class: 'primary', title: 'They delivered: close it, and this task is unblocked' }, 'They delivered');
       got.addEventListener('click', act(got, async () => {
         await post(`api/commitments/${b.id}/status`, { status: 'done' });
         toast(`#${c.id} unblocked`);
@@ -870,8 +886,8 @@ function blockersBlock(c) {
         toast(`#${b.id} no longer blocks #${c.id}`);
       }));
       return el('div', { class: 'blocker' },
-        el('div', {}, el('strong', {}, b.who || 'Someone'), ` owes you: ${b.summary}`),
-        b.block?.why ? el('div', { class: 'need' }, `Why you need it: ${b.block.why}`) : null,
+        el('div', {}, el('strong', {}, label(b)), `: ${b.summary}`),
+        b.block?.why ? el('div', { class: 'need' }, `${onYou ? 'What to do' : 'Why you need it'}: ${b.block.why}`) : null,
         el('div', { class: 'sub' }, ...joinParts([`#${b.id}`, SOURCE[b.source] || b.source, ago(b.occurred_at)])),
         linkChips(b),
         b.settled ? settledBlock(b) : null,

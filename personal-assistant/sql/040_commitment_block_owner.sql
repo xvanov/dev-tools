@@ -1,0 +1,12 @@
+-- Who actually owes a blocker (src/commitments/blocks.ts). Every owed_to_me
+-- commitment was read as "a person owes you", so the PA's own spoken "I'll set
+-- up the factory for the raven repo" became "Someone owes you" (card #6757).
+-- The blocks pass now says who it is on:
+--
+--   person   a human owes it (the old reading; also what null means)
+--   me       you must do it yourself
+--   system   setup of your own tools: a repo not registered with the
+--            factory, a tool not configured, access you grant yourself
+--
+-- Additive (expand): a nullable column; older code ignores it.
+alter table commitment_block add column if not exists owner text;

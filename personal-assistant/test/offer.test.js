@@ -230,6 +230,30 @@ const proposals = require('../src/proposals');
     const okRun = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'push_to_main' }, { 'x-pa': '1', 'x-pa-page': token });
     assert.deepStrictEqual([okRun.status, okRun.body.delivery], [200, 'push_to_main']);
     world.repoDefault = null;
+    // A repo the factory does not know: a setup step on you, answered with its
+    // fix (409 + fix), and sent once the page says register.
+    {
+      const keep = apps;
+      apps = [];
+      await factory.forgetApps();
+      extra['app add'] = (argv) => {
+        apps = [{ app: 'widget', repo: argv[argv.indexOf('--repo') + 1] }];
+        return { code: 0, stdout: JSON.stringify({ app: 'widget', repo: argv[argv.indexOf('--repo') + 1] }), stderr: '' };
+      };
+      calls.length = 0;
+      const unreg = await call('POST', '/api/commitments/31/dispatch', { via: 'factory' }, { 'x-pa': '1', 'x-pa-page': token });
+      assert.strictEqual(unreg.status, 409);
+      assert.match(unreg.body.error, /not registered with the factory/);
+      assert.deepStrictEqual(unreg.body.fix, { action: 'register', slug: 'acme/widget', command: 'pa factory add acme/widget' });
+      assert.ok(!calls.some((a) => a[3] === 'app' && a[4] === 'add'), 'nothing registered without asking');
+      store.nextRun = 91;
+      const sent = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', register: true }, { 'x-pa': '1', 'x-pa-page': token });
+      assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+      assert.ok(calls.some((a) => a[3] === 'app' && a[4] === 'add'), 'registered, then sent');
+      delete extra['app add'];
+      apps = keep;
+      await factory.forgetApps();
+    }
     // Accepting an unattended card needs the token too.
     const card = await proposals.create({ kind: 'dispatch', commitmentId: 31, title: 'card', payload: { frozen: true, via: 'claude', delivery: 'auto_merge', mode: 'mr' }, dedupeKey: 'tok-card' });
     const refused = await call('POST', `/api/proposals/${card.id}/accept`, {}, { 'x-pa': '1' });

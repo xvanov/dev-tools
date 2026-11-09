@@ -607,6 +607,12 @@ async function routeDecide() {
   // --via factory refuses plainly what it cannot do.
   await assert.rejects(route.forced({ target, mode: 'plan' }), /plan mode/);
   await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), /not registered.*--register.*pa factory add acme\/elsewhere/);
+  // A setup step on you, with its fix: the dashboard offers "register it and send?".
+  await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), (err) => {
+    assert.strictEqual(err.code, 'factory_unregistered');
+    assert.deepStrictEqual(err.fix, { action: 'register', slug: 'acme/elsewhere', command: 'pa factory add acme/elsewhere' });
+    return true;
+  });
   assert.strictEqual((await route.forced({ target: { ...target, commitment: { id: 42, kind: null } }, mode: 'mr' })).app, 'widget', 'the human may send any registered repo');
 }
 

@@ -362,7 +362,7 @@ function create(db: Db) {
       const rows = await db.rows(
         `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
             coalesce(si.raw->>'chatTopic', si.subject, '') as place, si.body_text as body,
-            b.verdict, b.task_id, b.manual, b.judged_at,
+            b.verdict, b.task_id, b.manual, b.judged_at, b.owner,
             (b.task_id is not null and not exists (select 1 from commitment t where t.id = b.task_id
                and t.status in ('open','dispatched') and t.superseded_by is null)) as task_gone
        from commitment c
@@ -390,14 +390,17 @@ function create(db: Db) {
       );
     },
 
-    /** Writes the model's verdict on a blocker; a row you set by hand (manual) is never changed. */
-    async upsertBlockJudged(blockerId: number | string, taskId: number | string, verdict: unknown, why: unknown, who: unknown) {
+    /**
+     * Writes the model's verdict on a blocker; a row you set by hand (manual) is never changed.
+     * `owner`: who it is really on — 'person', 'me' or 'system' (sql/040); null reads as person.
+     */
+    async upsertBlockJudged(blockerId: number | string, taskId: number | string, verdict: unknown, why: unknown, who: unknown, owner: unknown = null) {
       await db.query(
-        `insert into commitment_block (blocker_id, task_id, verdict, why, who, judged_at) values ($1, $2, $3, $4, $5, now())
+        `insert into commitment_block (blocker_id, task_id, verdict, why, who, owner, judged_at) values ($1, $2, $3, $4, $5, $6, now())
          on conflict (blocker_id) do update set task_id = excluded.task_id, verdict = excluded.verdict, why = excluded.why,
-           who = excluded.who, judged_at = now()
+           who = excluded.who, owner = excluded.owner, judged_at = now()
           where not commitment_block.manual`,
-        [blockerId, taskId, verdict, why, who]
+        [blockerId, taskId, verdict, why, who, owner]
       );
     },
 
@@ -420,7 +423,8 @@ function create(db: Db) {
     async blocksForBoard(days: number) {
       const rows = await db.rows(
         `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, b.manual,
-            c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
+            c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who,
+            case when p.id is not null then 'person' else b.owner end as owner
        from commitment_block b
        join commitment c on c.id = b.blocker_id
        left join person p on p.id = c.counterparty_person_id
@@ -1274,7 +1278,8 @@ function create(db: Db) {
     /** The blocks a commitment is part of (as task or blocker), with the other side. */
     async blocksOf(id: number | string) {
       const rows = await db.rows(
-        `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
+        `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, c.summary, c.status, coalesce(p.display_name, b.who, '') as who,
+                case when p.id is not null then 'person' else b.owner end as owner
          from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
         where (b.task_id = $1 or b.blocker_id = $1) and c.superseded_by is null`,
         [id]

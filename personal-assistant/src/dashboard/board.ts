@@ -56,6 +56,7 @@ type Card = Row & {
   group?: string;
   blocked?: boolean;
   waitingOn?: boolean;
+  owedBy?: { kind: string; label: string; flag: string };
 };
 /** A card before build() has placed it (blockers, unblocked, pos come later). */
 const asCard = (o: Row) => o as Card;
@@ -89,6 +90,22 @@ function synth(p: Row, from: string) {
     item_id: p.item_id,
     synthesized: true,
   };
+}
+
+/**
+ * Who a blocker is really on (commitment_block.owner, sql/040), in the
+ * words the card uses. Never "Someone owes you": a setup step or your own
+ * action is on you, and a person nobody named is said to be unnamed (card
+ * #6757 was the PA's own "I'll set up the factory" read as owed by someone).
+ *   label  the line on the task's blocker list: "<label>: <summary>"
+ *   flag   the short flag on the card
+ */
+function owedBy(owner: unknown, who: unknown) {
+  const name = String(who || '').trim();
+  if (owner === 'system') return { kind: 'system', label: 'Setup needed (on you)', flag: 'setup needed' };
+  if (owner === 'me') return { kind: 'me', label: 'On you', flag: 'on you' };
+  if (name) return { kind: 'person', label: `${name} owes you`, flag: `waiting on ${name}` };
+  return { kind: 'person', label: 'Owed to you (who is not known)', flag: 'waiting on someone unnamed' };
 }
 
 function dueRank(c: Row, now: Date | string | number) {
@@ -183,7 +200,10 @@ function build(s: State, { now = Date.now() }: { now?: Date | string | number } 
     const b: Row = blockOf.get(id) || { verdict: 'blocks', task_id: null, why: null, pending: true };
     c.block = b;
     // No counterparty on the commitment: the name the blocks pass read from the message.
+    // A counterparty on the commitment is a person whatever the pass said.
+    const counterparty = Boolean(c.who);
     if (!c.who && b.who) c.who = b.who;
+    c.owedBy = owedBy(counterparty ? 'person' : b.owner, c.who);
     const task = b.verdict === 'blocks' && b.task_id != null ? cards.get(String(b.task_id)) : null;
     if (task && task.direction !== 'owed_to_me' && !task.selfNote) {
       // Shown on the task it holds up, not as a card of its own.
@@ -228,4 +248,4 @@ function build(s: State, { now = Date.now() }: { now?: Date | string | number } 
   };
 }
 
-module.exports = { build, norm };
+module.exports = { build, norm, owedBy };

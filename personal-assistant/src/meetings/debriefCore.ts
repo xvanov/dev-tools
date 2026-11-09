@@ -20,7 +20,7 @@ const MIN_CONFIDENCE = 0.6;
 
 const SYSTEM = `You debrief one engineer after a recorded meeting. You get the transcript, the meeting's calendar details, who the engineer is, and the engineer's own open work: commitments (C-ids) and tasks — pull requests and tickets (T-ids).
 
-The transcript has two streams. "Me:" lines are the engineer's microphone. "Them:" lines are everyone else on the call mixed into one stream: speakers are not separated, and a "Them:" line is never the engineer. If the prompt notes that only the microphone stream was captured (speakerphone), "Me:" lines include everyone on the call — attribute a todo to the engineer only when the words and context make it clearly the engineer's own task. Speech recognition makes mistakes, especially with names.
+The transcript has two streams. "Me:" lines are the engineer's microphone. "Them:" lines are everyone else on the call mixed into one stream: speakers are not separated, and a "Them:" line is never the engineer. "Them:" is whatever the computer played, so it can be the engineer's own AI assistant reading its reply aloud (it talks about sessions, runs, the software factory, the dashboard, "I put the details on the dashboard", "option A, option B"). An assistant is not a person: nothing it says it will do is owed_to_me — if you return such an item at all, its "owner" is "assistant". When the assistant reports that something the engineer's own tools need is not set up (not configured, not registered, no access), that is a todo for the engineer only when the engineer asked for it or must do it themselves. If the prompt notes that only the microphone stream was captured (speakerphone), "Me:" lines include everyone on the call — attribute a todo to the engineer only when the words and context make it clearly the engineer's own task. Speech recognition makes mistakes, especially with names.
 
 Write:
 - title: a concise title for the meeting or call. Keep the calendar title when the transcript matches it; if the recording is an untitled call or an ad-hoc call that overlapped another calendar slot (check "Recent Teams messages around this call"), name the actual call (e.g. "Call with Tim Sublette — Docebo & Engineering KPIs").
@@ -42,7 +42,7 @@ Return ONLY JSON:
 {"title": "<short meeting or call title>",
  "summary": "<2-3 sentences: what happened in the meeting, what was discussed, and the main outcomes>",
  "todos": [{"summary": "<imperative, standalone, under 15 words>", "owner": "me", "counterparty": "<attendee email, or a name, or null>", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
- "owed_to_me": [{"summary": "<what they will do, standalone>", "owner": "<their attendee email, or name, or null>", "to": "me", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
+ "owed_to_me": [{"summary": "<what they will do, standalone>", "owner": "<their attendee email, or name, or \"assistant\", or null>", "to": "me", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
  "updates": [{"ref": "C12" | "T34", "kind": "done" | "due_changed" | "blocked" | "new_info", "due": "YYYY-MM-DD" | null, "note": "<the news, standalone, under 25 words>", "quote": "..."}],
  "decisions": [{"text": "<the decision, standalone>", "quote": "..."}]}
 
@@ -143,6 +143,13 @@ function isMe(v: any) {
   return /^(me|myself|i|the engineer)$/i.test(String(v ?? '').trim());
 }
 
+// The engineer's own AI assistant heard through the speakers ("Them:") is
+// software, not a person who can owe anything: the PA reading its own "I'll
+// set up the factory" aloud became "Someone owes you" (card #6757).
+function isAssistant(v: any) {
+  return /^(the |my |an? )?(ai|pa|personal assistant|(ai |voice |chat )?assistant|claude( code)?|agent|bot|computer)$/i.test(String(v ?? '').trim());
+}
+
 function normaliseRef(ref: any) {
   const m = /^\s*([CT])\s*-?\s*(\d+)\s*$/i.exec(String(ref ?? ''));
   return m ? `${m[1]!.toUpperCase()}${m[2]}` : null;
@@ -203,6 +210,10 @@ function parseDebrief(parsed: any, { transcript, refs = new Set(), meetingStart 
     if (!summary) continue;
     if (!isMe(o.to ?? 'me') || isMe(o.owner)) {
       drop('owed_to_me', 'not owed to me', summary);
+      continue;
+    }
+    if (isAssistant(o.owner)) {
+      drop('owed_to_me', 'the assistant, not a person', summary);
       continue;
     }
     const confidence = confidenceOf(o.confidence);

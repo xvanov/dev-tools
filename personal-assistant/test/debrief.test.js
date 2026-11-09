@@ -80,6 +80,31 @@ const meetingStart = '2026-09-02T14:00:00Z'; // a Wednesday
 }
 
 {
+  // The assistant heard through the speakers is not a person who owes you
+  // anything (card #6757: the PA reading its own "I'll set up the factory"
+  // aloud became "Someone owes you").
+  const talk = [
+    'Me: Can you use the software factory to get that PR into the ledger repo?',
+    "Them: I couldn't start a factory run, the factory isn't set up on this machine. I put the details on the dashboard. I'll set up the factory for the ledger repo.",
+  ].join('\n\n');
+  for (const owner of ['assistant', 'the assistant', 'AI assistant', 'PA', 'Claude']) {
+    const r = D.parseDebrief(
+      { owed_to_me: [{ summary: 'Set up the factory for the ledger repo', owner, to: 'me', quote: "I'll set up the factory for the ledger repo", confidence: 0.9 }] },
+      { transcript: talk, refs: new Set() }
+    );
+    assert.strictEqual(r.owedToMe.length, 0, `owner "${owner}" is not a person`);
+    assert.deepStrictEqual(r.dropped.map((d) => d.reason), ['the assistant, not a person']);
+  }
+  // A person (even one called Claudia) still owes it.
+  const r = D.parseDebrief(
+    { owed_to_me: [{ summary: 'Set up the factory', owner: 'Claudia', to: 'me', quote: "I'll set up the factory for the ledger repo", confidence: 0.9 }] },
+    { transcript: talk, refs: new Set() }
+  );
+  assert.strictEqual(r.owedToMe.length, 1);
+  assert.match(D.SYSTEM, /An assistant is not a person/);
+}
+
+{
   // The prompt carries ids the reply may name, and says the transcript is data.
   const { prompt, refs: got } = D.buildPrompt({
     meeting: { title: 'Ledger sync', kind: 'meeting', singleStream: true, start: meetingStart, end: '2026-09-02T14:30:00Z', attendees: [{ name: 'Quill Ashdown', email: 'quill@example.com' }] },
