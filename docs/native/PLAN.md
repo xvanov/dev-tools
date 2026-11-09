@@ -186,6 +186,17 @@ the card was created:
   the `local` cargo profile (release with thin LTO took 95 s). jarvisd's `bun build --compile` is
   a listed, skipped target until 4.1 gives it an entrypoint. Signing hook: `DEVTOOLS_SIGN_CMD` (7.4).
 - [ ] **Exit T:** all suites meet the targets table on Windows and Linux.
+  Factory suite, before: 325 s wall on the 16-core Linux host, 1 failure (`/pi` in the swebench
+  sandbox). `042f151` removes the waits that produced that: `gh auth token` plus the per-tick
+  ci-health `gh api` (~6 s/tick), the LiteLLM import on the missing-key path (~8–29 s), the
+  sandbox timeout tests' 30 s executor stall, and the oracle fixture's 15 s boot deadline
+  (a silent boot is retried 3×). D17: the toolchain test skips when `pi` is not on a path the
+  sandbox bind-mounts. Linux retime of `042f151` did not finish — the exec host name stopped
+  resolving (this laptop's Tailscale session was logged out) after the clone's first
+  `uv run pytest` died on a missing `sqlmodel` (`uv sync --all-extras` first). Windows, serial,
+  touched files only: deferral ticks 1.2–1.7 s (were 25–37 s), sandbox timeout tests ~1.2 s
+  (were ~30 s), missing-key tests 0.2–0.4 s. Oracle ablation tests on this laptop were still
+  34–84 s; the Linux 52 s case was the 15 s deadline, which this commit cuts to 3 s.
 
 ## Track Z: zero-downtime deploys (cross-cutting, starts in phase 0)
 
