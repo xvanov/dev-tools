@@ -618,7 +618,7 @@ function splitAll(pieces) {
   // ---- runTurn with the logprob router (decide, then speak) -----------------------------
   {
     const lp = (answer_here, hand_off, action) => async (a) => ({ p: { answer_here, hand_off, action }, lp: {}, ms: 9, model: a.model });
-    const popts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'logprob', answerThreshold: '0.85', keepAlive: '24h', localTimeoutMs: 1000, decisionTimeoutMs: 20000, effort: 'low', enabled: true };
+    const popts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'logprob', answerThreshold: '0.85', keepAlive: '24h', localTimeoutMs: 1000, decisionTimeoutMs: 20000, effort: 'low', enabled: true, primeAfterMs: 0 };
     const primed = [];
     // Confident answer: the router decides, then the answerer speaks.
     let calls = [];
@@ -644,6 +644,12 @@ function splitAll(pieces) {
     assert.strictEqual(answerPrimed[0].keepAlive, '24h');
     const next = F.userPrompt({ text: 'and tomorrow?', context: 'Now: Friday', history: [{ type: 'user', text: 'how many are overdue?' }, { type: 'assistant', text: 'You have two overdue.' }] });
     assert.ok(next.startsWith(answerPrimed[0].prompt.slice(0, -1)), "a prefix of the next turn's prompt up to its words");
+    // By default not at once: the primes would share the GPU with the first sentence's synthesis.
+    const early = [];
+    b = base({ route: lp(0.95, 0.04, 0.01), prime: async (a) => early.push(a), warmLocal: async (a) => (early.push(a), 1), stream: script(['Done.']) });
+    await turn('how many are overdue?', b.deps, { ...popts, primeAfterMs: undefined });
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(early.length, 0, 'not while the first sentence is synthesised');
 
     // Below the threshold: no words from the model; the user's words go to Jarvis verbatim.
     calls = [];

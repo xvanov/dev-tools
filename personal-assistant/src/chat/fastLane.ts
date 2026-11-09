@@ -57,6 +57,8 @@ const log = logger('fast-lane');
 const ROUTES = ['answer', 'handoff', 'both'];
 const MAX_SAY = 600;
 const MAX_TASK = 600;
+// From a turn's end to priming the next one; the next is seconds away.
+const PRIME_AFTER_TURN_MS = 1500;
 const MAX_REASON = 200;
 const ACK = 'One moment.';
 const ACTION_ACK = 'On it.';
@@ -1024,9 +1026,12 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model, router, ...(r.fellBack ? { fellBack: true } : {}) };
     emit(done);
     if (router === 'logprob' && !r.fellBack && !signal?.aborted) {
-      // The next turn's conversation is this one: put it in the prompt cache now.
+      // The next turn's conversation is this one: put it in the prompt cache,
+      // once the first sentence is synthesised (the primes share the GPU with
+      // Kokoro: its first byte came ~100 ms later under them).
       const next = [...(history as any[]), { type: 'user', text }, ...(r.route === 'answer' && r.say.trim() ? [{ type: 'assistant', text: r.say.trim() }] : [])];
-      primeTurn({ context, history: next, o, deps: d });
+      const later = setTimeout(() => primeTurn({ context, history: next, o, deps: d }), o.primeAfterMs ?? PRIME_AFTER_TURN_MS);
+      later.unref?.();
     }
     return { ...r, ms: done.ms };
   } finally {
