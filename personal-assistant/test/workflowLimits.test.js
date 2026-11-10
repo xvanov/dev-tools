@@ -11,15 +11,15 @@ const wl = require('../src/dashboard/workflowLimits.ts');
 const arch = require('../src/dashboard/architecture.ts').load();
 
 const defaults = wl.defaults(arch);
-assert.deepStrictEqual(Object.keys(defaults).sort(), ['deepseek-pr', 'research', 'review-fix', 'teams-ask', 'whats-on'], 'phone is out of scope: no ceiling');
-assert.strictEqual(defaults['deepseek-pr'], 2);
+assert.deepStrictEqual(Object.keys(defaults).sort(), ['build-continue-pr', 'build-pr', 'research', 'teams-ask', 'whats-on'], 'phone is out of scope: no ceiling');
+assert.strictEqual(defaults['build-pr'], 0.5);
 
 // effective = override ?? default (a 0 override is an override)
 {
-  const e = wl.effective(arch, [{ workflow: 'deepseek-pr', max_usd: '0' }, { workflow: 'gone', max_usd: 9 }]);
-  assert.deepStrictEqual(e['deepseek-pr'], { default: 2, override: 0, effective: 0, custom: true });
-  // D26: research's ceiling is $0.05 (planning steps are metered), not $0.
-  assert.deepStrictEqual(e.research, { default: 0.05, override: null, effective: 0.05, custom: false });
+  const e = wl.effective(arch, [{ workflow: 'build-pr', max_usd: '0' }, { workflow: 'gone', max_usd: 9 }]);
+  assert.deepStrictEqual(e['build-pr'], { default: 0.5, override: 0, effective: 0, custom: true });
+  // D26: research's ceiling is $1 (a Build run, D30; no metered steps), not $0.
+  assert.deepStrictEqual(e.research, { default: 1, override: null, effective: 1, custom: false });
   assert.ok(!('gone' in e) && !('phone' in e));
 }
 
@@ -60,30 +60,30 @@ function fakeRepo() {
   assert.strictEqual((await call('GET', {}, null, '/api/other')).handled, false, 'other paths are not ours');
   let r = await call('GET', {});
   assert.strictEqual(r.status, 200);
-  assert.strictEqual(r.body.limits['deepseek-pr'].custom, false);
+  assert.strictEqual(r.body.limits['build-pr'].custom, false);
 
   // guarded: no X-PA, no write
-  r = await call('POST', {}, { workflow: 'deepseek-pr', max_usd: 5 });
+  r = await call('POST', {}, { workflow: 'build-pr', max_usd: 5 });
   assert.strictEqual(r.status, 403);
-  r = await call('POST', { 'x-pa': '0' }, { workflow: 'deepseek-pr', max_usd: 5 });
+  r = await call('POST', { 'x-pa': '0' }, { workflow: 'build-pr', max_usd: 5 });
   assert.strictEqual(r.status, 403);
   assert.strictEqual(repo.rows.size, 0, 'a refused POST wrote nothing');
 
   // bad input
-  r = await call('POST', { 'x-pa': '1' }, { workflow: 'deepseek-pr', max_usd: -3 });
+  r = await call('POST', { 'x-pa': '1' }, { workflow: 'build-pr', max_usd: -3 });
   assert.strictEqual(r.status, 400);
   assert.strictEqual(repo.rows.size, 0);
   assert.strictEqual((await call('PUT', {}, {})).status, 405);
 
   // override, read back, reset
-  r = await call('POST', { 'x-pa': '1' }, { workflow: 'deepseek-pr', max_usd: 5 });
+  r = await call('POST', { 'x-pa': '1' }, { workflow: 'build-pr', max_usd: 5 });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(r.body.limits['deepseek-pr'], { default: 2, override: 5, effective: 5, custom: true });
+  assert.deepStrictEqual(r.body.limits['build-pr'], { default: 0.5, override: 5, effective: 5, custom: true });
   r = await call('GET', {});
-  assert.strictEqual(r.body.limits['deepseek-pr'].effective, 5);
-  assert.strictEqual(r.body.limits.research.effective, 0.05, 'others keep their default');
-  r = await call('POST', { 'x-pa': '1' }, { workflow: 'deepseek-pr', max_usd: null });
-  assert.deepStrictEqual(r.body.limits['deepseek-pr'], { default: 2, override: null, effective: 2, custom: false });
+  assert.strictEqual(r.body.limits['build-pr'].effective, 5);
+  assert.strictEqual(r.body.limits.research.effective, 1, 'others keep their default');
+  r = await call('POST', { 'x-pa': '1' }, { workflow: 'build-pr', max_usd: null });
+  assert.deepStrictEqual(r.body.limits['build-pr'], { default: 0.5, override: null, effective: 0.5, custom: false });
   assert.strictEqual(repo.rows.size, 0);
 
   // the dashboard server routes it, and its guard holds before any store is touched

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "title": "System architecture",
-  "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), sends work to the Factory (3), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them.",
+  "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), starts work as Build agents (3: ONE Claude Code agent per task, D30), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them. The software-factory is frozen (D30): in the tree, reachable only with PA_BUILD=factory, not on the default path.",
   "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.json. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
   "statuses": {
     "live": "Running today",
@@ -25,7 +25,7 @@
       "id": "factory",
       "n": 3,
       "name": "Build (Factory)",
-      "summary": "One Claude Code agent per task (build-agent, D30) in a termhub session on the subscription. The software-factory below it (jobs on two runtimes, ticked by factory serve) is frozen: still in the tree, no longer the dispatch target."
+      "summary": "One Claude Code agent per task (build-agent, D30) in a termhub session on the claude.ai subscription: Do on a card or the chat's build_start opens it, `pa run` talks back, a 10 s heartbeat flags idle runs, the Build board (/factory) shows them. The software-factory below it (jobs on two runtimes, ticked by factory serve; metered DeepSeek/Azure personas) is frozen (D30): still in the tree, reachable only with PA_BUILD=factory."
     },
     {
       "id": "sessions",
@@ -37,7 +37,7 @@
       "id": "outside",
       "n": 5,
       "name": "Models and outside services",
-      "summary": "Where model calls and data go, and who pays: the Claude subscription, metered APIs (Azure, DeepSeek), the local GPU, GitHub and Microsoft 365."
+      "summary": "Where model calls and data go, and who pays: the Claude subscription (Build agents and the PA chat), the local GPU, Azure (the fast lane's fallback, embeddings and rerank), GitHub and Microsoft 365. DeepSeek is only the frozen factory's."
     }
   ],
   "stacks": [
@@ -50,7 +50,7 @@
         "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker task runs windows\\pa-launch.ps1, which starts jarvisd supervise on 127.0.0.1:7300 and one generation. The dashboard, Jarvis (/talk, the PA chat) and the worker passes ride in the generation. The task's run level is Limited",
         "the store: one encrypted SQLite file, %LOCALAPPDATA%\\personal-assistant\\pa.sqlite (PA_DB=sqlite, plan 3.5). Postgres is retired (D24): the old WSL database's last state is an encrypted .pabak under that data dir's retired\\",
         "termhub: the front is its own process, jarvisd front on Bun 1.4.4 (TERMHUB_FRONT=jarvisd) at 127.0.0.1:7000, published by Tailscale Serve; sessiond :7010; terminals in ptyd :7020 (the termhub-ptyd task). The in-process front (one jarvisd owning 7000 and 7300) is deferred (D25)",
-        "the work factory natively (plan 2.3): factory serve in the factory-serve logon task, state outside the repo since 2.5 (%LOCALAPPDATA%\\software-factory\\state); claude_session runs open in this termhub; the PA calls it locally (PA_FACTORY_MACHINE=local, POST 127.0.0.1:7330/api/cli)",
+        "Frozen (D30): the work factory (plan 2.3), not the default path: factory serve in the factory-serve logon task, state outside the repo (%LOCALAPPDATA%software-factorystate); the PA calls it only with PA_BUILD=factory (PA_FACTORY_MACHINE=local, POST 127.0.0.1:7330/api/cli). Build agents (D30) open claude sessions in this termhub",
         "installed and reinstalled by one command, install.ps1 at the repo root (plan 7.7, landing: the reinstall proof on this laptop is pending): prerequisites, npm/Bun/uv dependencies, the new-system .env defaults, the SQLite store and its vault keys on a fresh machine, each tool's own task installer, then start and verify"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
@@ -64,7 +64,7 @@
         "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker unit runs linux/pa-launch.sh, which execs jarvisd supervise on 127.0.0.1:7300; the dashboard is reached through termhub's /pa/ proxy",
         "the store: one encrypted SQLite file, ~/.local/share/personal-assistant/pa.sqlite (PA_DB=sqlite). The pa_personal database was dropped (D24) after an encrypted .pabak in that data dir's retired/; the system Postgres server stays for other software and is not this stack's store",
         "termhub: the front is its own process, jarvisd front on Bun 1.4.4, a child of server.js, on :7000, published by Tailscale Serve on https :7443; sessiond :7010; terminals in ptyd :7020 (termhub-ptyd.service). The in-process front is deferred (D25)",
-        "the personal factory at /home/k/dev-tools/software-factory, factory serve (factory-serve.service), state outside the repo since 2.5 (~/.local/share/software-factory/state), which also builds dev-tools itself",
+        "Frozen (D30): the personal factory at /home/k/dev-tools/software-factory, factory serve (factory-serve.service), reached only with PA_BUILD=factory; Build agents (D30) run in this machine's termhub",
         "pa-voice on 127.0.0.1:47830 (Kokoro on the CPU, systemd user unit pa-voice)"
       ],
       "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0). Factory and chat use this machine's own model logins (an E6 run on 2026-11-08); the fast lane, Ollama and the transcriber are not installed"
@@ -1027,16 +1027,16 @@
       "details": {
         "Routes": "none to pick (D30): every dispatch is one Claude Code agent (build-agent). PA_BUILD=factory keeps the frozen factory path (src/dispatch/factory.ts) reachable; PA_DISPATCH_VIA, --via and --machine stay gone.",
         "Card dispatch settings": "src/build/index.ts. GET /api/commitments/:id/build-settings answers {card, settings: {model, costCapUsd, wallCapMin}, overrides, options: {models: [haiku, sonnet, opus], defaults}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as build.card.<id>. Defaults: sonnet, PA_BUILD_COST_CAP_USD ($5), PA_BUILD_WALL_CAP_MIN (120). Job kind, runtime, end state, review and the factory caps are gone from this path (src/dispatch/settings.ts is the frozen factory's).",
-        "Plan mode": "a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
+        "Plan mode": "Frozen (D30): a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
         "Claude session (legacy)": "startSession: a Claude Code session in its own worktree via termhub POST /api/sessions. No production caller since D28; kept only while the land/drop/remote tests seed runs through it (docs/native/PLAN.md 8.6.3). If called it logs a warning and records an llm_spend row of unknown cost (purpose dispatch-session-unmetered)",
         "Unmetered starts": "the only agent session the PA still opens outside the factory is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
-        "Factory job": "factory serve first (POST 127.0.0.1:7330/api/cli, header X-Factory: 1) when PA_FACTORY_SERVE_URL answers; otherwise `uv run factory job submit --json ...` on PA_FACTORY_MACHINE through termhub's POST /api/exec, or child_process when the machine is empty, local or this host (PYTHONUTF8=1 on Windows). Idempotent on --source pa --external-id",
-        "Start path (8.2.2)": "the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow, and serve: the ms factory serve's /api/cli reply already carried, when the submit went through it)",
+        "Factory job": "Frozen (D30): factory serve first (POST 127.0.0.1:7330/api/cli, header X-Factory: 1) when PA_FACTORY_SERVE_URL answers; otherwise `uv run factory job submit --json ...` on PA_FACTORY_MACHINE through termhub's POST /api/exec, or child_process when the machine is empty, local or this host (PYTHONUTF8=1 on Windows). Idempotent on --source pa --external-id",
+        "Start path (8.2.2)": "Frozen (D30): the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow, and serve: the ms factory serve's /api/cli reply already carried, when the submit went through it)",
         "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback. A continuation (factory_continue) gets no delivery instructions: it commits onto the PR or branch and opens no PR, and the PR's review threads are left to the factory, which appends them at submit",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
-        "Factory defaults": "PA_FACTORY_RUNTIME claude_session, PA_DISPATCH_MODE full, PA_FACTORY_PIPELINE solo; set PA_FACTORY_RUNTIME=api to put every job not given a runtime on the API models (a plan job stays claude_session unless picked)",
-        "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
-        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass goes through factory serve when it is up (warm, well under a second) and falls back to `uv run factory` (about 5 s of Python start-up) when nothing is listening. The sub-second path for a transition is the factory's push (POST /api/factory/events)"
+        "Factory defaults": "Frozen (D30): PA_FACTORY_RUNTIME claude_session, PA_DISPATCH_MODE full, PA_FACTORY_PIPELINE solo; set PA_FACTORY_RUNTIME=api to put every job not given a runtime on the API models (a plan job stays claude_session unless picked)",
+        "Which factory": "Frozen (D30): PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
+        "Factory pacing": "Frozen (D30): the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass goes through factory serve when it is up (warm, well under a second) and falls back to `uv run factory` (about 5 s of Python start-up) when nothing is listening. The sub-second path for a transition is the factory's push (POST /api/factory/events)"
       },
       "env": [
         {
@@ -1113,7 +1113,7 @@
         "Cleanup": "unless --keep: PR closed with --delete-branch, job cancelled if live, card dropped through the ledger, step and follow sessions killed (golden path, `pa e2e research` and `pa e2e review-fix`, which never closes its PR); `pa e2e --sweep` finds leftovers by the e2e-<uuid> marker on the card and the stored run, run_step and run_pr links, and cleans only cards no run may still own (a live job the factory has not updated for 90 min, a finished job or a jobless card after 15 min), so parallel runs do not cancel each other; `--sweep --marker e2e-<uuid>` cleans that one run now",
         "Dry run": "`pa e2e --dry-run`: database, factory configured and on this machine (D13), factory app for the repo and that something ticks it (JOBS-API v1.6 `ticked`), dashboard /healthz, /api/state, /api/factory, termhub /api/sessions, the chat tools, gh write access; creates nothing",
         "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link",
-        "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (a TTS'd question replayed as the talk page does it: /api/talk/warm, the utterance's length, the 96 ms VAD wait, /api/talk/endpoint with /api/talk/transcribe, /api/talk/turn, /api/talk/tts at the first piece while the turn streams; end of speech to the first audio byte. Not measured headless: the VAD frame and the browser starting playback), research (a research card -> factory_start kind research -> report.md, no PR), deepseek-pr (the golden path on the API runtime, Azure azure/deepseek-v4-pro by default, delivery pr), review-fix (`--pr <n> [--repo owner/name]`, one of your own open PRs with unresolved review threads: factory_continue through the e2e approval, delivery pr, the job to its end, then one GraphQL read of the PR: new head, GitHub compare `ahead` (fast-forward, no force push), no newer PR in the repo, still open and unmerged, CI SUCCESS on the new head; the PR is left open), teams-ask (`--test-chat <id>`, a chat the store holds where only you wrote and only you are in it, your self chat by default; checked by the dry run too. It sends nothing: it prints a dated ask of yourself with a 46-character marker for you to type there, then follows that message: Teams' arrival stamp to raw.storedAt, the owed_by_me card's extracted_at, the card in GET /api/state after its board event, the new_ask notification's toasted_at; checks person, due and link; drops the card. `--timeout teams=600 ask=600`). `--on <machine>` runs any workflow there as the golden path does and brings its summary back (`--report`)",
+        "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (a TTS'd question replayed as the talk page does it: /api/talk/warm, the utterance's length, the 96 ms VAD wait, /api/talk/endpoint with /api/talk/transcribe, /api/talk/turn, /api/talk/tts at the first piece while the turn streams; end of speech to the first audio byte. Not measured headless: the VAD frame and the browser starting playback), research, build-pr and build-continue-pr (walked by hand on 2026-11-10 through POST /api/build/runs, D30; the pa e2e runners under these ids are still the frozen factory's driver and are not Build-aware yet), teams-ask (`--test-chat <id>`, a chat the store holds where only you wrote and only you are in it, your self chat by default; checked by the dry run too. It sends nothing: it prints a dated ask of yourself with a 46-character marker for you to type there, then follows that message: Teams' arrival stamp to raw.storedAt, the owed_by_me card's extracted_at, the card in GET /api/state after its board event, the new_ask notification's toasted_at; checks person, due and link; drops the card. `--timeout teams=600 ask=600`). `--on <machine>` runs any workflow there as the golden path does and brings its summary back (`--report`)",
         "Evidence": "<PA data dir>/e2e/<stamp>-<workflow>[-dry]/: summary.json (hops scored against the 8.1 acceptance block, cost against GET /api/workflow-limits' effective ceiling, links, checks, the rubric left for the 8.3 reviewer), transcripts/ (session scrollback, the fast-lane turn), report.md, screenshots/ of each view the acceptance block names except Ask, with the page's text beside each PNG, by a headless Chromium (PA_E2E_BROWSER, else Playwright's installed Chromium, Edge or Chrome; skipped with a note when none) driven over the DevTools protocol: shot once the page's own loaded signal holds (Plan/Build #updated past loading, Run termhub's open session) and the network is quiet, or after 20 s marked ready: false. Ask is a tool check in summary.json views.ask (method tool, the tool, an excerpt of its answer): chat for whats-on, factory_job for research and deepseek-pr, factory_continue for review-fix; headless /talk stays on Tap once to enable Jarvis, so it is not shot. teams-ask lists no ask view; the plain --screenshot (at load) is the fallback. Every shot ends by 60 s (each DevTools call has a deadline; at the shot's the browser is killed and the fallback skipped); a view not shot is a failed `evidence` check, never a skipped summary, and a run held on a promise nothing settles still writes summary.json and its --report at exit, non-zero"
       },
       "env": [
@@ -1299,8 +1299,8 @@
       "name": "Build agent (one Claude Code agent per task)",
       "role": "Do opens ONE interactive Claude Code session in termhub on the claude.ai subscription: the composed brief plus one editable agent prompt (src/build/agent-prompt.md), in a fresh git worktree on a new branch when the card names a repo. The agent decides the task's kind (draft PR, markdown report, other), uses subagents for long work, never merges or pushes the default branch, and finishes with `pa run done`.",
       "stacks": {
-        "work": "landing",
-        "personal": "landing"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
         "work": "In-process in the PA worker and dashboard; the session is in this machine's termhub",
@@ -1347,10 +1347,10 @@
       "id": "factory-api",
       "layer": "factory",
       "name": "JOBS-API (factory CLI)",
-      "role": "The one contract between the PA and the factory: `uv run factory job|app ... --json`, one JSON object out.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. The one contract between the PA and the factory: `uv run factory job|app ... --json`, one JSON object out.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
         "work": "The work factory, natively on Windows: software-factory in the dev-tools checkout. The PA calls it locally (PA_FACTORY_MACHINE=local) through factory serve on 127.0.0.1:7330",
@@ -1397,10 +1397,10 @@
       "id": "factory-chain",
       "layer": "factory",
       "name": "Pipelines, gates and delivery",
-      "role": "Turns a job into reviewed, tested work: chain (PM, SM, dev, reviewer, gates) or solo (one dev agent, one review on the API runtime, gates), then delivers at the job's level.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Turns a job into reviewed, tested work: chain (PM, SM, dev, reviewer, gates) or solo (one dev agent, one review on the API runtime, gates), then delivers at the job's level.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
         "work": "Native Windows factory; the factory-serve logon task (`factory serve`) drives it",
@@ -1446,10 +1446,10 @@
       "id": "runtime-api",
       "layer": "factory",
       "name": "Runtime: api (metered)",
-      "role": "OpenHands agents in-process, models through LiteLLM. Billed per token to API keys; counted in cost_usd and the spend caps.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. OpenHands agents in-process, models through LiteLLM. Billed per token to API keys; counted in cost_usd and the spend caps.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
         "work": "Native Windows factory",
@@ -1490,10 +1490,10 @@
       "id": "runtime-claude",
       "layer": "factory",
       "name": "Runtime: claude_session (subscription)",
-      "role": "Claude Code does the agent work: `claude -p --output-format stream-json` inside a termhub session a human can open live.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Claude Code does the agent work: `claude -p --output-format stream-json` inside a termhub session a human can open live.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
         "work": "Native Windows factory, sessions in the Windows termhub (sessiond :7010); a round is `python -I -X utf8 -m factory.claude_session.round <spec>` typed into its PowerShell (no bash)",
@@ -1545,7 +1545,7 @@
       "id": "agent-sandbox",
       "layer": "factory",
       "name": "Agent sandbox, egress proxy and credential broker",
-      "role": "Optional OS sandbox and credential broker (plan 5.2/5.3). Off on both stacks: D22 dropped the rollout, so agents keep full access to the machine they run on. The code stays behind FACTORY_SANDBOX and PA_SANDBOX (default off): an agent can run with no GitHub token, SSH key or gh login, egress through an allowlist proxy, and pushes and draft PRs through a broker that checks the run's ceiling.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Optional OS sandbox and credential broker (plan 5.2/5.3). Off on both stacks: D22 dropped the rollout, so agents keep full access to the machine they run on. The code stays behind FACTORY_SANDBOX and PA_SANDBOX (default off): an agent can run with no GitHub token, SSH key or gh login, egress through an allowlist proxy, and pushes and draft PRs through a broker that checks the run's ceiling.",
       "stacks": {
         "work": "landing",
         "personal": "landing"
@@ -1613,10 +1613,10 @@
       "id": "factory-store",
       "layer": "factory",
       "name": "Factory state",
-      "role": "The factory's own store on its machine: sqlite plus a directory per job.",
+      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. The factory's own store on its machine: sqlite plus a directory per job.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "where": {
         "work": "%LOCALAPPDATA%\\software-factory\\state since factory state migrate on 2026-11-08 (plan 2.5). software-factory/state in the checkout holds only .gitignore; .state-dir points here",
@@ -1851,7 +1851,7 @@
       "id": "azure",
       "layer": "outside",
       "name": "Azure OpenAI / Foundry",
-      "role": "Metered models: the PA's azure/pa deployment, embeddings and rerank; the factory's azure_routes.",
+      "role": "Metered models: the PA's azure/pa deployment (the fast lane's fallback and the block-dedupe default), embeddings and rerank. The frozen factory's azure_routes (D30) are the only Build use left, and Build does not use them.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1889,10 +1889,10 @@
       "id": "deepseek",
       "layer": "outside",
       "name": "DeepSeek API",
-      "role": "Metered models for factory personas (direct routes) and any PA pass set to deepseek/...",
+      "role": "Frozen (D30): metered models for the software-factory personas (direct routes) and any PA pass set to deepseek/...; Build (D30) never calls it.",
       "stacks": {
-        "work": "live",
-        "personal": "live"
+        "work": "landing",
+        "personal": "landing"
       },
       "details": {
         "Factory": "the direct-provider block only, not what jobs use (default_provider is azure): dev deepseek/deepseek-coder, pm / analyst / tech_writer deepseek/deepseek-chat. On the azure default, planning personas are DeepSeek-V4-Flash (D21) and tech_writer is Kimi-K2.7-Code",
@@ -1981,12 +1981,12 @@
     {
       "from": "runtime-claude",
       "to": "agent-sandbox",
-      "label": "claude inside the sandbox (FACTORY_SANDBOX=on)"
+      "label": "frozen (D30, PA_BUILD=factory only): claude inside the sandbox (FACTORY_SANDBOX=on)"
     },
     {
       "from": "runtime-api",
       "to": "agent-sandbox",
-      "label": "terminal inside the sandbox (Linux, FACTORY_SANDBOX=on)"
+      "label": "frozen (D30, PA_BUILD=factory only): terminal inside the sandbox (Linux, FACTORY_SANDBOX=on)"
     },
     {
       "from": "you",
@@ -2151,12 +2151,12 @@
     {
       "from": "dispatcher",
       "to": "factory-api",
-      "label": "JOBS-API JSON"
+      "label": "frozen (D30, PA_BUILD=factory only): JOBS-API JSON"
     },
     {
       "from": "worker",
       "to": "factory-api",
-      "label": "job list to factory_board (every 5 s while a job moves, at once on a local factory's state write, else every 120 s); job status to run_pr / run_step (id chain)"
+      "label": "frozen (D30, PA_BUILD=factory only): job list to factory_board (every 5 s while a job moves, at once on a local factory's state write, else every 120 s); job status to run_pr / run_step (id chain)"
     },
     {
       "from": "sqlite-store",
@@ -2166,52 +2166,52 @@
     {
       "from": "factory-api",
       "to": "dashboard",
-      "label": "POST /api/factory/events (job status push, < 1 s after a transition)"
+      "label": "frozen (D30, PA_BUILD=factory only): POST /api/factory/events (job status push, < 1 s after a transition)"
     },
     {
       "from": "factory-api",
       "to": "factory-chain",
-      "label": "direction / task"
+      "label": "frozen (D30, PA_BUILD=factory only): direction / task"
     },
     {
       "from": "factory-chain",
       "to": "runtime-api",
-      "label": "persona step"
+      "label": "frozen (D30, PA_BUILD=factory only): persona step"
     },
     {
       "from": "factory-chain",
       "to": "runtime-claude",
-      "label": "dev step / report"
+      "label": "frozen (D30, PA_BUILD=factory only): dev step / report"
     },
     {
       "from": "factory-chain",
       "to": "factory-store",
-      "label": "stories, runs, events"
+      "label": "frozen (D30, PA_BUILD=factory only): stories, runs, events"
     },
     {
       "from": "factory-chain",
       "to": "github",
-      "label": "push, PR, CI watch"
+      "label": "frozen (D30, PA_BUILD=factory only): push, PR, CI watch"
     },
     {
       "from": "runtime-api",
       "to": "deepseek",
-      "label": "LiteLLM (metered)"
+      "label": "frozen (D30, PA_BUILD=factory only): LiteLLM (metered)"
     },
     {
       "from": "runtime-api",
       "to": "azure",
-      "label": "LiteLLM (metered)"
+      "label": "frozen (D30, PA_BUILD=factory only): LiteLLM (metered)"
     },
     {
       "from": "runtime-claude",
       "to": "sessiond",
-      "label": "create session {links: job, step, story} (FACTORY_TERMHUB_URL, default sessiond :7010)"
+      "label": "frozen (D30, PA_BUILD=factory only): create session {links: job, step, story} (FACTORY_TERMHUB_URL, default sessiond :7010)"
     },
     {
       "from": "runtime-claude",
       "to": "claude-sub",
-      "label": "claude -p stream-json"
+      "label": "frozen (D30, PA_BUILD=factory only): claude -p stream-json"
     },
     {
       "from": "termhub",
@@ -2226,7 +2226,7 @@
     {
       "from": "factory-chain",
       "to": "meter",
-      "label": "POST /api/telemetry: spans, claude_session usage"
+      "label": "frozen (D30, PA_BUILD=factory only): POST /api/telemetry: spans, claude_session usage"
     },
     {
       "from": "meter",
@@ -2334,9 +2334,9 @@
       }
     },
     {
-      "id": "deepseek-pr",
-      "title": "Start a PR on the metered API",
-      "say": "Start the PR for card 412 with DeepSeek.",
+      "id": "build-pr",
+      "title": "Start a PR with one Claude Code agent",
+      "say": "Do card 412 in dev-tools and open a draft PR.",
       "steps": [
         {
           "c": "talk-page",
@@ -2348,209 +2348,190 @@
         },
         {
           "c": "jarvis",
-          "t": "Your words are typed into the PA chat through termhub. Claude Code calls card 412 (allowed) and then factory_start {card: 412, runtime: api, model: azure/deepseek-v4-pro, delivery: pr}."
+          "t": "Your words are typed into the PA chat through termhub. Claude Code reads card 412 (allowed) and calls build_start {card: 412, repo, model}."
         },
         {
           "c": "mcp",
-          "t": "factory_start is on no allow list: Claude Code shows a permission prompt. Jarvis asks \"Start a factory job for card 412 on the API with azure/deepseek-v4-pro, opening a PR for review. Shall I?\" and you say yes (or press Approve on the dashboard)."
+          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent on card 412 in dev-tools (haiku). Shall I?\") and you say yes (or press Approve on the dashboard)."
         },
         {
           "c": "dispatcher",
-          "t": "dispatch.start composes the brief from the card (PA_COMPOSE_MODEL), writes a flow file, and runs `uv run factory job submit --json --runtime api --model dev=azure/deepseek-v4-pro --delivery pr` on the factory machine."
+          "t": "Build start (src/build/index.ts): a fresh git worktree on a new branch jarvis/<run>-<slug>, the composed brief plus the one agent prompt (src/build/agent-prompt.md), a build_run row. Nothing metered, no factory (D30)."
         },
         {
-          "c": "factory-api",
-          "t": "On the work stack the factory is on the same machine: the command goes to factory serve (POST 127.0.0.1:7330/api/cli). The PA spawns uv run factory only when nothing is listening."
+          "c": "build-agent",
+          "t": "Opens ONE interactive claude --session-id session in termhub inside the worktree and types the brief into it. The agent edits, commits, pushes the branch and opens the draft PR itself with gh."
         },
         {
-          "c": "factory-api",
-          "t": "The factory answers one JSON object with the job id; the PA records the run."
-        },
-        {
-          "c": "factory-chain",
-          "t": "Solo pipeline: one dev agent, one independent review (azure/Kimi-K2.7-Code, one fix round only on a high or blocking finding, or on test slop or a score under 0.7; medium and low do not spend a round), the tech_writer commits its context update on the story branch, then gates, a PR, and the CI watch (up to 3 CI-fix cycles; a held worktree gets a sibling checkout)."
-        },
-        {
-          "c": "runtime-api",
-          "t": "OpenHands runs the dev step; LiteLLM calls the DeepSeek-V4-Pro deployment on Azure."
-        },
-        {
-          "c": "deepseek",
-          "t": "Metered: the spend shows in the job's cost_usd."
+          "c": "claude-sub",
+          "t": "Runs on the claude.ai subscription: cost_usd is the notional API price of the transcript (read by src/build/track.ts), not a bill."
         },
         {
           "c": "github",
-          "t": "Branch pushed, ready PR opened, checks watched; delivered_pr, never merged."
+          "t": "Branch pushed, draft PR opened, CI runs on it; the agent never merges."
+        },
+        {
+          "c": "build-agent",
+          "t": "`pa run done \"<PR url>\"` ends the run: state done, result = the PR URL, a durable summary at <data>/build-runs/run-<id>/summary.json. A session that vanishes without it is failed at once."
         },
         {
           "c": "worker",
-          "t": "The factory pass (every 5 s while the job moves) stores `job list` in factory_board; its trigger puts the change on the live feed, so the Factory page redraws at once; it and the chat's factory_job show state, PR and cost; a notification tells you."
+          "t": "The build-heartbeat pass (every 10 s) flags a silent run idle after its idle_after_s; the Build board (/factory) and the Plan card chip show the run and its state."
         }
       ],
       "acceptance": {
-        "outcome": "A ready PR is opened on the repo through the metered DeepSeek API runtime, never merged.",
+        "outcome": "A draft PR is open on the repo from one Claude Code agent, never merged, and the run reports done with its URL.",
         "hops": [
           {
-            "c": "jarvis",
-            "what": "tool call (card, factory_start) excluding model time",
-            "max_ms": 1000
-          },
-          {
             "c": "dispatcher",
-            "what": "approval to \"started\"",
-            "max_ms": 1000
+            "what": "build_start to the session running (worktree and the Claude Code boot)",
+            "max_ms": 30000
           },
           {
-            "c": "factory-chain",
-            "what": "dev step, gates and PR",
-            "unbounded": "bound by the model and the repo gates; no latency target"
+            "c": "build-agent",
+            "what": "the agent edits, commits, pushes and opens the PR",
+            "unbounded": "bound by the model and the repo; no latency target"
           },
           {
             "c": "github",
-            "what": "CI watch to green",
-            "unbounded": "bound by CI; at most 3 CI-fix cycles"
+            "what": "CI on the PR head to green",
+            "unbounded": "bound by CI"
           },
           {
-            "c": "worker",
-            "what": "state change to the board redraw",
-            "max_ms": 200
+            "c": "dashboard",
+            "what": "GET /api/build answers (the Build board redraw)",
+            "max_ms": 500
           }
         ],
         "cost": {
-          "max_usd": 2,
-          "basis": "job cost_usd: dev on azure/deepseek-v4-pro, the other steps on the azure routes (pm and sm DeepSeek-V4-Flash, reviewer and tech_writer Kimi-K2.7-Code); the PA's compose call is outside it"
+          "max_usd": 0.5,
+          "basis": "build_run cost_usd: notional subscription dollars for one haiku run on a tiny docs change (a sonnet run on real work costs more; the run's own cap PA_BUILD_COST_CAP_USD is $5); the PA's compose call is outside it"
         },
         "views": [
-          "plan",
-          "build",
-          "run",
-          "ask"
+          "build"
         ],
         "approvals": [
-          "factory_start"
+          "build_start"
         ],
         "rubric": [
           {
             "id": "pr",
-            "check": "The PR is open and ready for review."
+            "check": "The PR is open as a draft, from the agent, with the change asked for."
           },
           {
             "id": "ci",
             "check": "CI is green on the PR head."
           },
           {
-            "id": "review",
-            "check": "An independent code review finds no blocker."
+            "id": "scope",
+            "check": "The diff stays inside what the task asked for."
           },
           {
-            "id": "scope",
-            "check": "The diff stays inside what the card asked for."
+            "id": "done",
+            "check": "The run ended done with the PR URL as its result, and nothing was merged."
           }
         ],
         "verdict": {
           "result": "fail",
-          "date": "2026-11-09",
-          "report": "docs/native/acceptance/deepseek-pr.md"
+          "date": "2026-11-10",
+          "report": "docs/native/acceptance/build-pr.md"
         }
       }
     },
     {
-      "id": "review-fix",
-      "title": "Continue a PR on the subscription",
-      "say": "Fix the review comments on PR 12.",
+      "id": "build-continue-pr",
+      "title": "Continue a PR with one Claude Code agent",
+      "say": "Address the review comment on PR 89.",
       "steps": [
         {
+          "c": "talk-page",
+          "t": "Wake word, VAD, transcription as above."
+        },
+        {
           "c": "fast-lane",
-          "t": "Hand-off to the PA chat."
+          "t": "An action: the fast lane never answers it. It says 'On it.' and hands off your verbatim words."
         },
         {
           "c": "jarvis",
-          "t": "Calls factory_continue {pr: 12, repo}: runtime defaults to claude_session because you did not ask for the API. You approve the prompt."
+          "t": "Calls build_start {task: \"continue PR 89: address its review comment\", repo, model}. There is no continue verb: the task names the PR."
+        },
+        {
+          "c": "mcp",
+          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent to address the review comment on PR 89 (haiku). Shall I?\") and you say yes (or press Approve on the dashboard)."
         },
         {
           "c": "dispatcher",
-          "t": "The brief says \"commit onto PR #12's branch, open no new pull request\" and leaves the review comments to the factory. `job submit --pr 12 --runtime claude_session` reads the PR and its unresolved review threads in one GraphQL call, with `claude auth status` alongside, and appends the threads to the brief. job submit --pr is in the contract; a factory that does not know --pr refuses in its parser and the job fails saying so, never resent as fresh work."
+          "t": "Same Build start as build-pr: a fresh worktree and brief, the run row, the one agent prompt."
         },
         {
-          "c": "runtime-claude",
-          "t": "The factory checks `claude auth status` is a claude.ai login, then starts `claude -p --output-format stream-json` in a termhub session with API-key variables removed."
-        },
-        {
-          "c": "termhub",
-          "t": "The session lives in the factory machine's termhub (on the work stack, the Windows termhub); its URL is in runs[].session, so you can open it live from the Factory page, where the job's card says \"continues PR #12\" (the job's `base`)."
-        },
-        {
-          "c": "claude-sub",
-          "t": "Billed to the subscription: cost_usd 0, the API-price equivalent goes to subscription_equiv_usd."
+          "c": "build-agent",
+          "t": "The agent reads the PR comments (gh pr view --comments), checks out the PR branch, commits the fix onto it and pushes fast-forward. It opens no second PR."
         },
         {
           "c": "github",
-          "t": "The fix is pushed fast-forward to the same PR; the CI watch restarts on the new head."
+          "t": "The PR head moves forward in place, a one-line reply is left on the PR, and CI restarts on the new head."
+        },
+        {
+          "c": "build-agent",
+          "t": "`pa run done \"<PR url>\"`. Needing an answer it would `pa run ask` and wait (state waiting, a notice; build_reply or the board answers)."
         }
       ],
       "acceptance": {
-        "outcome": "The existing PR is updated in place (fast-forward push) so its review comments are resolved, on the subscription.",
+        "outcome": "The existing PR is updated in place (fast-forward push) so its review comment is addressed, by one Claude Code agent, with no new PR and no merge.",
         "hops": [
           {
-            "c": "jarvis",
-            "what": "tool call (factory_continue) excluding model time",
-            "max_ms": 1000
-          },
-          {
             "c": "dispatcher",
-            "what": "approval to \"started\"",
-            "max_ms": 1000
+            "what": "build_start to the session running",
+            "max_ms": 30000
           },
           {
-            "c": "runtime-claude",
-            "what": "session fixes the comments",
+            "c": "build-agent",
+            "what": "the agent fixes the comment, pushes and replies",
             "unbounded": "bound by the model; no latency target"
           },
           {
             "c": "github",
-            "what": "CI watch on the new head to green",
-            "unbounded": "bound by CI; at most 3 CI-fix cycles"
+            "what": "CI on the new head to green",
+            "unbounded": "bound by CI"
           },
           {
-            "c": "worker",
-            "what": "state change to the board redraw",
-            "max_ms": 200
+            "c": "dashboard",
+            "what": "GET /api/build answers (the Build board redraw)",
+            "max_ms": 500
           }
         ],
         "cost": {
-          "max_usd": 0.05,
-          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning steps (pm, sm) run metered on DeepSeek-V4-Flash and its docs step (tech_writer) on Kimi-K2.7-Code, about $0.01-0.03 a job (D26)"
+          "max_usd": 0.5,
+          "basis": "build_run cost_usd: notional subscription dollars for one haiku run on a one-line fix; nothing is metered"
         },
         "views": [
-          "build",
-          "run",
-          "ask"
+          "build"
         ],
         "approvals": [
-          "factory_continue"
+          "build_start"
         ],
         "rubric": [
           {
             "id": "updated",
-            "check": "The same PR is updated; no new PR is opened and nothing is merged."
+            "check": "The same PR is updated by a fast-forward push; no new PR is opened and nothing is merged."
           },
           {
             "id": "ci",
             "check": "CI is green on the new head."
           },
           {
-            "id": "review",
-            "check": "A code review finds no blocker and each comment is addressed or answered."
+            "id": "addressed",
+            "check": "The review comment is addressed or answered on the PR."
           },
           {
             "id": "scope",
-            "check": "The diff stays inside the review comments."
+            "check": "The diff stays inside the review comment."
           }
         ],
         "verdict": {
           "result": "fail",
-          "date": "2026-11-09",
-          "report": "docs/native/acceptance/review-fix.md"
+          "date": "2026-11-10",
+          "report": "docs/native/acceptance/build-continue-pr.md"
         }
       }
     },
@@ -2640,72 +2621,69 @@
     {
       "id": "research",
       "title": "A research report",
-      "say": "Research how our deploy pipeline handles rollbacks and write it up.",
+      "say": "Research how SQLite WAL handles concurrent readers and write it up.",
       "steps": [
         {
+          "c": "talk-page",
+          "t": "Wake word, VAD, transcription as above."
+        },
+        {
+          "c": "fast-lane",
+          "t": "An action: the fast lane never answers it. It says 'On it.' and hands off your verbatim words."
+        },
+        {
           "c": "jarvis",
-          "t": "You asked for research explicitly, so the chat calls factory_start {kind: research, ask: your words}; you approve the prompt."
+          "t": "You asked for research explicitly, so the chat calls build_start {task, model: sonnet} with no repo and no card."
+        },
+        {
+          "c": "mcp",
+          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent for the research (sonnet). Shall I?\") and you say yes (or press Approve on the dashboard)."
         },
         {
           "c": "dispatcher",
-          "t": "A research job delivers none; its ask is your own words (no composing model)."
+          "t": "A run with no repo: a scratch working directory, no branch, no PR. The task is your own words plus the one agent prompt."
         },
         {
-          "c": "factory-api",
-          "t": "job submit --kind research returns an id like app:r0007."
+          "c": "build-agent",
+          "t": "One Claude Code session researches on the web (it may use a subagent, which src/build/track.ts counts) and writes report.md in its directory; `pa run done` names the file."
         },
         {
-          "c": "factory-chain",
-          "t": "factory serve starts a detached worker (a wake within 1 s of submit; at most 2 at a time)."
+          "c": "claude-sub",
+          "t": "Subscription; cost_usd is notional. The report is copied to <data>/build-reports/run-<id>/report.md."
         },
         {
-          "c": "runtime-claude",
-          "t": "One Claude Code conversation (claude_session by default from the chat) writes report.md; 5400 s cap."
-        },
-        {
-          "c": "factory-store",
-          "t": "state/jobs/r0007-<slug>/report.md is kept by the factory."
-        },
-        {
-          "c": "worker",
-          "t": "The poll sees it done; factory_job returns the report excerpt and the Factory page renders the report as a parsed tree (no HTML sink)."
+          "c": "dashboard",
+          "t": "The Build board shows the run done with the report path; build_run returns it to the chat."
         }
       ],
       "acceptance": {
-        "outcome": "A report.md answers the question you asked, with its sources cited, delivered by a research job that opens no PR.",
+        "outcome": "A report.md answers the question you asked, with its sources cited, written by one Claude Code agent that opens no PR.",
         "hops": [
           {
-            "c": "jarvis",
-            "what": "tool call (factory_start) excluding model time",
-            "max_ms": 1000
-          },
-          {
             "c": "dispatcher",
-            "what": "approval to \"started\"",
-            "max_ms": 1000
+            "what": "build_start to the session running (no repo, no worktree)",
+            "max_ms": 30000
           },
           {
-            "c": "runtime-claude",
+            "c": "build-agent",
             "what": "the research conversation writes report.md",
-            "unbounded": "bound by the model; 5400 s cap"
+            "unbounded": "bound by the model; the run wall cap (PA_BUILD_WALL_CAP_MIN) applies"
           },
           {
-            "c": "worker",
-            "what": "state change to the board redraw",
-            "max_ms": 200
+            "c": "dashboard",
+            "what": "GET /api/build answers (the Build board redraw)",
+            "max_ms": 500
           }
         ],
         "cost": {
-          "max_usd": 0.05,
-          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning steps (pm, sm) run metered on DeepSeek-V4-Flash and its docs step (tech_writer) on Kimi-K2.7-Code, about $0.01-0.03 a job (D26)"
+          "max_usd": 1,
+          "basis": "build_run cost_usd: notional subscription dollars for one sonnet run, subagent included; nothing is metered"
         },
         "views": [
-          "plan",
-          "run",
-          "ask"
+          "build"
         ],
         "approvals": [
-          "factory_start"
+          "build_start"
         ],
         "rubric": [
           {
@@ -2722,8 +2700,8 @@
           }
         ],
         "verdict": {
-          "result": "fail",
-          "date": "2026-11-09",
+          "result": "pass",
+          "date": "2026-11-10",
           "report": "docs/native/acceptance/research.md"
         }
       }

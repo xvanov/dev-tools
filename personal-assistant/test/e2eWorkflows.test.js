@@ -10,7 +10,10 @@ const os = require('os');
 const path = require('path');
 const W = require('../src/e2e/workflowsCore.ts');
 const R = require('../src/e2e/workflows.ts');
-const ARCH = require('../src/dashboard/architecture.json');
+// D30: the live Map's examples are Build's; the pa e2e runners here still drive the frozen
+// factory, so these tests run against the factory-era acceptance blocks kept as a fixture.
+const LIVE = require('../src/dashboard/architecture.json');
+const ARCH = { ...LIVE, examples: [...LIVE.examples.filter((e) => ['whats-on', 'teams-ask', 'phone'].includes(e.id)), ...require('./fixtures/factoryExamples.json')] };
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -123,7 +126,7 @@ function fakeDeps(over = {}) {
     now: () => clock,
     sleep: async (ms) => { clock += ms; },
     log: () => {},
-    uuid: () => '12345678-1234-1234-1234-123456789abc',
+    uuid: () => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     paBase: 'http://pa',
     arch: () => ARCH,
     root: () => dir,
@@ -345,7 +348,7 @@ test('research: screenshots are taken before cleanup; --keep leaves the sessions
   assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
   assert.deepStrictEqual(log.killed, []);
   assert.deepStrictEqual(log.closed, []);
-  assert.ok(s.cleanup.some((c) => /--sweep --marker e2e-12345678-1234-1234-1234-123456789abc/.test(c)), s.cleanup.join('\n'));
+  assert.ok(s.cleanup.some((c) => /--sweep --marker e2e-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/.test(c)), s.cleanup.join('\n'));
 });
 
 test('dry runs create nothing and cover every workflow', async () => {
@@ -388,7 +391,7 @@ test('teams-ask without --test-chat and review-fix without --pr start nothing', 
 const ME = { display_name: 'Alex Doe', primary_email: 'alex@example.test' };
 
 test('teams-ask phrase: a marker of 40+ chars and the next Friday as an absolute date', () => {
-  const m = W.teamsMarker('12345678-1234-1234-1234-123456789abc');
+  const m = W.teamsMarker('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
   assert.ok(m.length >= W.TEAMS_MARKER_MIN && m.startsWith('e2e-teams-'));
   assert.throws(() => W.teamsMarker('short'), /too short/);
   const sun = W.teamsPhrase(m, new Date(2026, 10, 8, 21, 0));
@@ -467,7 +470,7 @@ test('teams-ask real run: prints the phrase, follows the one message, times each
   const s = await R.main('teams-ask', { 'test-chat': '48:notes' }, {}, deps);
   const said = log.said.join('\n');
   assert.match(said, /type this into the test chat \(48:notes\)/);
-  assert.match(said, /Note to self: .* e2e-teams-12345678-1234-1234-1234-123456789abc/);
+  assert.match(said, /Note to self: .* e2e-teams-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/);
   assert.strictEqual(log.subscribed, 'http://pa/api/events?topics=board');
   assert.ok(log.unsubscribed);
   const hop = (c) => s.hops.find((h) => h.c === c);
