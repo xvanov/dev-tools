@@ -1382,6 +1382,7 @@
       "details": {
         "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro; planning personas pm / analyst / sm DeepSeek-V4-Flash since D21; contract deepseek-v4-pro; reviewer Kimi-K2.7-Code, ...); the direct block, only when FACTORY_PROVIDER=direct: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4. tech_writer on the azure default is Kimi-K2.7-Code",
         "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
+        "Rosters": "routes.yaml rosters.<provider> (persona map + fallback) serves any provider name selected by FACTORY_PROVIDER / default_provider; azure_routes and routes stay the defaults",
         "Missing key": "degrades to the routes.yaml fallback with a warning",
         "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
         "Terminal guard": "factory/terminal_guard.py wraps the agent's terminal (Windows and Linux): a newline inside a quoted argument (on PowerShell any newline, an unterminated quote or bracket), --no-verify / git commit -n / core.hooksPath / DEVTOOLS_SKIP_TESTS, git push, gh pr writes and gh api writes are refused with a tool error before the shell sees them; on PowerShell an observation stuck at the >> continuation prompt resets the terminal at once. claude_session runs do not use it.",

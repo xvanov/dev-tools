@@ -265,6 +265,14 @@ def _active_provider(data: dict[str, Any]) -> str:
 def _routes_section_for(provider: str, data: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     """Return the (routes_mapping, fallback) pair for ``provider``."""
     defaults = data.get("defaults", {}) or {}
+    # A roster for ANY provider name: ``rosters.<provider>`` holds the persona
+    # map (same shape as ``routes``) and an optional ``fallback`` model id.
+    # Wins over the legacy azure_routes / routes blocks for that provider.
+    roster = (data.get("rosters", {}) or {}).get(provider)
+    if isinstance(roster, dict) and roster:
+        body = {k: v for k, v in roster.items() if k != "fallback"}
+        fb = roster.get("fallback") or defaults.get("fallback")
+        return (body, fb if isinstance(fb, str) else None)
     if provider == "azure":
         return (
             data.get("azure_routes", {}) or {},

@@ -170,3 +170,28 @@ class TestKeyAwareDegradation:
         assert route("security") == "azure/Kimi-K2.7-Code"
         assert route("dev", "hard") == "azure/deepseek-v4-pro"
         assert route("dev", "standard") == "azure/deepseek-v4-pro"
+
+
+def test_roster_block_serves_any_provider_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    custom = tmp_path / "r.yaml"
+    custom.write_text(
+        "default_provider: azure\n"
+        "routes: {pm: deepseek/deepseek-chat}\n"
+        "azure_routes: {pm: azure/gpt-5.4}\n"
+        "rosters:\n"
+        "  anthropic:\n"
+        "    pm: anthropic/claude-haiku-4-5\n"
+        "    dev: {standard: anthropic/claude-sonnet-4-5}\n"
+        "    reviewer: openai/gpt-5\n"
+        "    fallback: anthropic/claude-sonnet-4-5\n"
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("FACTORY_PROVIDER", "anthropic")
+    assert route("pm", routes_path=custom) == "anthropic/claude-haiku-4-5"
+    assert route("dev", "standard", routes_path=custom) == "anthropic/claude-sonnet-4-5"
+    assert route("unlisted", routes_path=custom) == "anthropic/claude-sonnet-4-5"
+    monkeypatch.setenv("FACTORY_PROVIDER", "azure")  # the legacy block is untouched
+    assert route("pm", routes_path=custom) == "azure/gpt-5.4"

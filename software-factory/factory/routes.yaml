@@ -7,6 +7,9 @@
 #   routes.<persona>.<difficulty>: <id>       # difficulty-aware persona (dev today)
 #   azure_routes.<persona>: <model_id>        # Azure-default routes block
 #   azure_routes.<persona>.<difficulty>: <id> # difficulty-aware Azure persona
+#   rosters.<provider>.<persona>[.<tier>]: <id> # roster for ANY provider name (e.g. anthropic);
+#   rosters.<provider>.fallback: <model_id>     #   selected by FACTORY_PROVIDER / default_provider,
+#                                               #   wins over routes/azure_routes for that provider
 #   defaults.fallback: <model_id>             # used when persona missing from active routes
 #   defaults.azure_fallback: <model_id>       # used when persona missing under azure_routes
 #
