@@ -112,15 +112,22 @@ function paCommand(): string {
   return `node "${path.join(config.toolDir, 'bin', 'pa.js')}"`;
 }
 
-async function briefContext(target: Json, task: string): Promise<string> {
+/** The card's own words. No model call: compose cost 10+ s of the start for hints the agent finds with Grep itself. */
+function briefContext(target: Json): string {
+  const c = target.commitment;
+  return [c?.summary, c?.detail].filter(Boolean).join('\n\n').slice(0, 2500);
+}
+
+/** The base ref for a new worktree. A `git fetch` is a network round trip: skipped when origin's HEAD ref is
+ *  here and the last fetch (FETCH_HEAD) is under two minutes old; otherwise dispatch.worktreeBase fetches. */
+async function baseRef(repo: string): Promise<string> {
   try {
-    const c = await require('../dispatch/compose.ts').compose({ target, task, delivery: null, route: 'claude' });
-    return String(c.brief || '').trim().slice(0, 2500);
-  } catch (err) {
-    log.warn('compose failed, using the plain ask', { message: (err as Error).message });
-    const c = target.commitment;
-    return [c?.summary, c?.detail].filter(Boolean).join('\n\n');
-  }
+    if (Date.now() - fs.statSync(path.join(repo, '.git', 'FETCH_HEAD')).mtimeMs < 120_000) {
+      const base = (await sh(repo, 'git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])).trim();
+      if (base.startsWith('origin/')) return base;
+    }
+  } catch { /* fall through to the fetching path */ }
+  return require('../dispatch').worktreeBase(repo);
 }
 
 /** Startup-context cuts for a build agent: no MCP servers, no skill listing, no user-level hooks/plugins
@@ -159,6 +166,10 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const wanted: string | null = target.repoPath || null;
   const isRepo = Boolean(wanted && fs.existsSync(path.join(wanted, '.git')));
 
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const mark = (k: string): void => { timings[k] = Date.now() - t0; };
+  mark('resolved_ms');
   const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS });
   const cwd = path.join(config.worktreesRoot, `build-${run.id}`);
   let branch: string | null = null;
@@ -167,7 +178,10 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     fs.mkdirSync(config.worktreesRoot, { recursive: true });
     if (isRepo) {
       branch = `jarvis/${run.id}-${dispatch.slug(task)}`;
-      await sh(wanted as string, 'git', ['worktree', 'add', '--no-track', '-b', branch, cwd, await dispatch.worktreeBase(wanted)]);
+      const base = await baseRef(wanted as string);
+      mark('base_ref_ms');
+      await sh(wanted as string, 'git', ['worktree', 'add', '--no-track', '-b', branch, cwd, base]);
+      mark('worktree_ms');
     } else {
       fs.mkdirSync(cwd, { recursive: true });
     }
@@ -176,7 +190,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
       : `An empty scratch folder (${cwd}). ${wanted ? `The card names the repo \`${wanted}\`, which is not a checkout here.` : 'No repository is involved unless the task says otherwise.'}`;
     const reportsDir = path.join(config.dataDir, 'build-reports', `run-${run.id}`).replace(/\\/g, '/');
     const prompt = renderPrompt(fs.readFileSync(path.join(config.toolDir, 'src', 'build', 'agent-prompt.md'), 'utf8'), {
-      run_id: String(run.id), task, context: await briefContext(target, task), where, pa: paCommand(), reports_dir: reportsDir,
+      run_id: String(run.id), task, context: briefContext(target), where, pa: paCommand(), reports_dir: reportsDir,
     });
     const promptPath = path.join(config.worktreesRoot, `build-${run.id}.PROMPT.md`);
     fs.writeFileSync(promptPath, prompt, 'utf8');
@@ -186,16 +200,19 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     } catch (err) {
       log.warn('could not mark the folders trusted', { message: (err as Error).message });
     }
+    mark('prompt_ms');
     const claudeSession = crypto.randomUUID();
     const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model, prompt: null });
     const session = await termhub.createSession({
       cwd,
-      command: `${launch.command}${leanFlags(launch.command)}${settingsFlag()} --session-id ${claudeSession}`,
+      // The opening prompt is the command's argument: no waiting for the input box, no typing, no 6 s settle.
+      command: `${launch.command}${leanFlags(launch.command)}${settingsFlag()} --session-id ${claudeSession} "Read ${promptPath} for your full instructions, then do the task it describes."`,
       title: `jarvis#${run.id} ${task.slice(0, 40)}`,
       env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}` },
       links: { card: commitmentId, external: `build-${run.id}` },
     });
     sessionId = session.id;
+    mark('session_ms');
     await repo().update(run.id, {
       state: 'running', session_id: session.id, claude_session: claudeSession, cwd, worktree_path: isRepo ? cwd : null, branch,
       transcript_path: transcriptPathFor(cwd, claudeSession),
@@ -204,8 +221,9 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
       await require('../ledger').transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `build run #${run.id}`, from: ['open'] })
         .catch((err: Error) => log.warn('card not moved to dispatched', { message: err.message }));
     }
-    await termhub.briefClaude(termhub, session.id, `Read ${promptPath} for your full instructions, then do the task it describes.`)
-      .catch((err: Error) => log.warn('could not type the opening prompt', { run: run.id, message: err.message }));
+    // Only the folder-trust question can still stop it (ensureTrusted normally pre-empts it): watched in the background.
+    void termhub.answerTrust(termhub, session.id).catch((err: Error) => log.warn('trust watch failed', { run: run.id, message: err.message }));
+    mark('total_ms');
   } catch (err) {
     await repo().update(run.id, { state: 'failed', error: (err as Error).message, ended_at: new Date().toISOString() }).catch(() => {});
     if (sessionId) await termhub.killSession(sessionId).catch(() => {});
@@ -215,8 +233,8 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     }
     throw err;
   }
-  log.info('build run started', { run: run.id, model, repo: isRepo ? wanted : null, branch });
-  return withUrl(await repo().byId(run.id));
+  log.info('build run started', { run: run.id, model, repo: isRepo ? wanted : null, branch, ...timings });
+  return { ...(await withUrl(await repo().byId(run.id))), timings };
 }
 
 /** The run, with the termhub URL of its session. */
@@ -255,7 +273,7 @@ async function done(id: number | string, result: string | null): Promise<Row> {
 async function stop(id: number | string, reason = 'stopped by you'): Promise<Row> {
   const r = await repo().byId(id);
   if (!r) throw Object.assign(new Error(`no run #${id}`), { status: 404 });
-  if (r.session_id) await termhub.killSession(r.session_id).catch((err: Error) => log.warn('kill failed', { run: id, message: err.message }));
+  if (r.session_id) await termhub.killSession(String(r.session_id)).catch((err: Error) => log.warn('kill failed', { run: id, message: err.message }));
   await finish(id, 'stopped', { error: reason });
   return withUrl(await repo().byId(id));
 }
@@ -301,10 +319,45 @@ async function setIdle(id: number | string, seconds: unknown): Promise<Row> {
   return repo().byId(id);
 }
 
+/** Removes an ended run's worktree (the branch stays; a PR branch lives on the remote). Junctions in it are
+ *  unlinked first and a path too long for git is removed through the \? prefix. */
+async function removeWorktree(r: Row): Promise<boolean> {
+  const dir = String(r.worktree_path || '');
+  if (!dir) return false;
+  const repoPath = String(r.repo_path || '');
+  if (repoPath && fs.existsSync(dir)) await sh(repoPath, 'git', ['worktree', 'remove', '--force', '--force', dir]).catch(() => {});
+  if (fs.existsSync(dir)) {
+    try {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isSymbolicLink()) fs.unlinkSync(path.join(dir, e.name));
+      fs.rmSync(process.platform === 'win32' ? '\\\\?\\' + path.resolve(dir) : dir, { recursive: true, force: true });
+    } catch (err) {
+      log.warn('worktree not removed', { run: r.id, message: (err as Error).message });
+      return false;
+    }
+  }
+  if (repoPath && fs.existsSync(repoPath)) await sh(repoPath, 'git', ['worktree', 'prune']).catch(() => {});
+  await repo().update(r.id, { worktree_path: null }).catch(() => {});
+  return true;
+}
+
+/** Ended runs still holding a worktree: removed once their session is gone, or 15 min after the end (the session is then killed). */
+async function sweepWorktrees(ids: Set<string>): Promise<number> {
+  const rows: Row[] = await repo().list({ limit: 50 });
+  let n = 0;
+  for (const r of rows) {
+    if (LIVE.includes(String(r.state)) || !r.worktree_path) continue;
+    const open = r.session_id && ids.has(String(r.session_id));
+    const old = Date.now() - Date.parse(String(r.ended_at || 0)) > 15 * 60_000;
+    if (open && !old) continue;
+    if (open) await termhub.killSession(r.session_id).catch(() => {});
+    if (await removeWorktree(r)) n++;
+  }
+  return n;
+}
+
 /** A live run whose termhub session has gone ended without `pa run done`: failed. */
 async function reconcile(known: Json[] | null = null): Promise<{ failed: number }> {
   const live: Row[] = await repo().list({ live: true, limit: 50 });
-  if (!live.length) return { failed: 0 };
   let sessions: Json[];
   try {
     sessions = known || (await termhub.listSessions());
@@ -312,6 +365,7 @@ async function reconcile(known: Json[] | null = null): Promise<{ failed: number 
     return { failed: 0 };
   }
   const ids = new Set(sessions.map((s) => String(s.id)));
+  await sweepWorktrees(ids).catch((err: Error) => log.warn('worktree sweep failed', { message: err.message }));
   let failed = 0;
   for (const r of live) {
     if (r.state === 'starting' || !r.session_id || ids.has(String(r.session_id))) continue;
@@ -327,4 +381,4 @@ async function list(o: { live?: boolean; limit?: number; offset?: number } = {})
   return repo().list(o);
 }
 
-module.exports = { start, stop, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };
+module.exports = { start, stop, removeWorktree, sweepWorktrees, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };

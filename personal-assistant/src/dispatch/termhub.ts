@@ -366,6 +366,25 @@ async function briefClaude(
   return { ready: state === 'ready', trusted, nudged };
 }
 
+/** Watches a session started with its opening prompt on the command line, ~20 s: answers the folder-trust question if it appears. */
+async function answerTrust(hub: Pick<Hub, 'screen' | 'say'>, id: string, { timeoutMs = 20_000 }: { timeoutMs?: number } = {}): Promise<boolean> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const text = await hub.screen(id);
+    const state = claudeScreenState(text);
+    if (state === 'ready') return false;
+    if (state === 'trust') {
+      for (const key of trustKeys(text)) {
+        await hub.say(id, key, { submit: key === '' });
+        await pause(300);
+      }
+      return true;
+    }
+    await pause(1000);
+  }
+  return false;
+}
+
 const local = client(config.termhub.url);
 
 // True for this machine: no name, its hostname, or any name PA_MACHINES does
@@ -378,4 +397,4 @@ function forMachine(name: string | null | undefined): Hub {
   return isLocal(name) ? local : client(config.termhub.machines[name as string].url);
 }
 
-module.exports = { ...local, client, tailnetCheck, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys, sessionLinks };
+module.exports = { ...local, client, tailnetCheck, forMachine, isLocal, briefClaude, answerTrust, claudeScreenState, trustKeys, sessionLinks };
