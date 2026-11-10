@@ -539,13 +539,15 @@ def _collapse_child_stories(
         # The direction's own title, not the first slice's.
         "title": direction.title or child_stories[0].get("title") or "story",
         "scope": scope,
-        # ``docs`` only when EVERY slice is docs (a pure-docs solo job stays a
-        # docs story). Otherwise ``tdd``, never inherited by position: an
-        # AC-carrying direction on the docs chain (no dev, gates skipped)
-        # wedges unmergeably.
+        # ``docs`` only when EVERY slice is docs AND the direction carries no
+        # acceptance criteria. Otherwise ``tdd``, never inherited by position:
+        # an AC-carrying direction on the docs chain (no dev, gates skipped;
+        # the onboarder writes context docs, not repo files) wedges
+        # unmergeably - every submitted job has ACs.
         "chain_kind": (
             "docs"
             if child_stories
+            and not getattr(direction, "acceptance", None)
             and all(str(c.get("chain_kind") or "tdd") == "docs" for c in child_stories)
             else "tdd"
         ),
