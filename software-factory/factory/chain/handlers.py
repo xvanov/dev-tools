@@ -1454,6 +1454,63 @@ def _with_full_coverage_mandate(
 
 
 @traced("factory.sm")
+def _story_text_run(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    persona: str,
+    prompt: str,
+    model_id: str,
+    schema: dict[str, Any] | None,
+    max_tokens: int,
+    db: Path,
+) -> str | dict[str, Any]:
+    """One text-persona model call on the STORY's runtime.
+
+    ``api`` (default): ``runner.text_run`` on the routed model. ``claude_session``:
+    a read-only Claude Code conversation (the job's runtime applies to every
+    model step, not just dev) whose final JSON message is the answer. A failed
+    Claude run raises — it never silently falls back to the api model.
+    """
+    from factory.runner import text_run
+
+    if (getattr(story, "runtime", None) or "api") != "claude_session":
+        return text_run(
+            persona=persona,
+            prompt=prompt,
+            model_id=model_id,
+            schema=schema,
+            max_tokens=max_tokens,
+            story_id=story.id,
+            app=story.app,
+            direction_id=story.direction_id,
+            db_path=db,
+        )
+    from factory.app_config import resolve_app_repo_path
+    from factory.claude_session.run import claude_review_run
+
+    text, conv = claude_review_run(
+        prompt=prompt,
+        worktree=Path(resolve_app_repo_path(app_config, software_factory_root)),
+        software_factory_root=software_factory_root,
+        db_path=db,
+        model=getattr(story, "runtime_model", None),
+        story_id=story.id,
+        app=story.app,
+        direction_id=story.direction_id,
+        persona=persona,
+    )
+    if not text.strip():
+        raise RuntimeError(f"{persona} on claude_session returned nothing: {conv.error or 'empty'}")
+    if schema is None:
+        return text
+    parsed = _extract_json_object(text)
+    if parsed is None:
+        raise RuntimeError(f"{persona} on claude_session returned no JSON object")
+    return parsed
+
+
 def handle_sm(
     story: StoryRecord,
     app_config: AppConfig,
@@ -1486,7 +1543,6 @@ def handle_sm(
         from factory.app_config import resolve_app_repo_path
         from factory.context.loader import compose_context_prelude
         from factory.directions.parser import get_direction_chain
-        from factory.runner import text_run
 
         persona = "sm"
         persona_prompt = _read_persona_prompt(persona, app_config.context_dir)
@@ -1569,16 +1625,16 @@ def handle_sm(
             "Return the JSON object. No prose outside the JSON."
         )
         model_id = _route_for(story, persona)
-        result_any = text_run(
+        result_any = _story_text_run(
+            story,
+            app_config,
+            software_factory_root,
             persona=persona,
             prompt=full_prompt,
             model_id=model_id,
             schema=_SM_SCHEMA,
             max_tokens=max_output_tokens_for(model_id),
-            story_id=story.id,
-            app=story.app,
-            direction_id=story.direction_id,
-            db_path=db,
+            db=db,
         )
         if not isinstance(result_any, dict):
             return HandlerResult(
@@ -5588,7 +5644,6 @@ def handle_tech_writer(
         from factory.app_config import resolve_app_repo_path
         from factory.context.loader import compose_context_prelude
         from factory.directions.parser import get_direction_chain
-        from factory.runner import text_run
 
         persona = "tech_writer"
         persona_prompt = _read_persona_prompt(persona, app_config.context_dir)
@@ -5652,7 +5707,10 @@ def handle_tech_writer(
         parse_error: str | None = None
         parsed: dict[str, Any] | None = None
         for attempt in range(1, _MAX_TECH_WRITER_PARSE_RETRIES + 1):
-            result_any = text_run(
+            result_any = _story_text_run(
+                story,
+                app_config,
+                software_factory_root,
                 persona=persona,
                 prompt=full_prompt,
                 model_id=model_id,
@@ -5663,10 +5721,7 @@ def handle_tech_writer(
                 # (2048+4096+8192+16384 = story 177's exact tokens_out) before
                 # returning a still-truncated body as success.
                 max_tokens=max_output_tokens_for(model_id),
-                story_id=story.id,
-                app=story.app,
-                direction_id=story.direction_id,
-                db_path=db,
+                db=db,
             )
             # Fence-strip + shape-check, NOT the reviewer's brace-slice — see
             # _parse_tech_writer_result for why leniency here is a false-green
@@ -5807,7 +5862,6 @@ def handle_docs_sm(
         # persona file but prefix the prompt with a directive to emit a
         # minimal docs story (skip test plans, dev notes, etc.). The SM prompt
         # already knows about canonical paths from CANONICAL_CONTEXT_PATHS.
-        from factory.runner import text_run
 
         persona_prompt = _read_persona_prompt("sm", app_config.context_dir)
         direction = find_direction_for_story(story, software_factory_root)
@@ -5838,16 +5892,16 @@ def handle_docs_sm(
             },
             "required": ["story_file_body", "canonical_paths"],
         }
-        result_any = text_run(
+        result_any = _story_text_run(
+            story,
+            app_config,
+            software_factory_root,
             persona="sm",
             prompt=prompt,
             model_id=_route_for(story, "sm"),
             schema=schema,
             max_tokens=2048,
-            db_path=db,
-            story_id=story.id,
-            app=story.app,
-            direction_id=story.direction_id,
+            db=db,
         )
         result = (
             result_any

@@ -450,11 +450,14 @@ _AGENT_HANDLERS: frozenset[str] = frozenset(
 def step_runtime(story: StoryRecord, handler_name: str) -> str | None:
     """The runtime a dispatch of ``handler_name`` runs on, or None (no model).
 
-    dev runs on the story's runtime; review on ``solo.review_runtime``; every
-    other model step follows routes.yaml (``api``)."""
+    dev, sm, docs_sm and tech_writer run on the story's runtime (a job's
+    runtime applies to every model step; ``claude_session`` runs the text
+    ones read-only); review on ``solo.review_runtime`` (the chain reviewer
+    stays on routes.yaml for model independence); docs_onboarder is a
+    sandbox run and stays on ``api``."""
     if handler_name not in _AGENT_HANDLERS:
         return None
-    if handler_name == "dev":
+    if handler_name in ("dev", "sm", "docs_sm", "tech_writer"):
         return getattr(story, "runtime", None) or "api"
     if handler_name == "review":
         from factory.chain.solo import review_runtime

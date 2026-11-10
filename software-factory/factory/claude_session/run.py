@@ -504,6 +504,15 @@ _CLAUDE_REVIEW_FOOTER = """\
   describe. If you use ExitPlanMode, the plan you submit must be that JSON.
 """
 
+_CLAUDE_TEXT_FOOTER = """# Running as Claude Code inside the software factory: the {persona} step
+
+- This run is READ-ONLY (Claude Code plan permission mode): read, grep and
+  list any file in the working directory and run read-only git. Do not try
+  to edit anything; the factory writes files from your answer.
+- Your FINAL message must be ONLY the JSON object your instructions describe.
+  If you use ExitPlanMode, the plan you submit must be that JSON.
+"""
+
 #: One review run's wall clock. A review reads; it does not iterate.
 CLAUDE_REVIEW_WALL_CLOCK_S = 1800
 
@@ -519,6 +528,7 @@ def claude_review_run(
     app: str | None,
     direction_id: str | None,
     wall_clock_s: float = CLAUDE_REVIEW_WALL_CLOCK_S,
+    persona: str = "reviewer",
 ) -> tuple[str, ConversationResult]:
     """The review step on ``claude_session`` (JOBS-API v1.9).
 
@@ -532,18 +542,21 @@ def claude_review_run(
     from datetime import UTC, datetime
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    is_review = persona == "reviewer"
+    step = "review" if is_review else persona
+    footer = _CLAUDE_REVIEW_FOOTER if is_review else _CLAUDE_TEXT_FOOTER.format(persona=persona)
     run_dir = (
         state_dir(Path(software_factory_root))
         / "claude_runs"
-        / f"{app or 'app'}-{story_id or 0}-review-{stamp}"
+        / f"{app or 'app'}-{story_id or 0}-{step}-{stamp}"
     )
     outcome = run_claude(
         db_path=db_path,
-        persona="reviewer",
+        persona=persona,
         cwd=Path(worktree),
         run_dir=run_dir,
-        prompt=f"{prompt.rstrip()}\n\n---\n\n{_CLAUDE_REVIEW_FOOTER}",
-        title=f"factory review · {app}:{direction_id} story {story_id}",
+        prompt=f"{prompt.rstrip()}\n\n---\n\n{footer}",
+        title=f"factory {step} · {app}:{direction_id} story {story_id}",
         model=model,
         wall_clock_s=float(wall_clock_s),
         story_id=story_id,

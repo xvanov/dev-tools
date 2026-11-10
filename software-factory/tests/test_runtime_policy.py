@@ -328,7 +328,12 @@ def test_review_runs_on_the_story_runtime_for_solo_only() -> None:
     chain = _solo_story(runtime="claude_session", pipeline="chain")
     assert solo.review_runtime(chain) == "api"
     assert O.step_runtime(chain, "dev") == "claude_session"
-    assert O.step_runtime(chain, "tech_writer") == "api"
+    # The job's runtime applies to every model step; only the chain reviewer
+    # (model independence) and the sandbox onboarder stay on api.
+    for h in ("sm", "docs_sm", "tech_writer"):
+        assert O.step_runtime(chain, h) == "claude_session"
+        assert O.step_runtime(_solo_story(runtime="api"), h) == "api"
+    assert O.step_runtime(chain, "docs_onboarder") == "api"
     assert O.step_runtime(chain, "docs_enforcer") is None
 
 
@@ -363,6 +368,38 @@ def test_claude_review_run_is_read_only_and_returns_the_verdict(
     assert seen["permission_mode"] == "plan" and seen["persona"] == "reviewer"
     assert seen["prompt"].startswith("REVIEWER PROMPT") and "READ-ONLY" in seen["prompt"]
     assert json.loads(text) == {"verdict": "approve"}
+
+
+def test_text_steps_run_on_claude_for_a_claude_session_story(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import factory.chain.handlers as H
+    import factory.claude_session.run as run_mod
+    import factory.runner as runner
+    from factory.claude_session.conversation import ConversationResult
+    from factory.claude_session.stream import ClaudeResult
+
+    def fake_run_claude(**kw: Any) -> Any:
+        conv = ConversationResult(
+            rounds=[ClaudeResult(found=True, result_text='{"stories": []}')], stop_reason="done"
+        )
+        seen.append(kw["persona"])
+        return run_mod.ClaudeRunOutcome(conv, 1, None)
+
+    def api_called(**kw: Any) -> Any:
+        raise AssertionError("api text_run used for a claude_session story")
+
+    seen: list[str] = []
+    monkeypatch.setattr(run_mod, "run_claude", fake_run_claude)
+    monkeypatch.setattr(run_mod, "state_dir", lambda r: tmp_path)
+    monkeypatch.setattr(runner, "text_run", api_called)
+    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda a, r: tmp_path)
+    story = _solo_story(runtime="claude_session")
+    out = H._story_text_run(
+        story, object(), tmp_path, persona="sm", prompt="P", model_id="m",
+        schema={"type": "object"}, max_tokens=10, db=tmp_path / "db",
+    )
+    assert out == {"stories": []} and seen == ["sm"]
 
 
 def test_fix_round_resumes_the_dev_session(tmp_path: Path) -> None:
@@ -559,8 +596,8 @@ def test_a_limited_runtime_defers_the_step_until_the_reset(
     # One event per pause, not one per tick.
     O._provider_pause(story, "dev", db=db, root=root)
     assert [e for e, _ in story._events].count("provider_limit_deferred") >= 1  # type: ignore[attr-defined]
-    # api steps of the same story are not blocked by the Claude breaker.
-    assert O._provider_pause(story, "tech_writer", db=db, root=root) is None
+    # api-only steps of the same story are not blocked by the Claude breaker.
+    assert O._provider_pause(story, "docs_onboarder", db=db, root=root) is None
     # At the reset the breaker is closed: the next tick dispatches (auto-resume).
     data = PL.load(root)
     data["claude_session"]["until"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()

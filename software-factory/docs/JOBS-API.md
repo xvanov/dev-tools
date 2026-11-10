@@ -897,8 +897,9 @@ A provider limit is transient, never a failed job and never a dev attempt:
 - The step's runtime gets a circuit breaker (`<state>/runtime_limits.json`): until the reset no
   step starts on it. A code story waits where it is (no state change, no retry, its worktree
   kept); a research/report/plan job goes back to `queued`. When the reset passes the next tick
-  dispatches it: auto-resume, nothing to click. A step's runtime: dev on the story's runtime,
-  review per above, every other model step (`sm`, `tech_writer`, docs) on `api`.
+  dispatches it: auto-resume, nothing to click. A step's runtime: dev, `sm`, `docs_sm` and
+  `tech_writer` on the story's runtime (the text ones as read-only Claude Code runs on
+  `claude_session`), review per above, the sandbox `docs_onboarder` on `api`.
 - Failover to the other runtime is off by default. `FACTORY_RUNTIME_FAILOVER=on` (global) or
   `--failover on` (job; wins either way) turns it on; it happens only when the wait exceeds
   `FACTORY_FAILOVER_MIN_WAIT_MIN` (default 30) and the other runtime is neither limited nor
