@@ -163,6 +163,15 @@ def test_breaker_backoff_doubles_and_is_capped(root: Path) -> None:
     assert PL.backoff_s("claude_session", 1) == 15 * 60
 
 
+def test_breaker_does_not_escalate_while_still_open(root: Path) -> None:
+    """Parallel workers hitting one wall must not compound the backoff."""
+    hit = PL.LimitHit("api", None, "API rate limit (429)", "x")
+    for _ in range(4):
+        e = PL.trip(root, hit, now=NOW)
+    assert e["trips"] == 1
+    assert PL._parse_iso(e["until"]) == NOW + timedelta(seconds=60)
+
+
 def test_breaker_keeps_a_later_reset(root: Path) -> None:
     PL.trip(root, PL.LimitHit("claude_session", NOW + timedelta(days=2), "weekly", "x"), now=NOW)
     e = PL.trip(root, PL.LimitHit("claude_session", NOW + timedelta(hours=1), "5h", "x"), now=NOW)

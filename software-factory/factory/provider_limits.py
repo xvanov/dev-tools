@@ -315,7 +315,11 @@ def trip(
     prev = data.get(hit.runtime) if isinstance(data.get(hit.runtime), dict) else {}
     prev_until = _parse_iso(prev.get("until")) if prev else None
     trips = 1
-    if prev_until is not None and (now - prev_until).total_seconds() < BACKOFF_MEMORY_S:
+    if prev_until is not None and prev_until > now:
+        # Still open: this hit is another run reporting the SAME wall (parallel
+        # workers fail together). Not a fresh trip, so no backoff escalation.
+        trips = max(1, int(prev.get("trips") or 1))
+    elif prev_until is not None and (now - prev_until).total_seconds() < BACKOFF_MEMORY_S:
         trips = int(prev.get("trips") or 0) + 1
     until = hit.until or now + timedelta(seconds=backoff_s(hit.runtime, trips))
     if prev_until is not None and prev_until > until:
