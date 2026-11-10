@@ -239,3 +239,39 @@ def test_call_pm_persona_accepts_after_retry_budget_exhausts(
     warnings = out.get("_chain_warnings", [])
     assert warnings, "should record a warning after exhausting retries"
     assert warnings[0]["kind"] == "story_sizes_exceeded_after_retries"
+
+
+def test_call_pm_persona_follows_a_claude_session_job(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A claude_session job's PM step runs as a read-only Claude Code run, not
+    on the api model (JOBS-API: the job's runtime applies to every step)."""
+    import factory.claude_session.run as run_mod
+    import factory.runner as _runner
+    from factory.chain import pm_sync as P
+    from factory.directions.parser import Direction
+
+    direction = Direction(
+        id="099", slug="cs", title="t", type_tag=None, why=None, has_flow=True,
+        has_api_spec=True, acceptance=[], explore_tag=False, artifacts_paths=[],
+        app="dummyapp", status="created", raw_frontmatter={}, raw_body="",
+    )
+    seen: list[dict] = []
+
+    def fake_claude(**kw):
+        seen.append(kw)
+        return '{"child_stories": [], "summary": "x"}', type("C", (), {"error": None})()
+
+    def api_called(**kw):
+        raise AssertionError("api text_run used for a claude_session PM")
+
+    monkeypatch.setattr(run_mod, "claude_review_run", fake_claude)
+    monkeypatch.setattr(_runner, "text_run", api_called, raising=False)
+    monkeypatch.setattr(
+        P, "compose_context_prelude", lambda **kwargs: "(no prelude)", raising=False
+    )
+    out = P._call_pm_persona(
+        direction, app_repo_path=tmp_path, software_factory_root=tmp_path,
+        runtime="claude_session", claude_model="opus",
+    )
+    assert isinstance(out, dict) and seen[0]["persona"] == "pm" and seen[0]["model"] == "opus"

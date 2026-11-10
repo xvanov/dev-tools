@@ -372,14 +372,50 @@ def _format_redecomposition_feedback(violations: dict[int, list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _claude_pm_run(
+    prompt: str,
+    direction: Direction,
+    app_repo_path: Path,
+    software_factory_root: Path,
+    claude_model: str | None,
+) -> dict[str, Any]:
+    """The PM step on ``claude_session``: read-only Claude Code, JSON answer."""
+    from factory.chain.handlers import _extract_json_object
+    from factory.claude_session.run import claude_review_run
+
+    text, conv = claude_review_run(
+        prompt=prompt,
+        worktree=Path(app_repo_path),
+        software_factory_root=software_factory_root,
+        db_path=state_dir(Path(software_factory_root)) / "factory.db",
+        model=claude_model,
+        story_id=None,
+        app=direction.app,
+        direction_id=direction.id,
+        persona="pm",
+    )
+    parsed = _extract_json_object(text) if text.strip() else None
+    if parsed is None:
+        raise RuntimeError(
+            f"pm on claude_session returned no JSON object: {getattr(conv, 'error', None) or 'empty'}"
+        )
+    return parsed
+
+
 def _call_pm_persona(
     direction: Direction,
     app_repo_path: Path,
     software_factory_root: Path,
     model_overrides: dict[str, str] | None = None,
     context_dir: str | None = None,
+    runtime: str | None = None,
+    claude_model: str | None = None,
 ) -> dict[str, Any]:
     """Real LLM call. Returns the parsed PM JSON result.
+
+    ``runtime="claude_session"`` (the job's runtime) runs the PM as a read-only
+    Claude Code conversation instead of the routed api model; a failed run
+    raises, it never falls back to api.
 
     Loops up to ``MAX_PM_REDECOMPOSITION_RETRIES`` times when the returned
     ``child_stories`` exceed the chain's per-story size ceilings, threading
@@ -432,19 +468,24 @@ def _call_pm_persona(
             full_prompt = f"{base_prompt}\n\n---\n\n{feedback}\n"
 
         # Cap output tokens at 2048 — PM JSON is small.
-        result = text_run(
-            persona=persona,
-            prompt=full_prompt,
-            model_id=model_id,
-            schema=_PM_SCHEMA,
-            max_tokens=2048,
-            # The job's first step (plan E5.2/E5.4): its runs row and watchable
-            # session are linked to the job, and the row opens when the call
-            # starts, so the job reads as started the moment triage begins.
-            app=direction.app,
-            direction_id=direction.id,
-            software_factory_root=software_factory_root,
-        )
+        if runtime == "claude_session":
+            result = _claude_pm_run(
+                full_prompt, direction, app_repo_path, software_factory_root, claude_model
+            )
+        else:
+            result = text_run(
+                persona=persona,
+                prompt=full_prompt,
+                model_id=model_id,
+                schema=_PM_SCHEMA,
+                max_tokens=2048,
+                # The job's first step (plan E5.2/E5.4): its runs row and watchable
+                # session are linked to the job, and the row opens when the call
+                # starts, so the job reads as started the moment triage begins.
+                app=direction.app,
+                direction_id=direction.id,
+                software_factory_root=software_factory_root,
+            )
         if not isinstance(result, dict):
             # text_run only returns str when schema is None; treat anything
             # else as failure.
@@ -679,6 +720,8 @@ def pm_sync(
                     root,
                     job_routing.model_overrides,
                     context_dir=getattr(app_config, "context_dir", None),
+                    runtime=job_routing.runtime,
+                    claude_model=job_routing.claude_model,
                 )
                 merge_state(direction, {"pm_result": pm_result})
                 assert app_config is not None and github_client is not None
