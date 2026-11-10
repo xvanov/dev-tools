@@ -22,11 +22,31 @@ const { logger } = require('../log.ts');
 
 const log = logger('build');
 const URL_USAGE = 'https://api.anthropic.com/api/oauth/usage';
-// The endpoint rate-limits hard (a 15 s poll got 429s within minutes): a
-// minute between calls, and after a 429 its Retry-After (at least 2 min),
-// serving the last good numbers marked stale meanwhile.
+// The endpoint rate-limits hard (a 15 s poll got 429s within minutes, and it
+// kept answering 429 with Retry-After: 0 for 10+ min): a minute between calls;
+// after each 429 in a row the wait doubles from 2 min up to 30 min, serving the
+// last good numbers marked stale meanwhile. The last good answer is kept on
+// disk so a redeploy does not start blind.
 const TTL_MS = 60_000;
 const BACKOFF_MS = 120_000;
+const BACKOFF_MAX_MS = 30 * 60_000;
+let strikes = 0;
+const lastFile = () => process.env.PA_USAGE_CACHE || path.join(require('../config.ts').config.dataDir, 'usage-last.json');
+function readLast(): Json | null {
+  try {
+    const v = JSON.parse(fs.readFileSync(lastFile(), 'utf8'));
+    return v && v.ok ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeLast(v: Json) {
+  try {
+    fs.writeFileSync(lastFile(), JSON.stringify(v));
+  } catch {
+    /* a convenience only */
+  }
+}
 const TIMEOUT_MS = 8_000;
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -111,7 +131,7 @@ async function fetchOnce(): Promise<Json> {
     });
     if (res.status === 429) {
       const after = Number(res.headers.get('retry-after')) * 1000;
-      return { ok: false, reason: 'usage endpoint rate-limited', fetched_at: now, retry_ms: Math.max(BACKOFF_MS, Number.isFinite(after) ? after : 0) };
+      return { ok: false, reason: 'usage endpoint rate-limited', fetched_at: now, retry_ms: Math.max(Math.min(BACKOFF_MAX_MS, BACKOFF_MS * 2 ** strikes++), Number.isFinite(after) ? after : 0) };
     }
     if (!res.ok) return { ok: false, reason: `usage endpoint answered ${res.status}`, fetched_at: now };
     const { meters, extra } = parseUsage(await res.json());
@@ -131,7 +151,12 @@ async function fetchOnce(): Promise<Json> {
 async function usage(): Promise<Json> {
   if (cache && Date.now() - cache.at < cache.ttl) return cache.value;
   inflight ??= fetchOnce().then((v) => {
-    if (v.ok) lastGood = v;
+    if (v.ok) {
+      lastGood = v;
+      strikes = 0;
+      writeLast(v);
+    }
+    lastGood ??= readLast();
     const ttl = Number(v.retry_ms) || TTL_MS;
     const { retry_ms: _drop, ...plain } = v;
     const value = !v.ok && lastGood ? { ...lastGood, stale: true, reason: v.reason } : plain;
@@ -149,6 +174,7 @@ function expireCache() {
 function resetCache() {
   cache = null;
   lastGood = null;
+  strikes = 0;
   inflight = null;
 }
 

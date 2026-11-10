@@ -59,6 +59,7 @@ async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-usage-'));
   const cred = path.join(dir, 'c.json');
   process.env.PA_CLAUDE_CREDENTIALS = cred;
+  process.env.PA_USAGE_CACHE = path.join(dir, 'last.json');
   const realFetch = global.fetch;
   let calls = 0;
   let seen = null;
@@ -94,6 +95,13 @@ async function main() {
     assert.match(stale.reason, /rate-limited/);
     await U.usage();
     assert.strictEqual(calls, before + 1, 'no retry inside the backoff');
+    // A restart (cache and memory gone) still has the last good numbers from disk.
+    U.resetCache();
+    const cold = await U.usage();
+    assert.strictEqual(cold.stale, true);
+    assert.strictEqual(cold.meters.length, 3);
+    assert.ok(!fs.readFileSync(process.env.PA_USAGE_CACHE, 'utf8').includes('SECRET-TOKEN'));
+    fs.rmSync(process.env.PA_USAGE_CACHE); // the failures below start with nothing to fall back on
 
     U.resetCache();
     answer = () => ({ ok: false, status: 500, json: async () => ({}) });
