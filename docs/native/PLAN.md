@@ -1949,13 +1949,13 @@ not in the Map is not done, and a new one gets added there first.
   owner wants back "a board where we can see the actual progress of things, each run, and the
   tool calls" (what `factory tui` and the termhub followers showed, scattered across a terminal
   and termhub tabs). One view on Build, live, no termhub tab needed; Open in termhub stays.
-  - [ ] **8.8.1 The factory side** (JOBS-API v1.11): `factory job board --json` (the TUI's
+  - [x] **8.8.1 The factory side** (b4b2e25) (JOBS-API v1.11): `factory job board --json` (the TUI's
     snapshot: active, spend today/7d metered and notional, paused runtimes, per-direction
     progress + EBS ETA, persona mid-flight, recent steps, velocity) and `factory job step <id>
     --json` (one step's turns, both runtimes normalized by one parser,
     `stream.normalize_event`; cursor-paginated, `--wait` long poll, `--at` uncapped record),
     both served warm by `factory serve`; `runs.stream_path` on every new step.
-  - [ ] **8.8.2 The PA side**: Build's Board view (jobs as cards with progress, persona, ETA, PR
+  - [x] **8.8.2 The PA side** (a60a577): Build's Board view (jobs as cards with progress, persona, ETA, PR
     / CI / CodeRabbit, cost vs cap; a job's steps as a persona-lane timeline; click a step for
     an inline run viewer that streams its turns), proxied through `/api/factory/board` and
     `/api/factory/steps/<id>/events`.
