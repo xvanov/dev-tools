@@ -20,6 +20,15 @@
   .stat b { font: 600 var(--text-md)/1.2 var(--font-mono); }
   .stat span { color: var(--ink-2); font-size: var(--text-xs); }
 
+  .usage { display: grid; gap: 8px; }
+  .meter { display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; border-radius: var(--radius); }
+  .meter .mh { display: flex; justify-content: space-between; font-size: var(--text-sm); }
+  .meter .mh b { font-family: var(--font-mono); }
+  .meter .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .meter .bar i { display: block; height: 100%; background: var(--ok); }
+  .meter.sev-warning .bar i { background: var(--amber); }
+  .meter.sev-critical .bar i { background: var(--bad); }
+  .meter.hot { outline: 1px solid var(--signal); background: var(--surface-2); }
   .new > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
   .new form { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); margin: 10px 0 4px; }
   .new label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
@@ -105,6 +114,10 @@
   <span class="meta" id="updated">loading…</span>
 </div>
 <div>
+  <h2>Limits</h2>
+  <div id="usage" class="usage" aria-live="polite"></div>
+</div>
+<div>
   <h2>Agents</h2>
   <div class="spend" id="spend"></div>
 </div>
@@ -112,7 +125,7 @@
   <summary>New run</summary>
   <form id="newform" autocomplete="off">
     <label>Task<textarea name="task" required placeholder="What should the agent do?"></textarea></label>
-    <label>Model<select name="model"><option value="haiku">haiku</option><option value="sonnet" selected>sonnet</option><option value="opus">opus</option></select></label>
+    <label>Model<select name="model"><option value="haiku">haiku</option><option value="sonnet" selected>sonnet</option><option value="opus">opus</option><option value="fable">fable</option></select></label>
     <label>Repo (optional, a checkout path)<input name="repo" type="text" placeholder="C:\repos\…"></label>
     <div class="row"><button class="primary" type="submit">Start</button><span class="meta" id="newhint"></span></div>
   </form>

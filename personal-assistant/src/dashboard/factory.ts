@@ -6,6 +6,7 @@
 //
 //   GET  /factory                     the page (factory.html, factory.client.js)
 //   GET  /api/factory                 the board, from the worker's stored list
+//   GET  /api/factory/usage           live subscription limits: 5 h, weekly, weekly Fable, extra credits
 //   GET  /api/factory/report?job=     a research/report job's markdown, parsed
 //   POST /api/factory/jobs            a new job: title, ask, kind, runtime, repo, delivery
 //   POST /api/factory/jobs/<id>/cancel|approve|open
@@ -170,6 +171,11 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
   }
   // The Board view (factoryBoard.ts, plan 8.8.2): the factory's snapshot and one step's turns.
   if (await require('./factoryBoard.ts').route(req, res, url, { send })) return true;
+  // Live Claude subscription limits for the Build board (build/usage.ts; 15 s cache).
+  if (req.method === 'GET' && url.pathname === '/api/factory/usage') {
+    send(res, 200, await require('../build/usage.ts').usage());
+    return true;
+  }
   if (req.method === 'GET' && url.pathname === '/api/factory') {
     send(res, 200, await boardData());
     return true;

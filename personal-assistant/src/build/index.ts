@@ -28,7 +28,9 @@ const termhub = require('../dispatch/termhub.ts');
 const log = logger('build');
 const repo = () => require('../repo').buildRuns;
 
-const MODELS = ['haiku', 'sonnet', 'opus'];
+const MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+/** Aliases Claude Code resolves itself; fable launches by its full id. */
+const MODEL_IDS: Record<string, string> = { fable: 'claude-fable-5-1' };
 const DEFAULT_MODEL = 'sonnet';
 const LIVE = ['starting', 'running', 'waiting', 'idle'];
 const num = (v: unknown, d: number): number => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
@@ -45,9 +47,10 @@ const sh = (cwd: string, cmd: string, args: string[]): Promise<string> =>
       err ? reject(new Error(`${cmd} ${args.join(' ')}: ${(errOut || err.message).trim().slice(0, 300)}`)) : resolve(String(out)));
   });
 
-/** Pure: a model name checked against haiku|sonnet|opus. */
+/** Pure: a model name checked against haiku|sonnet|opus|fable (the full fable id is accepted). */
 function checkModel(m: unknown): string {
-  const v = String(m ?? '').trim().toLowerCase();
+  let v = String(m ?? '').trim().toLowerCase();
+  if (v === MODEL_IDS.fable) v = 'fable';
   if (!MODELS.includes(v)) throw Object.assign(new Error(`model must be ${MODELS.join(', ')}`), { status: 400 });
   return v;
 }
@@ -204,7 +207,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     }
     mark('prompt_ms');
     const claudeSession = crypto.randomUUID();
-    const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model, prompt: null });
+    const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model: MODEL_IDS[model] || model, prompt: null });
     const session = await termhub.createSession({
       cwd,
       // The opening prompt is the command's argument: no waiting for the input box, no typing, no 6 s settle.
@@ -391,4 +394,4 @@ async function list(o: { live?: boolean; limit?: number; offset?: number } = {})
   return repo().list(o);
 }
 
-module.exports = { start, stop, removeWorktree, sweepWorktrees, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };
+module.exports = { start, stop, removeWorktree, sweepWorktrees, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, MODEL_IDS, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };

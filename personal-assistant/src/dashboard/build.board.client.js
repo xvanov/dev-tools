@@ -102,7 +102,33 @@
     return runs.slice().sort(function (a, b) { return rank(a) - rank(b) || b.id - a.id; });
   }
 
-  var pure = { dur: dur, money: money, elapsed: elapsed, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
+  /** An ISO reset time as "resets in 2h 10m" (minutes under an hour, days over 48 h), "" when unknown or past. */
+  function resetsIn(iso, now) {
+    var t = Date.parse(iso);
+    var n = now == null ? Date.now() : (typeof now === 'number' ? now : Date.parse(now));
+    if (!Number.isFinite(t) || !Number.isFinite(n) || t <= n) return '';
+    var min = Math.max(1, Math.round((t - n) / 60000));
+    if (min < 60) return 'resets in ' + min + 'm';
+    if (min < 48 * 60) { var h = Math.floor(min / 60); var m = min % 60; return 'resets in ' + h + 'h' + (m ? ' ' + m + 'm' : ''); }
+    return 'resets in ' + Math.round(min / 1440) + 'd';
+  }
+
+  /** One meter's drawing facts, pure: width 0-100, a severity class, its text, and whether the selected model is this meter's. */
+  function meterView(m, selectedModel, now) {
+    var p = num(m && m.percent);
+    var sev = m && (m.severity === 'critical' || m.severity === 'warning') ? m.severity : (p >= 90 ? 'critical' : p >= 75 ? 'warning' : 'normal');
+    var scoped = Boolean(m && m.model);
+    return {
+      label: String((m && m.label) || ''),
+      width: Math.max(0, Math.min(100, p)),
+      severity: sev,
+      text: Math.round(p) + '%',
+      reset: resetsIn(m && m.resets_at, now),
+      highlight: scoped && String(selectedModel || '').toLowerCase().indexOf(String(m.model).toLowerCase()) >= 0,
+    };
+  }
+
+  var pure = { resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
   if (typeof document === 'undefined') return pure;
 
   // ---- the browser half ------------------------------------------------------------
@@ -155,7 +181,39 @@
     });
   }
 
-  var state = { data: null, page: 1, timer: null, open: {} };
+  var state = { data: null, page: 1, timer: null, open: {}, usage: null, usageTimer: null };
+
+  // The subscription limits (api/factory/usage, cached 15 s server side): bars by severity, the Fable one lit when Fable is the chosen model.
+  function drawUsage() {
+    var box = document.getElementById('usage');
+    if (!box) return;
+    var u = state.usage;
+    if (!u || !u.ok) {
+      box.replaceChildren(el('div', { class: 'meta', text: u ? 'limits unavailable' : 'limits…', title: u && u.reason ? u.reason : null }));
+      return;
+    }
+    var sel = document.querySelector('#newform select[name="model"]');
+    var rows = (u.meters || []).map(function (m) {
+      var v = meterView(m, sel ? sel.value : '', u.fetched_at);
+      return el('div', { class: 'meter sev-' + v.severity + (v.highlight ? ' hot' : '') },
+        el('div', { class: 'mh' }, el('span', { text: v.label }), el('b', { text: v.text })),
+        el('div', { class: 'bar' }, el('i', { style: 'width:' + v.width + '%' })),
+        v.reset ? el('div', { class: 'meta', text: v.reset }) : null);
+    });
+    var x = u.extra;
+    if (x && x.limit_usd != null) {
+      rows.push(el('div', { class: 'meter sev-' + (x.percent >= 90 ? 'critical' : x.percent >= 75 ? 'warning' : 'normal') },
+        el('div', { class: 'mh' }, el('span', { text: 'Extra usage' }), el('b', { text: money(x.used_usd) + ' / ' + money(x.limit_usd) })),
+        el('div', { class: 'bar' }, el('i', { style: 'width:' + Math.max(0, Math.min(100, num(x.percent))) + '%' }))));
+    }
+    box.replaceChildren.apply(box, rows.length ? rows : [el('div', { class: 'meta', text: 'limits unavailable' })]);
+  }
+  function loadUsage() {
+    clearTimeout(state.usageTimer);
+    return fetch('api/factory/usage').then(function (r) { return r.json(); }).then(function (d) { state.usage = d; drawUsage(); })
+      .catch(function () { state.usage = { ok: false }; drawUsage(); })
+      .then(function () { state.usageTimer = setTimeout(loadUsage, 20000); });
+  }
 
   function load() {
     return fetch('api/build?page=' + state.page + '&limit=' + PAGE).then(function (r) { return r.json(); }).then(function (d) {
@@ -325,7 +383,12 @@
     });
   }
 
+  var modelSel = document.querySelector('#newform select[name="model"]');
+  if (modelSel) modelSel.addEventListener('change', drawUsage);
+
   load();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  loadUsage();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { load(); loadUsage(); } });
+  window.addEventListener('focus', loadUsage);
   return Object.assign({ load: load }, pure);
 });

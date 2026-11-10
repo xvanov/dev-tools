@@ -24,6 +24,18 @@ assert.strictEqual(B.resultLink('C:\\reports\\x.md'), null);
 assert.strictEqual(B.resultLink('opened https://x.test/1 for review'), null);
 assert.deepStrictEqual([B.pageCount(0), B.pageCount(10), B.pageCount(11), B.pageCount(35)], [1, 1, 2, 4]);
 
+const t0 = Date.parse('2026-11-10T12:00:00Z');
+assert.deepStrictEqual(['2026-11-10T14:10:00Z', '2026-11-10T12:20:00Z', '2026-11-14T12:00:00Z', '2026-11-10T11:00:00Z', 'x', null].map((r) => B.resetsIn(r, t0)), ['resets in 2h 10m', 'resets in 20m', 'resets in 4d', '', '', '']);
+{
+  const hot = B.meterView({ label: 'Weekly Fable', percent: 41.5, severity: 'normal', model: 'Fable' }, 'fable');
+  assert.deepStrictEqual([hot.highlight, hot.text, hot.width, hot.severity], [true, '42%', 41.5, 'normal']);
+  assert.strictEqual(B.meterView({ percent: 41, model: 'Fable' }, 'sonnet').highlight, false);
+  assert.strictEqual(B.meterView({ percent: 41 }, 'fable').highlight, false);
+  assert.strictEqual(B.meterView({ percent: 95 }, '').severity, 'critical');
+  assert.strictEqual(B.meterView({ percent: 250 }, '').width, 100);
+  assert.strictEqual(B.meterView(null, '').text, '0%');
+}
+
 {
   const run = {
     id: 1, state: 'running', started_at: '2026-11-10T10:00:00Z', ended_at: null,

@@ -132,14 +132,14 @@ const READ_TOOLS = [
   {
     name: 'build_start',
     description:
-      "Start a Build agent (one Claude Code agent per task) — the user approves each call. From a Plan card (`card`: its summary and context become the brief and the card moves to dispatched) and/or the user's words (`task`). The agent works in a fresh worktree when the card or `repo` names a repo, may open a draft PR, never merges. `model`: haiku (docs, reports), sonnet (default), opus (hard). Returns the run; follow it with build_runs / build_run.",
+      "Start a Build agent (one Claude Code agent per task) — the user approves each call. From a Plan card (`card`: its summary and context become the brief and the card moves to dispatched) and/or the user's words (`task`). The agent works in a fresh worktree when the card or `repo` names a repo, may open a draft PR, never merges. `model`: haiku (docs, reports), sonnet (default), opus (hard), fable (claude-fable-5-1, the strongest; it has its own weekly limit). Returns the run; follow it with build_runs / build_run.",
     inputSchema: {
       type: 'object',
       properties: {
         card: { type: 'string', maxLength: 20, description: 'A Plan card id (commitment).' },
         task: { type: 'string', maxLength: 4000, description: "What to do, in the user's words; needed without a card." },
         repo: { type: 'string', maxLength: 300, description: "A known checkout; defaults to the card's repo." },
-        model: { type: 'string', enum: ['haiku', 'sonnet', 'opus'] },
+        model: { type: 'string', enum: ['haiku', 'sonnet', 'opus', 'fable'] },
         idle_after_s: { type: 'integer', minimum: 30, maximum: 21600, description: 'Seconds of silence (no transcript, terminal or message activity) before the run counts as idle and you are told. Default 240; quick tasks 120; long builds or research 900+.' },
       },
       additionalProperties: false,

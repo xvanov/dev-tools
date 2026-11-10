@@ -2,7 +2,7 @@
 
 // A Plan card's build settings, behind its ☰ button (PLAN.md D30). Do starts
 // ONE Claude Code agent (src/build): what is left to choose is the model
-// (haiku, sonnet or opus; default sonnet) and, optionally, the run's caps — a
+// (haiku, sonnet, opus or fable; default sonnet) and, optionally, the run's caps — a
 // dollar cap and a wall-clock cap that stop the session. The card shows one
 // read-only line of what Do will start ("sonnet · $5 · 2 h"); the ☰ opens a
 // small menu, each setting saying whether it is the default or set on this
@@ -24,7 +24,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   const FIELDS = ['model', 'costCapUsd', 'wallCapMin', 'idleAfterS'];
   const LABEL = { model: 'Model', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)' };
-  const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable' };
+  const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable', fable: 'fable — the strongest; its own weekly limit' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;
   const hours = (min) => (min % 60 === 0 ? `${min / 60} h` : `${min} min`);

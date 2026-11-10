@@ -83,7 +83,7 @@ async function main() {
 
     const first = json(await call('GET', url));
     assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { model: 'sonnet', costCapUsd: 5, wallCapMin: 120, idleAfterS: 240 }, {}]);
-    assert.deepStrictEqual(first.options.models, ['haiku', 'sonnet', 'opus']);
+    assert.deepStrictEqual(first.options.models, ['haiku', 'sonnet', 'opus', 'fable']);
 
     const set = json(await call('POST', url, { headers: X, body: M.patchFor(first, 'model', 'haiku') }));
     assert.deepStrictEqual([set.settings.model, set.overrides], ['haiku', { model: 'haiku' }]);

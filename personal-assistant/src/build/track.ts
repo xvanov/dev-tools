@@ -34,6 +34,7 @@ const MAX_CALLS = 300;
 
 /** USD per million tokens at API list prices (input, output); cache write is 1.25x (5 min) or 2x (1 h) input, cache read 0.1x. */
 const PRICES: Array<{ match: RegExp; in: number; out: number }> = [
+  { match: /fable/i, in: 10, out: 50 },
   { match: /haiku/i, in: 1, out: 5 },
   { match: /opus/i, in: 5, out: 25 },
   { match: /sonnet/i, in: 3, out: 15 },
@@ -45,7 +46,7 @@ function priceOf(model: string | null | undefined, fallback?: string | null): { 
     const p = PRICES.find((x) => name && x.match.test(name));
     if (p) return p;
   }
-  return PRICES[2] as { in: number; out: number };
+  return PRICES[3] as { in: number; out: number };
 }
 
 type Usage = { in: number; out: number; cacheRead: number; cacheWrite5m: number; cacheWrite1h: number };
