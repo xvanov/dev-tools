@@ -1110,6 +1110,10 @@ def handle_stories_spawned(
         # PM emits ``"docs"`` for documentation-only deliverables (the new
         # docs chain) and ``"tdd"`` (default) for everything else.
         chain_kind = str(child.get("chain_kind") or "tdd")
+        if chain_kind == "docs" and getattr(direction, "acceptance", None):
+            # A lone docs child skips _collapse_child_stories; same rule: an
+            # AC-carrying direction never runs the docs chain.
+            chain_kind = "tdd"
         # EBS: Fibonacci difficulty points from PM; default to 3 (median).
         points_raw = child.get("points")
         try:

@@ -482,3 +482,18 @@ def test_a_worktree_on_a_branch_left_from_an_earlier_attempt_refreshes(
     # old base, so it must be refreshed even though the directory is brand new.
     calls = _writing_worktree_calls(tmp_path, monkeypatch, branch_exists=True, checkout_exists=False)
     assert any("fetch" in c for c in calls)
+
+
+def test_solo_lone_docs_child_with_acceptance_runs_tdd(tmp_path: Path) -> None:
+    """One docs child skips the collapse; ACs still keep it off the docs chain."""
+    import dataclasses
+
+    d = dataclasses.replace(_direction(pipeline="solo"), acceptance=["README has the line"])
+    stories = handle_stories_spawned(
+        direction=d,
+        pm_result={"child_stories": [dict(_child("guide"), chain_kind="docs")], "confidence": 0.9},
+        app_config=_cfg(),
+        software_factory_root=_root(tmp_path),
+        dry_run=True,
+    )
+    assert len(stories) == 1 and stories[0].chain_kind == "tdd"
