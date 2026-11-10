@@ -105,7 +105,7 @@ async function resolve(rawIdentity: any, displayName: any) {
 // "shane.govenor@innergy.com" -> "Shane Govenor"; null unless it is first.last.
 function nameFromEmail(email: any) {
   const m = /^([a-z]{2,})[._]([a-z]{2,})@/i.exec(String(email || ''));
-  return m ? [m[1], m[2]].map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ') : null;
+  return m ? [m[1], m[2]].map((w = "") => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') : null;
 }
 
 // The label for a new person. The Teams cache gives an author's address and no

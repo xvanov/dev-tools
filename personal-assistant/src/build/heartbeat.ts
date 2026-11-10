@@ -92,7 +92,7 @@ async function tick(now = Date.now()): Promise<{ sampled: number; idle: number; 
       patch.activity = JSON.stringify({ state: 'waiting' });
     } else if (over && run.state === 'running') {
       await repo().update(run.id, patch);
-      await B.markIdle(run.id, { since: new Date(last).toISOString(), idle_s, last_tool: lastTool(run), last_line: await lastLine(run.session_id) });
+      await B.markIdle(run.id, { since: new Date(last).toISOString(), idle_s, last_tool: lastTool(run), last_line: await lastLine(run.session_id == null ? null : String(run.session_id)) });
       idle++;
       continue;
     } else if (!over) {

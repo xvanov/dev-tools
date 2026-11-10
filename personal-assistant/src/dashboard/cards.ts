@@ -99,9 +99,9 @@ async function forCommitments(ids: unknown[], { evidenceIds = [] }: { evidenceId
  */
 function buildSummary(runs: Row[], now = Date.now(), url: string | null = null): Row | null {
   if (!runs.length) return null;
-  const last = runs[runs.length - 1];
+  const last = runs[runs.length - 1] as Row;
   const live = runs.some((r) => ['starting', 'running', 'waiting', 'idle'].includes(String(r.state)));
-  const first = Date.parse(String(runs[0].started_at));
+  const first = Date.parse(String((runs[0] as Row).started_at));
   const end = live ? now : Math.max(...runs.map((r) => Date.parse(String(r.ended_at || r.started_at))));
   const act = (() => { try { return last.activity ? JSON.parse(String(last.activity)) : null; } catch { return null; } })();
   return {
@@ -120,7 +120,7 @@ async function buildsFor(ids: unknown[]): Promise<Map<string, Row>> {
   const by = new Map<string, Row[]>();
   for (const r of rows) by.set(String(r.commitment_id), [...(by.get(String(r.commitment_id)) || []), r]);
   for (const [id, runs] of by) {
-    const last = runs[runs.length - 1];
+    const last = runs[runs.length - 1] as Row;
     const url = last.session_id && !['done', 'failed', 'stopped'].includes(String(last.state))
       ? await require('../dispatch/termhub.ts').sessionUrl(last.session_id).catch(() => null) : null;
     out.set(id, buildSummary(runs, Date.now(), url) as Row);
