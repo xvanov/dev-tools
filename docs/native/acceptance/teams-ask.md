@@ -1,6 +1,6 @@
 # Acceptance review: `teams-ask` (plan 8.3)
 
-**Verdict: FAIL.** The outcome was not shown: no test ask reached the board, because nothing
+**Verdict: PASS (live run 2026-11-10, see the last section).** Earlier verdict: FAIL. The outcome was not shown: no test ask reached the board, because nothing
 could put one into the self chat. `pa e2e teams-ask` has no real-run driver. With
 `--test-chat` it still exits "not automated yet", and neither the e2e nor the PA can send a
 Teams message (the PA only opens a draft in the Teams client for you to press Send). Typing
@@ -30,7 +30,7 @@ for the owner to type its phrase, was not driven.
 - `pa e2e teams-ask --test-chat 48:notes --dry-run`: map 2/2, run 6/6 (served commit `3b28b1d`).
 - Real recent ask, card #6803 (Teams chat, 4 h old, distilled by the served model): links to a
   real message id (`link` pass; no `-1`), no system thread. `person` was the bare address
-  `shane.govenor@innergy.com`: the Teams cache gives an author's address and no name, so the new
+  `a.colleague@example.test`: the Teams cache gives an author's address and no name, so the new
   person row took the address as its name. **Fixed** in `distill/identity.ts` (`nameFor`: a
   first.last address becomes "First Last"; a person filed under an address is renamed when a name
   is known), test `identityName.test.js` (b822931). Cards already stored keep the address until
@@ -141,3 +141,24 @@ On the laptop:
 7. **8.4.36** Distill skips messages under 40 characters, and the Map's own example ask is 38.
 8. **8.4.37** The distill cost breaks the $0.05 ceiling: 24% of calls on the served model, and
    most calls on the code default.
+
+## Live run, 2026-11-10 23:21Z: PASS (outcome shown)
+
+M365 connector reconnected; the owner typed the printed phrase into the self chat (48:notes);
+`pa e2e teams-ask --test-chat 48:notes` followed it on serving commit `0b9ca36`, sending nothing.
+
+- ingest: 751 ms, cache change to source_item #761133 (target 5 s) - ok.
+- commitments: 5.2 s to an owed_by_me commitment - ok (no target).
+- card #6821 on the board; card checks 4/4: the person is you, due Friday 13 November 2026,
+  the link opens the source message. Card dropped by the run's cleanup.
+- dashboard hop 289 ms against 200 ms: measured seconds after a cold restart of the whole PA
+  (supervisor and generation 1 new); the earlier warm figure was about 1.1 s, so this is still
+  the slowest hop and the one to watch.
+- notify: held by design. The run was at 18:23 local, inside quiet hours / the interrupt budget,
+  so the toast went to the delivery digest. Re-run inside working hours to time the toast hop.
+- cost $0.074 against $0.05: the PA spend delta over the run window, which here includes the
+  catch-up passes of a freshly restarted PA (the summary notes this); the distill call itself is
+  in the $0.005-0.03 range.
+
+The outcome (an ask in Teams becomes a card with the right person, due date and link) is shown
+live, so the verdict is pass. Open: the 200 ms dashboard hop and a working-hours toast timing.

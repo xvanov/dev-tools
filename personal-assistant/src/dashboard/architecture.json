@@ -2623,7 +2623,7 @@
           }
         ],
         "verdict": {
-          "result": "fail",
+          "result": "pass",
           "date": "2026-11-10",
           "report": "docs/native/acceptance/teams-ask.md"
         }
