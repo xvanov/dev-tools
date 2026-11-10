@@ -81,7 +81,10 @@ async function resolve(rawIdentity: any, displayName: any) {
   }
 
   const found = await repo.people.identityOwner(parsed.kind, parsed.value);
-  if (found) return found.person_id;
+  if (found) {
+    await healName(found.person_id, parsed, displayName);
+    return found.person_id;
+  }
 
   // An email we have not seen as an identity may still belong to a person whose
   // primary_email matches — that happens when the person row came from a
@@ -94,9 +97,30 @@ async function resolve(rawIdentity: any, displayName: any) {
     }
   }
 
-  const created = await repo.people.insert(displayName || parsed.value, parsed.kind === 'smtp' ? parsed.value : null);
+  const created = await repo.people.insert(nameFor(parsed, displayName), parsed.kind === 'smtp' ? parsed.value : null);
   await addIdentity(created.id, parsed.kind, parsed.value);
   return created.id;
+}
+
+// "shane.govenor@innergy.com" -> "Shane Govenor"; null unless it is first.last.
+function nameFromEmail(email: any) {
+  const m = /^([a-z]{2,})[._]([a-z]{2,})@/i.exec(String(email || ''));
+  return m ? [m[1], m[2]].map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ') : null;
+}
+
+// The label for a new person. The Teams cache gives an author's address and no
+// name, and a card must not name its asker as a bare address.
+function nameFor(parsed: any, displayName: any) {
+  if (looksHuman(displayName)) return displayName;
+  return (parsed.kind === 'smtp' && nameFromEmail(parsed.value)) || displayName || parsed.value;
+}
+
+// A person filed under a bare address gets a human name once one is known.
+async function healName(personId: any, parsed: any, displayName: any) {
+  const row = await repo.people.rowById(personId);
+  if (!row || row.is_me || looksHuman(row.display_name)) return;
+  const name = nameFor(parsed, displayName);
+  if (looksHuman(name)) await repo.people.renameKeepingEmail(personId, name, row.primary_email);
 }
 
 // Binds an account handle to the `is_me` person, creating that person if no
@@ -151,4 +175,4 @@ function looksHuman(name: any) {
   return /\s/.test(String(name || '').trim()) && !/@|^(github|gitlab|aad):/i.test(String(name));
 }
 
-module.exports = { resolve, me, myHandle, setMe, addIdentity, claimForMe, merge, parseIdentity, looksHuman };
+module.exports = { nameFromEmail, nameFor, resolve, me, myHandle, setMe, addIdentity, claimForMe, merge, parseIdentity, looksHuman };
