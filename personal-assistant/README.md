@@ -1502,7 +1502,10 @@ same through termhub's `/pa/` proxy from a phone.
   whether you sound finished, and sends the utterance so far to `POST /api/talk/transcribe` at the
   same moment: yes ends the turn there, ~450 ms after you stopped, with that transcription (whisper's
   time overlaps smart-turn's); no keeps waiting up to **Pause before sending** (650 ms default,
-  400–1500 in **settings**) and transcribes again. Untick **Smart end of
+  400–1500 in **settings**) and transcribes again. Past 8 s of talk (a spoken brief, not a quick
+  question) a pause is more often thought than an ending: it takes at least 1.4 s of quiet, or a
+  smart-turn yes at 0.9 or more, to end the turn, and a turn runs up to 3 minutes (it was cut at
+  30 s). Untick **Smart end of
   turn** to use the timer alone. Without the models (not installed) the energy VAD does the job, as
   before. *Why smart-turn is in the service and the wake word and VAD in the page:* termhub's `/pa/`
   proxy passes only plain HTTP, no WebSocket upgrades, so a phone cannot stream audio to the service

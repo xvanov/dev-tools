@@ -463,6 +463,29 @@ const C = require('../src/dashboard/talk.core');
   assert.strictEqual(evs.length, 1);
   assert.strictEqual(evs[0][0], 'end');
 
+  // A long turn (a spoken brief, past longMs): a thinking pause is not the end.
+  // 650 ms of quiet does not end it, a hesitant smart-turn yes does not either;
+  // 1.4 s of quiet or a sure yes does (2026-11-10: Jarvis cut instructions off).
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 9000], [0.02, 224]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'check']);
+  assert.strictEqual(det.verdict(evs[1][2], true, 0.7), null, 'unsure done in a long turn: keep listening');
+  evs = run(det, [[0.02, 700]]);
+  assert.deepStrictEqual(evs, [], '700 ms of quiet does not end a long turn');
+  evs = run(det, [[0.02, 800]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['end'], '1.4 s does');
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 9000], [0.02, 224]]);
+  assert.strictEqual(det.verdict(evs[1][2], true, 0.95), 'end', 'a sure done ends a long turn at once');
+  // A short turn keeps the quick ending, whatever the probability.
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 1000], [0.02, 224]]);
+  assert.strictEqual(det.verdict(evs[1][2], true, 0.6), 'end');
+  // A minute of talk is not cut off.
+  det = C.createTurnDetector();
+  evs = run(det, [[0.9, 60000]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start'], 'no cut at 30 s');
+
   // Talking again during the check: its answer is stale, and the next pause asks again.
   det = C.createTurnDetector({ endMs: 650 });
   evs = run(det, [[0.9, 1000], [0.02, 224]]);

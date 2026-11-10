@@ -203,7 +203,7 @@
     bargeInMs: 350,
     endMs: 650,
     minUtteranceMs: 350,
-    maxUtteranceMs: 30000,
+    maxUtteranceMs: 180000,
   };
 
   const END_MS_MIN = 400;
@@ -725,7 +725,17 @@
     sureCheckMs: 96,
     endMs: 650,
     minUtteranceMs: 350,
-    maxUtteranceMs: 30000,
+    // A spoken brief ("find Drew's email, read the plan, then update the
+    // cards…") runs a minute or more; 30 s cut those off mid-sentence. Three
+    // minutes is still under the transcribe cap (8 MB of 16 kHz PCM).
+    maxUtteranceMs: 180000,
+    // Past `longMs` of talk the speaker is giving an instruction, and a
+    // pause is more often thought than an ending: the silence that ends the
+    // turn is at least `longEndMs`, and smart-turn's "done" counts only at
+    // `longSureProb` or more.
+    longMs: 8000,
+    longEndMs: 1400,
+    longSureProb: 0.9,
   };
 
   function createTurnDetector(opts) {
@@ -801,7 +811,8 @@
           return 'end';
         }
         const quiet = now - lastVoice;
-        if (quiet >= o.endMs) {
+        const long = lastVoice - startedAt >= o.longMs;
+        if (quiet >= (long ? Math.max(o.endMs, o.longEndMs) : o.endMs)) {
           state = 'silence';
           token = 0;
           return lastVoice - startedAt >= o.minUtteranceMs ? 'end' : 'cancel';
@@ -816,10 +827,12 @@
         return null;
       },
       // The check's token is `pending` right after step() returned 'check'.
-      verdict(t, complete) {
+      verdict(t, complete, probability) {
         if (!t || t !== token || state !== 'speech') return null;
         token = 0;
         if (!complete) return null;
+        // A long turn needs a sure "done" (see longMs); without a probability, a plain yes.
+        if (lastVoice - startedAt >= o.longMs && typeof probability === 'number' && probability < o.longSureProb) return null;
         state = 'silence';
         return 'end';
       },

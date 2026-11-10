@@ -708,7 +708,7 @@
       return;
     }
     if (DEBUG) console.log('[talk] smart-turn', r, `${Date.now() - now} ms`);
-    if (det.verdict(token, !!r.complete) === 'end') finishTurn(det, Date.now(), 'smart-turn', r.probability, token);
+    if (det.verdict(token, !!r.complete, typeof r.probability === 'number' ? r.probability : undefined) === 'end') finishTurn(det, Date.now(), 'smart-turn', r.probability, token);
   }
 
   function finishTurn(det, now, by, p, token = 0) {
