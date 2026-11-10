@@ -100,7 +100,7 @@ function renderPrompt(template: string, vars: Record<string, string>): string {
 /** Pure: Claude Code's project folder for a working directory (every non-alphanumeric becomes -). */
 function projectDirName(cwd: string): string {
   // A Windows drive path stays as it is on any OS (path.resolve would prefix a POSIX cwd to it).
-  const full = /^[A-Za-z]:[\/]/.test(cwd) ? cwd : path.resolve(cwd);
+  const full = /^[A-Za-z]:/.test(cwd) ? cwd : path.resolve(cwd);
   return full.replace(/[^A-Za-z0-9]/g, '-');
 }
 
