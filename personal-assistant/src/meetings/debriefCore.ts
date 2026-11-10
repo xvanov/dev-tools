@@ -94,6 +94,9 @@ function buildPrompt({ meeting, me, commitments = [], tasks = [], recentChats = 
     `Attendees: ${people.length ? people.slice(0, 40).join(', ') : 'not known'}`,
     `The engineer ("Me:"): ${[me.name, ...(me.emails || []).slice(0, 2)].filter(Boolean).join(', ') || 'not known'}`,
   ];
+  if (meeting.imported) {
+    lines.push('Source note: This is a recording or transcript of a meeting the engineer did not attend live (they are catching up on it afterwards). Other people take part, so others_present is true. There are no "Me:" lines unless the transcript names the engineer: attribute a todo to the engineer only when the words clearly assign it to them by name.');
+  }
   if (meeting.singleStream) {
     lines.push('Stream note: Only the microphone stream was captured (speaker audio was picked up through the mic, so "Me:" lines include everyone on the call).');
   }

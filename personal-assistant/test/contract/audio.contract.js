@@ -163,6 +163,24 @@ module.exports = {
     assert.strictEqual(await repos.audio.supersedeWithin(s.toISOString(), e.toISOString(), new Set([keep])), 0, 'already superseded rows are not counted again');
   },
 
+  'forItem: the episode of a transcript item, or null': async ({ repos, seed, assert }) => {
+    const itemId = await seed.item({ source: 'audio', body: 'spoken '.repeat(100) });
+    assert.strictEqual(await repos.audio.forItem(itemId), null);
+    const id = await seed.episode({ itemId, stream: 'loopback', state: 'imported', startedAt: new Date('2089-05-01T10:00:00Z') });
+    const row = await repos.audio.forItem(itemId);
+    assert.deepStrictEqual([Number(row.id), row.state, row.stream], [id, 'imported', 'loopback']);
+  },
+
+  'importedIsolation: live capture neither continues nor supersedes an imported episode': async ({ repos, seed, assert, db }) => {
+    const s = new Date('2088-05-01T10:00:00Z');
+    const e = new Date('2088-05-01T11:00:00Z');
+    const imp = await seed.episode({ startedAt: new Date('2088-05-01T10:20:00Z'), endedAt: e, stream: 'loopback', state: 'imported' });
+    const q = { startedAt: s.toISOString(), endedAt: e.toISOString(), claimed: new Set(), stream: 'mic' };
+    assert.strictEqual(await repos.audio.continuing(q), null, 'not continued by a live episode that covers it');
+    assert.strictEqual(await repos.audio.supersedeWithin(s.toISOString(), e.toISOString(), []), 0, 'not superseded as a leftover');
+    assert.strictEqual((await db.one('select state from audio_episode where id = $1', [imp])).state, 'imported');
+  },
+
   'upsert: inserts; a conflict on (stream, started_at) revives and updates that row': async ({ repos, seed, assert, db }) => {
     const s = new Date('2092-05-01T10:00:00Z');
     const vals = (over = []) => {

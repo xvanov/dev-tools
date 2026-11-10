@@ -106,7 +106,7 @@ function create(db: Db) {
         `select e.*, si.external_id as item_external_id from audio_episode e
        left join source_item si on si.id = e.source_item_id
       where (e.started_at = $1 or (e.started_at > $1 and e.started_at <= $2))
-        and e.state <> 'superseded'
+        and e.state not in ('superseded', 'imported')
         and e.id not in (select value from json_each($3))
       order by (e.started_at = $1 and e.stream = $4) desc, (e.started_at = $1) desc, e.speech_seconds desc
       limit 1`,
@@ -118,11 +118,16 @@ function create(db: Db) {
     async supersedeWithin(startedAt: unknown, endedAt: unknown, claimed: Iterable<unknown>) {
       const r = await db.query(
         `update audio_episode set state = 'superseded'
-        where started_at >= $1 and started_at <= $2 and state <> 'superseded'
+        where started_at >= $1 and started_at <= $2 and state not in ('superseded', 'imported')
           and id not in (select value from json_each($3))`,
         [startedAt, endedAt, [...(claimed ?? [])].map(Number)]
       );
       return r.rowCount;
+    },
+
+    /** The episode whose transcript is a source item (an imported meeting, by its item), or null. */
+    async forItem(sourceItemId: number | string) {
+      return db.one('select * from audio_episode where source_item_id = $1 order by id desc limit 1', [sourceItemId]);
     },
 
     /** Inserts an episode; a conflict on (stream, started_at) revives that row. */

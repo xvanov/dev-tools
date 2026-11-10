@@ -71,6 +71,8 @@ function meetingOf(ep: any) {
     seriesKey: ev?.seriesKey || null,
     kind: ep.kind,
     singleStream: !String(ep.stream || '').includes('loopback'),
+    // Brought in by `pa meeting import`: a recording the engineer was not in.
+    imported: ep.state === 'imported',
     start: new Date(ep.started_at).toISOString(),
     end: new Date(ep.ended_at).toISOString(),
     eventEnd: ev ? ev.end : null,
@@ -180,6 +182,9 @@ async function prepare(ep: any, { now = new Date() }: { now?: any } = {}) {
     purpose: 'debrief',
   });
   const parsed = D.parseDebrief(llm.extractJson(reply), { transcript, refs, meetingStart: m.start });
+  // A recording you did not attend (a webinar) is "a video playing" to the model, and
+  // nothing in it is you alone: it is never discarded as solo.
+  if (m.imported) parsed.solo = false;
   if (parsed.title && (m.kind === 'call' || around.hadCallLog || /^Call\b|^Recorded conversation/i.test(m.title))) {
     m.title = parsed.title;
   }

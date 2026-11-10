@@ -825,9 +825,39 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
    (`others_present`). When nobody does — dictation, talking with the assistant, a video playing —
    nothing is applied and the recording is discarded: its transcript item, audio and any earlier
    debrief go, and the episode stays only as a `solo` marker the audio pass will not store again.
+   (Not for an imported recording, below: you were not in it, so it is never "you alone".)
+6. **A meeting you did not record live: import it.** A webinar you watched later, a recording
+   someone sent, or a Teams / Zoom transcript:
+
+   ```
+   pa meeting import <file> [--event <calendar id> | --title "..."] [--at <ISO start>] [--no-debrief]
+   ```
+
+   Audio or video (wav, mp3, m4a, mp4, mkv, webm, ...) is decoded and cut into five-minute chunks
+   by ffmpeg (`PA_FFMPEG`, default `ffmpeg` on PATH) and transcribed by the same faster-whisper
+   server as the live audio pass (voice-dictation's, `PA_TRANSCRIBE_PORT`; it must be running).
+   A `.txt`, `.vtt` or `.srt` transcript skips that step (Teams' `<v Name>` cues and Zoom's
+   "Name: text" lines keep their speakers; yours becomes "Me"). The text is stored as speech from
+   other people (`Them:`), as an episode in state `imported`, filed under a calendar event and
+   debriefed like any other meeting. No audio is kept.
+   - **Which meeting:** `--event` takes a calendar event's external id (`pa meeting list`) or item
+     id and uses its title and start. Without it, the event the recording overlaps (by `--at`, else
+     the file's save time) is used; two events held equally are refused, naming both, so you pass
+     `--event`. `--title` says what it is and skips matching. `--at` is when it started.
+   - **Same file again** updates its episode (new title, time or event) and debriefs it again,
+     replacing the earlier debrief (step 4).
+   - **Isolated from live capture:** audio ingest never continues, merges or supersedes an
+     `imported` episode, and the worker's audio pass does not debrief it by itself.
+   - **Dashboard:** Meetings, *Recorded & past meetings*, **Import a recording or transcript**:
+     choose the file, optionally the calendar event (the list is the meetings shown below it),
+     a title and a start, then **Import & debrief**. The file is uploaded raw to
+     `POST /api/debriefs/import` (X-PA; up to `PA_IMPORT_MAX_MB`, 512; `pa meeting import` has no
+     limit), transcribed and debriefed in the background one at a time, and the status line
+     follows it (`GET /api/debriefs/imports`); the meeting appears under its own date when done.
 
 ```
 pa meeting debrief [episode-id|last] [--dry-run] [--notify]
+pa meeting import <file> [--event <id>] [--title "..."] [--at <ISO>] [--no-debrief]
 pa meeting debriefs [--days 7]
 pa meeting undo <debrief-id> <n>
 pa meeting supersede <old> <new>   the newer debrief of one meeting replaces the older (nothing deleted but unrestated items, undone)

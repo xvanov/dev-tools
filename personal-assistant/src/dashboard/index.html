@@ -270,6 +270,14 @@
   details.transcript summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-top: 6px; }
   details.transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px;
     max-height: 360px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 6px; margin: 4px 0 0; }
+  details.mtg-import { margin: 0 0 8px; font-size: 13px; }
+  details.mtg-import summary { cursor: pointer; color: var(--muted); }
+  .mtg-import form { display: grid; gap: 8px; margin-top: 8px; max-width: 560px; }
+  .mtg-import label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+  .mtg-import input, .mtg-import select { font: inherit; font-size: 13px; min-width: 0; }
+  .mtg-import .imp-job { font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
+  .mtg-import .imp-job.err { color: var(--bad); }
+  .mtg-import .imp-job.ok { color: var(--ok); }
   .db-item { display: flex; gap: 8px; align-items: baseline; margin: 6px 0 0; }
   .db-item .db-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .db-item .db-quote { font-size: 12px; color: var(--muted); font-style: italic; }
@@ -342,7 +350,18 @@
     </div>
   </section>
   <section id="mtg-upcoming"><h2>Upcoming · what to say<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
-  <section id="mtg-past"><h2>Recorded &amp; past meetings<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
+  <section id="mtg-past"><h2>Recorded &amp; past meetings<span class="n"></span></h2>
+    <details class="mtg-import" id="mtg-import"><summary>Import a recording or transcript</summary>
+      <form id="mtg-import-form" autocomplete="off">
+        <label>Audio, video, or a transcript (.txt, .vtt, .srt)<input type="file" id="imp-file" accept="audio/*,video/*,.txt,.vtt,.srt,.mkv" required></label>
+        <label>Calendar event (the meeting it was)<select id="imp-event"><option value="">Match by time, or use the title below</option></select></label>
+        <label>Title (when there is no calendar event)<input type="text" id="imp-title" maxlength="160" placeholder="Mainsail webinar"></label>
+        <label>Started at (default: the event's start, or when the file was saved)<input type="datetime-local" id="imp-at"></label>
+        <div><button class="primary" type="submit" id="imp-go">Import &amp; debrief</button></div>
+      </form>
+      <div class="imp-job" id="imp-status"></div>
+    </details>
+    <div class="list"><div class="empty">loading…</div></div></section>
 </div>
 <div class="mem" id="memory" hidden>
   <div class="col">
@@ -2025,6 +2044,74 @@ function renderMtgRange() {
   }));
 }
 
+// Import a recording or transcript (POST /api/debriefs/import, src/meetings/import.ts).
+// The file goes up as the raw body; the server transcribes and debriefs in the
+// background, and this polls its job until it is done.
+let importTimer = null;
+function fillImportEvents(past) {
+  const sel = document.getElementById('imp-event');
+  const keep = sel.value;
+  const seen = new Set();
+  const opts = (past || []).filter((p) => p.eventId && !seen.has(p.eventId) && seen.add(p.eventId))
+    .map((p) => el('option', { value: p.eventId }, `${new Date(p.startedAt).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${p.title}`));
+  sel.replaceChildren(el('option', { value: '' }, 'Match by time, or use the title below'), ...opts);
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : '';
+}
+
+function importStatus(job) {
+  const box = document.getElementById('imp-status');
+  box.className = 'imp-job' + (job.state === 'error' ? ' err' : job.state === 'done' ? ' ok' : '');
+  const step = job.state === 'transcribing' && job.total ? `transcribing ${job.done + 1} of ${job.total}` : job.state;
+  box.textContent = job.state === 'error' ? `${job.name}: ${job.error}` : job.state === 'done' ? `${job.name}: imported as “${job.title}”${job.debriefId ? ` (debrief #${job.debriefId})` : ''}` : `${job.name}: ${step}…`;
+}
+
+async function watchImport(id) {
+  clearTimeout(importTimer);
+  try {
+    const job = (await getJson('api/debriefs/imports')).find((j) => j.id === id);
+    if (!job) return;
+    importStatus(job);
+    if (job.state === 'done' || job.state === 'error') {
+      document.getElementById('imp-go').disabled = false;
+      if (job.state === 'done') { toast(`Imported: ${job.title}`); loadMeetings(); } else toast(`Import failed: ${job.error}`);
+      return;
+    }
+  } catch (err) {
+    document.getElementById('imp-status').textContent = `lost track of the import: ${err.message}`;
+    return;
+  }
+  importTimer = setTimeout(() => watchImport(id), 3000);
+}
+
+document.getElementById('mtg-import-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const file = document.getElementById('imp-file').files[0];
+  if (!file) return;
+  const go = document.getElementById('imp-go');
+  const q = new URLSearchParams({ name: file.name });
+  const eventId = document.getElementById('imp-event').value;
+  const title = document.getElementById('imp-title').value.trim();
+  const at = document.getElementById('imp-at').value;
+  if (eventId) q.set('event', eventId);
+  else if (title) q.set('title', title);
+  if (at) q.set('at', new Date(at).toISOString());
+  go.disabled = true;
+  document.getElementById('imp-status').className = 'imp-job';
+  document.getElementById('imp-status').textContent = `uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`;
+  try {
+    const res = await fetch(`api/debriefs/import?${q}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-PA': '1', 'X-PA-Page': PAGE_TOKEN }, body: file,
+    });
+    const job = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(job.error || res.statusText);
+    importStatus(job);
+    watchImport(job.id);
+  } catch (err) {
+    go.disabled = false;
+    importStatus({ name: file.name, state: 'error', error: err.message });
+  }
+});
+
 async function loadMeetings() {
   if (meetingsBusy || document.querySelector('#meetings-view button.working')) return;
   renderMtgRange();
@@ -2049,6 +2136,7 @@ async function loadMeetings() {
       document.getElementById('mtgcount').textContent = totalToday ? String(totalToday) : '';
     }
     fill('mtg-upcoming', upcomingShown, upcomingMeetingCard, 'No upcoming meetings in the next 24h.');
+    fillImportEvents(pastList);
     fill('mtg-past', pastList, pastMeetingCard, mtgDays === 1 ? 'No recorded or past meetings yet today.' : `No recorded or past meetings in the last ${mtgDays} days.`);
     focusBrief();
     focusDebrief();

@@ -274,7 +274,7 @@
       },
       "health": "whisper",
       "details": {
-        "Called by": "POST /api/talk/transcribe in the dashboard, and the worker's audio pass for recorded meetings",
+        "Called by": "POST /api/talk/transcribe in the dashboard, the worker's audio pass for recorded meetings, and `pa meeting import` / the dashboard's meeting import for audio and video you did not record live",
         "Warm-up": "a silent WAV is sent when /talk opens if it has not been used for 5 minutes (it unloads when idle)",
         "Decoding": "small, float16, beam 1. A 16 kHz mono 16-bit WAV is read straight into numpy (faster-whisper's own decoder costs ~50 ms a call), and a clip that fits one 30 s window is decoded without timestamps: 232 -> 167 ms back to back for a two-second question. It opts out of Windows power throttling (EcoQoS) at start: in the talk page's order, beside the smart-turn check, 456 -> ~290 ms. Takes effect when the deployed copy is updated and the transcriber restarted"
       },
@@ -849,7 +849,7 @@
         "GitHub": "the gh CLI (PA_GH_BIN), every 300 s",
         "Jira": "API token, falling back to its connector, every 900 s",
         "Sessions": "local Claude Code and Cursor transcripts; other machines' Claude sessions through their termhub (GET /api/claude/transcripts)",
-        "Meetings": "capture.py records while the meeting gate is open (a calendar meeting with others, or a call app on the mic: not dictation apps, not the browser the voice page listens in), the audio pass trims and transcribes with faster-whisper. Only conversations with someone else are stored: speech groups inside your dictation (voice-dictation speech-activity.jsonl) or the voice page (talk-activity.jsonl) are dropped, a mic-only episode is a call only when a call app held the mic (mic-calls.jsonl, written by the gate), else solo and not stored; its sidecars and speech audio are deleted once settled (PA_AUDIO_SOLO_SETTLE_MINUTES, 30). A debrief that finds nobody else in it (others_present false) discards the recording; `pa meeting solo` lists older ones, `--apply` removes them. Debriefing an episode again (it grew, or was re-matched to another calendar event) supersedes its older debriefs (meeting_debrief.superseded_by, sql/044): they stop showing, what they applied is adopted where the new one restates it and undone otherwise; `pa meeting supersede <old> <new>` does it by hand",
+        "Meetings": "capture.py records while the meeting gate is open (a calendar meeting with others, or a call app on the mic: not dictation apps, not the browser the voice page listens in), the audio pass trims and transcribes with faster-whisper. Only conversations with someone else are stored: speech groups inside your dictation (voice-dictation speech-activity.jsonl) or the voice page (talk-activity.jsonl) are dropped, a mic-only episode is a call only when a call app held the mic (mic-calls.jsonl, written by the gate), else solo and not stored; its sidecars and speech audio are deleted once settled (PA_AUDIO_SOLO_SETTLE_MINUTES, 30). A debrief that finds nobody else in it (others_present false) discards the recording; `pa meeting solo` lists older ones, `--apply` removes them. Debriefing an episode again (it grew, or was re-matched to another calendar event) supersedes its older debriefs (meeting_debrief.superseded_by, sql/044): they stop showing, what they applied is adopted where the new one restates it and undone otherwise; `pa meeting supersede <old> <new>` does it by hand. `pa meeting import <file>` (and the dashboard's Import control in Recorded & past meetings, POST /api/debriefs/import with the file as the raw body, X-PA, up to PA_IMPORT_MAX_MB; GET /api/debriefs/imports for its progress) files a recording or .txt/.vtt/.srt transcript you were not in: ffmpeg (PA_FFMPEG) cuts audio and video into PA_IMPORT_CHUNK_SECONDS chunks, the faster-whisper server above transcribes each, and the text is stored as an audio_episode in state 'imported' on the loopback stream, tied to a calendar event (--event, else the one it overlaps, else --title), then debriefed. Live capture never continues, merges or supersedes an imported episode, and the model's others_present false never discards it",
         "Rule": "capture is append-only and raw payloads are kept, except recordings of you alone, which are not meetings and are deleted"
       },
       "code": [
@@ -860,6 +860,7 @@
         "personal-assistant/src/ingest/jira.ts",
         "personal-assistant/src/ingest/remoteSessions.ts",
         "personal-assistant/src/ingest/audio.ts",
+        "personal-assistant/src/meetings/import.ts",
         "personal-assistant/src/audio/selfSpeech.ts",
         "personal-assistant/src/audio/gate.ts"
       ],
@@ -867,6 +868,14 @@
         {
           "name": "PA_AUDIO_SOLO_SETTLE_MINUTES",
           "default": "30"
+        },
+        {
+          "name": "PA_FFMPEG",
+          "default": "ffmpeg"
+        },
+        {
+          "name": "PA_IMPORT_MAX_MB",
+          "default": "512"
         },
         {
           "name": "PA_SESSIONS",

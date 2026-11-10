@@ -538,6 +538,14 @@ const config = {
     transcribeHost: env('PA_TRANSCRIBE_HOST', '127.0.0.1'),
     transcribePort: envInt('PA_TRANSCRIBE_PORT', 47821),
     pauseFile: env('PA_AUDIO_PAUSE_FILE', path.join(dataDir, 'audio.paused')),
+    // `pa meeting import` and the dashboard's Import button (src/meetings/import.ts):
+    // ffmpeg decodes and cuts a recording into chunks the transcriber is sent one
+    // by one; the dashboard refuses an upload over maxMb.
+    import: {
+      ffmpeg: env('PA_FFMPEG', 'ffmpeg'),
+      chunkSeconds: envInt('PA_IMPORT_CHUNK_SECONDS', 300),
+      maxMb: envInt('PA_IMPORT_MAX_MB', 512),
+    },
     // Below this much free space on the spool's drive the worker warns you:
     // a full disk silently stopped call recording once.
     lowDiskGb: Number(env('PA_LOW_DISK_GB', '5')),

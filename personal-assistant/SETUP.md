@@ -166,6 +166,8 @@ These have working defaults and need no accounts:
 | `PA_CLAUDE_COMMAND` | `claude --dangerously-skip-permissions` | you want dispatched sessions to ask before acting |
 | `PA_TRANSCRIBE_PORT` | `47821` | you changed voice-dictation's server port |
 | `PA_AUDIO_ENABLED` | `1` | set `0` to disable recording entirely |
+| `PA_FFMPEG` | `ffmpeg` (on PATH) | `pa meeting import` cannot find ffmpeg (audio and video imports; transcript files need none) |
+| `PA_IMPORT_MAX_MB` | `512` | the dashboard's import upload limit; `pa meeting import <file>` has none |
 | `PA_RETENTION_RAW_DAYS` | `180` | you want raw mail and chat bodies kept for longer or shorter |
 
 ---

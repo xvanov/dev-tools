@@ -393,6 +393,8 @@ const ROUTES: Route[] = [
   // The Memory tab, pre-meeting briefs and post-meeting debriefs. A POST needs X-PA.
   { path: startsWith('/api/memory/'), handle: (c) => jsonModule(c, () => require('./memory.ts')) },
   { path: startsWith('/api/meetings/'), handle: (c) => jsonModule(c, () => require('./meetings.ts')) },
+  // An upload is the raw body, streamed to disk, so it is answered before any JSON body is read.
+  { method: 'POST', path: '/api/debriefs/import', handle: (c) => require('./debriefs.ts').upload(c.req, c.res, c.url, c) },
   { path: (url) => url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/'), handle: (c) => jsonModule(c, () => require('./debriefs.ts')) },
   // The Routines tab (dashboard/routines.ts, routines.client.js). Its writes
   // run actions on this machine, so the same guards apply.

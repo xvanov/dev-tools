@@ -353,6 +353,18 @@ row's `content_hash` (`retireHash`) so the old row's `applied` is not overwritte
 re-matched to another calendar event is debriefed again (`awaitingDebrief` compares
 `event_external_id`). Do not add a debrief list that skips the `superseded_by` filter.
 
+**An imported meeting is an episode the live capture must never touch.** `src/meetings/import.ts`
+(`pa meeting import`, `POST /api/debriefs/import`) stores a recording or transcript you were not in
+as an `audio_episode` with `state = 'imported'`, `stream = 'loopback'` (so it reads as "Them:") and
+no audio. `repo.audio.continuing` and `supersedeWithin` skip `imported` rows — without that, a live
+episode covering the same hour would continue the import and overwrite it, or mark it superseded as
+a "leftover" — and `awaitingDebrief` needs a mic stream, so only the import itself debriefs it.
+`debrief` reads `state = 'imported'` as "the engineer was not there": the prompt says so and a model
+verdict of `others_present: false` (a webinar looks like "a video playing") is ignored, never
+`discard`. Keep that: discarding deletes the transcript. Chunks are cut under `audioDir/import-*`
+and uploads land in `audioDir/import-uploads`, neither in `mic/` or `loopback/`, so audio ingest
+never reads them; both are deleted when the import ends.
+
 **Only people create tasks.** A commitment comes from what a person said or did — Teams, mail,
 meetings, a person on GitHub or Jira asking the user — or from the user asking for one (`pa task add`,
 the PA chat's `task_add`, the board's + task; source `pa_request`, `src/commitments/request.ts`). Never

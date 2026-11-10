@@ -27,6 +27,11 @@ const HELP = `pa meeting — pre-meeting briefs
                                       read-only
         [--apply]                     remove those: what they applied is undone, then the
                                       debrief, transcript and audio are deleted
+  pa meeting import <file>            a meeting you did not record live: audio or video (it is
+        [--event <id>]                transcribed here; needs ffmpeg and voice-dictation's transcriber)
+        [--title "..."]               or a .txt / .vtt / .srt transcript (Teams, Zoom). It is filed
+        [--at <ISO start>]            under the calendar event it overlaps (--event names one; --title
+        [--no-debrief]                skips matching), then debriefed. --at: when it started
   pa meeting supersede <old> <new>    the newer debrief of the same meeting replaces the older
                                       (it stops showing; what it applied is kept where the new one
                                       restates it, else undone; transcript and audio stay).
@@ -165,6 +170,33 @@ function make(out: any, fail: any) {
           out(r ? `episode ${d.episodeId}: removed (${r.undone} item(s) undone, ${r.files} file(s) deleted)` : `episode ${d.episodeId}: not found`);
         }
         return;
+      }
+
+      if (sub === 'import') {
+        if (!args[1]) return fail('usage: pa meeting import <file> [--event <id>] [--title "..."] [--at <ISO start>] [--no-debrief]');
+        const file = require('path').resolve(args[1]);
+        if (!require('fs').existsSync(file)) return fail(`no such file: ${file}`);
+        const str = (v: any) => (typeof v === 'string' && v !== 'true' ? v : null);
+        let last = '';
+        const r = await require('../meetings/import.ts').importMeeting({
+          file,
+          eventId: str(flags.event),
+          title: str(flags.title),
+          at: str(flags.at),
+          debrief: flagBool(flags, 'debrief', true),
+          onProgress: (p: any) => {
+            const line = p.state === 'transcribing' ? `transcribing ${p.done + 1}/${p.total}` : p.state;
+            if (line !== last) process.stderr.write(`${line}…\n`);
+            last = line;
+          },
+        });
+        out(`${local(r.startedAt)} · ${r.title} · episode ${r.episodeId} · ${r.chars} characters${r.eventId ? ` · calendar event ${r.eventId.slice(0, 24)}…` : ' · no calendar event'}${r.reimport ? ' · replaced an earlier import of this file' : ''}`);
+        const d = r.debrief?.debrief;
+        if (!d) return out(r.debrief ? 'not debriefed' : `not debriefed (--no-debrief); \`pa meeting debrief ${r.episodeId}\` does it`);
+        const { itemLine } = require('../meetings/debriefCore.ts');
+        if (d.applied.summary) out(`  ${d.applied.summary}`);
+        for (const it of d.applied.items) out(`  - ${itemLine(it)}`);
+        return out(`debrief #${d.id}${r.debrief.superseded?.length ? ` · supersedes ${r.debrief.superseded.map((i: any) => `#${i}`).join(', ')}` : ''}`);
       }
 
       if (sub === 'supersede') {
