@@ -144,3 +144,52 @@ def test_app_list_reports_ticked(root: Path) -> None:
     code, out = _cli("app", "list", "--json")
     assert code == 0, out
     assert {a["app"]: a["ticked"] for a in out["apps"]} == {"idle": False, "ticked": True}
+
+
+# --------------------------------------------------------------------------- #
+# a serve that ticks every app with an active job (raven, 2026-11-09)
+# --------------------------------------------------------------------------- #
+
+
+def _serve_json_dynamic(root: Path, apps: list[str], *, age_s: float = 0.0) -> None:
+    _serve_json(root, apps, age_s=age_s)
+    p = root / "state" / "scheduler" / "serve.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data["ticks_active_jobs"] = True
+    p.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_serve_that_ticks_active_jobs_covers_any_app(root: Path) -> None:
+    _serve_json_dynamic(root, ["ticked"])
+    idle = _submit("idle")
+    assert idle["ticked"] is True
+    assert not any(w.startswith("ticker:") for w in idle["warnings"]), idle
+
+
+def test_submit_still_warns_when_nothing_runs(root: Path) -> None:
+    _serve_json_dynamic(root, ["ticked"], age_s=3600)
+    idle = _submit("idle")
+    assert idle["ticked"] is False
+    warn = next(w for w in idle["warnings"] if w.startswith("ticker:"))
+    assert "factory serve is not running" in warn and "start factory serve" in warn
+
+
+def test_active_job_apps_follow_the_jobs(root: Path) -> None:
+    from factory.jobs.status import apps_with_active_jobs
+
+    assert apps_with_active_jobs(root) == []
+    job = _submit("idle")["job_id"]
+    assert apps_with_active_jobs(root) == ["idle"]  # queued: a tick has work
+    code, out = _cli("job", "cancel", job, "--json")
+    assert code == 0, out
+    assert apps_with_active_jobs(root) == []  # cancelled: idle again
+
+
+def test_choose_apps_adds_apps_with_active_jobs(root: Path) -> None:
+    (root / "apps" / "ticked" / "config.yaml").write_text(
+        "name: ticked\nrepo: acme/ticked\nserve_tick: true\n", encoding="utf-8"
+    )
+    assert serve_mod.choose_apps(root) == ["ticked"]  # idle, no job: never ticked
+    _submit("idle")
+    assert serve_mod.choose_apps(root) == ["ticked", "idle"]
+    assert serve_mod.choose_apps(root, active=None) == ["ticked"]

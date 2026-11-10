@@ -1522,7 +1522,8 @@ def tick_cmd(
 def serve_cmd(
     apps: list[str] = typer.Option(
         None, "--app",
-        help="App to tick (repeatable). Default: $FACTORY_SERVE_APPS (comma list), else every registered app.",
+        help="App to tick (repeatable). Default: $FACTORY_SERVE_APPS (comma list), else the apps whose config "
+        "sets serve_tick: true. Any app with an active job is ticked as well.",
     ),
     interval: float = typer.Option(
         None, "--interval", help="Seconds between ticks of one app (default $FACTORY_SERVE_INTERVAL_S or 300)."
@@ -1614,8 +1615,10 @@ def serve_cmd(
         )
         raise typer.Exit(code=2)
 
+    explicit_apps = list(apps or [])
+    env_apps = os.environ.get("FACTORY_SERVE_APPS")
     chosen = _serve.choose_apps(
-        _FACTORY_ROOT, list(apps or []), os.environ.get("FACTORY_SERVE_APPS"),
+        _FACTORY_ROOT, explicit_apps, env_apps,
         log=lambda m: console.print(f"factory serve: {m}"),
     )
     if interval is None:
@@ -1706,6 +1709,10 @@ def serve_cmd(
             _serve.ServeConfig(
                 root=_FACTORY_ROOT, apps=chosen, interval_s=float(interval),
                 tick_timeout_s=float(tick_timeout),
+                # Re-read every few seconds: a new job or a serve_tick edit
+                # takes effect without a restart. A broken config was logged
+                # once at startup; the re-reads stay quiet about it.
+                app_source=lambda: _serve.choose_apps(_FACTORY_ROOT, explicit_apps, env_apps),
             ),
             out=_out,
             triage=_triage,
@@ -1767,7 +1774,9 @@ def serve_cmd(
                     app_name = _json.loads(res.get("stdout") or "{}").get("app")
                 except ValueError:
                     app_name = None
-                if app_name and app_name in chosen:
+                # Its app may not have been ticked a moment ago: the new job
+                # puts it in the set now, not at the next re-read.
+                if app_name and sched.admit(str(app_name), submit=argv[1] == "submit"):
                     sched.start_triage(app_name)
             # A submit/cancel/resume: announce it now, terminal jobs included.
             if watch is not None and argv[1] in ("submit", "cancel", "resume"):
@@ -1779,7 +1788,7 @@ def serve_cmd(
                 _api.start_api(
                     api_port,
                     health=lambda: {
-                        "ok": True, "pid": os.getpid(), "head": head0, "apps": chosen,
+                        "ok": True, "pid": os.getpid(), "head": head0, "apps": list(sched.cfg.apps),
                         "running": sorted(sched.running), "ticks_started": sched.ticks_started,
                     },
                     after_call=_after_call,

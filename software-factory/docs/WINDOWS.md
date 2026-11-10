@@ -17,7 +17,7 @@ task, `factory-serve`, as the current user, that runs:
 <checkout>\software-factory\.venv\Scripts\python.exe -m factory serve --interval 300 --log-file logs\serve.log
 ```
 
-Options: `-Apps a,b` (default: the apps whose config sets `serve_tick: true`), `-IntervalSeconds`,
+Options: `-Apps a,b` (default: the apps whose config sets `serve_tick: true`; apps with an active job are ticked either way), `-IntervalSeconds`,
 `-SkipSync`, `-Uninstall`. Updating is `git pull --ff-only` (the next tick runs
 the new chain code; restart the task after a change to `factory serve` itself:
 `Stop-ScheduledTask factory-serve; Start-ScheduledTask factory-serve`).
@@ -95,11 +95,15 @@ process. Use `factory.oscompat.pid_alive`.
 
 ## factory serve
 
-- Ticks only the apps that opt in: `serve_tick: true` in `apps/<app>/config.yaml`
-  (tracked: dev-tools, factory, template-probe), unless `--app` or
-  `$FACTORY_SERVE_APPS` names them. Never "every registered app": a stale local
-  config must not start ticking (and spending) because serve came up, just as an
-  app without an enabled timer never ticked under systemd.
+- Ticks the apps that opt in: `serve_tick: true` in `apps/<app>/config.yaml`
+  (tracked: dev-tools, factory, template-probe; `factory app add --serve-tick`,
+  `factory app set <app> --serve-tick on|off`), unless `--app` or
+  `$FACTORY_SERVE_APPS` names them. Plus every app with an active job (queued,
+  triaging, in progress, blocked, paused): a submitted job is the intent to
+  spend. Never "every registered app": an idle app without `serve_tick` (a stale
+  local config) must not start ticking (and spending) because serve came up.
+  The set is re-read every 10 s and at once on a submit or resume for an app
+  outside it, so a new job or a config edit needs no restart.
 - Ticks each app as a fresh subprocess (`python -m factory tick --app <app>`),
   every `--interval` seconds (default 300), never two ticks of one app at once.
   A tick that moved a story re-wakes its app at once (capped at 30 in a row).

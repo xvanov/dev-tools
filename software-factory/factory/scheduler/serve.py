@@ -7,6 +7,11 @@ process. Linux keeps its timers; serve refuses to run beside them.
 
 What it does, every ``poll_s`` (1 s):
 
+* **Which apps.** The opted-in apps (``serve_tick: true``, ``--app`` or
+  ``$FACTORY_SERVE_APPS``) plus every app with an active code job
+  (:func:`choose_apps`), re-read every ``refresh_s`` and at once when a wake
+  names an app outside the set. A submitted job is the intent to spend; an idle
+  app without ``serve_tick`` is never ticked.
 * **Ticks.** Each app is ticked as a FRESH subprocess (``python -m factory tick
   --app <app>``), like the systemd unit, so a ``git pull`` of chain code is
   picked up on the next tick and a crash in one tick cannot take the scheduler
@@ -355,15 +360,44 @@ def read_status(root: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _active_job_apps(root: Path) -> list[str]:
+    from factory.jobs.status import apps_with_active_jobs
+
+    return apps_with_active_jobs(root)
+
+
 def choose_apps(
     root: Path, explicit: list[str] | None = None, env: str | None = None,
     *, log: Callable[[str], None] = lambda msg: None,
+    active: Callable[[Path], list[str]] | None = _active_job_apps,
 ) -> list[str]:
-    """Which apps serve ticks: ``--app`` values, else ``$FACTORY_SERVE_APPS``
-    (comma list), else every registered app whose config sets
-    ``serve_tick: true``. Never "every registered app": a registered but idle
-    app (a stale local config) must not start ticking because serve came up.
+    """Which apps serve ticks: the opted-in apps plus every app with an active job.
+
+    Opted in: ``--app`` values, else ``$FACTORY_SERVE_APPS`` (comma list), else
+    every registered app whose config sets ``serve_tick: true``. Then any
+    registered app with a code job a tick can move (queued, triaging, in
+    progress, blocked, paused: :func:`factory.jobs.status.apps_with_active_jobs`)
+    is added: a submitted job is explicit intent to spend, and an app nothing
+    ticks leaves it queued forever (raven, 2026-11-09). Never "every registered
+    app": an idle app without ``serve_tick`` (a stale local config) must not
+    start ticking because serve came up. Serve calls this every
+    ``refresh_s``, so neither a config change nor a new job needs a restart.
     """
+    base = _opted_in_apps(root, explicit, env, log=log)
+    if active is None:
+        return base
+    try:
+        extra = [a for a in active(Path(root)) if a not in base]
+    except Exception as exc:  # noqa: BLE001 - the opted-in set still ticks
+        log(f"reading the apps with active jobs failed ({exc!r}); ticking the opted-in apps only")
+        extra = []
+    return base + extra
+
+
+def _opted_in_apps(
+    root: Path, explicit: list[str] | None, env: str | None,
+    *, log: Callable[[str], None],
+) -> list[str]:
     chosen = [a for a in (explicit or []) if a]
     if not chosen and env:
         chosen = [a.strip() for a in env.split(",") if a.strip()]
@@ -405,6 +439,11 @@ class ServeConfig:
     #: Consecutive wake-started ticks of one app before wakes are ignored until
     #: the next interval tick (a story moving step to step re-wakes its app).
     max_wake_burst: int = 30
+    #: Re-reads the app set (:func:`choose_apps`) every ``refresh_s``, and at
+    #: once when a wake names an app not in it (a submit). ``None``: ``apps``
+    #: is fixed (tests, ``--app`` on an old serve).
+    app_source: Callable[[], list[str]] | None = None
+    refresh_s: float = 10.0
 
 
 Spawn = Callable[[list[str], Path, IO[bytes], dict[str, str]], "subprocess.Popen[bytes]"]
@@ -451,6 +490,60 @@ class Scheduler:
     triage: Callable[[str], None] | None = None
     triaging: dict[str, Any] = field(default_factory=dict)
     _triage_lock: Any = field(default_factory=lambda: __import__("threading").Lock())
+    next_refresh: float = 0.0
+    _apps_lock: Any = field(default_factory=lambda: __import__("threading").Lock())
+
+    # -- the app set ---------------------------------------------------------- #
+
+    def refresh_apps(self, *, force: bool = False) -> list[str]:
+        """Re-read the app set when due (or ``force``); return the apps it added.
+
+        Called from the loop and from API threads (a submit), hence the lock.
+        An app that leaves the set keeps a running tick; it just starts no new
+        one. A failed read keeps the current set.
+        """
+        source = self.cfg.app_source
+        if source is None:
+            return []
+        with self._apps_lock:
+            now = self.clock()
+            if not force and now < self.next_refresh:
+                return []
+            self.next_refresh = now + self.cfg.refresh_s
+            try:
+                fresh = [str(a) for a in source() if a]
+            except Exception as exc:  # noqa: BLE001 - keep ticking what we tick
+                self.log(f"re-reading the app set failed ({exc!r}); keeping {self.cfg.apps}")
+                return []
+            old = list(self.cfg.apps)
+            if fresh == old:
+                return []
+            added = [a for a in fresh if a not in old]
+            dropped = [a for a in old if a not in fresh]
+            self.cfg.apps = fresh  # a new list: a loop iterating the old one is unaffected
+            self.log(
+                f"apps now {fresh}"
+                + (f" (+{', '.join(added)})" if added else "")
+                + (f" (-{', '.join(dropped)})" if dropped else "")
+            )
+            return added
+
+    def admit(self, app: str, *, submit: bool = False, added: set[str] | None = None) -> bool:
+        """Make sure ``app`` is ticked now that a job was submitted or resumed.
+
+        Re-reads the app set when ``app`` is not in it (its new job puts it
+        there). A submitted app that was just added waits for triage to wake
+        it instead of starting an interval tick beside triage (8.4.15).
+        True when serve ticks ``app``.
+        """
+        added = set() if added is None else added
+        if app not in self.cfg.apps:
+            added.update(self.refresh_apps(force=True))
+        if app not in self.cfg.apps:
+            return False
+        if submit and app in added and self.triage is not None:
+            self.next_due.setdefault(app, self.clock() + self.cfg.interval_s)
+        return True
 
     def start_triage(self, app: str) -> None:
         """Start the app's triage lane unless it is already running.
@@ -565,6 +658,10 @@ class Scheduler:
         self._reap()
         now = self.clock()
         reasons = _wake_reasons(wakes)
+        added = set(self.refresh_apps())
+        for app, why in reasons.items():
+            if app != ALL_APPS:
+                self.admit(app, submit=why.startswith("submit"), added=added)
         if reasons:
             self._dispatch("wake")
             self.next_dispatch = now + self.cfg.interval_s
@@ -621,6 +718,9 @@ class Scheduler:
             "pid": os.getpid(),
             "updated_at": _now_iso(),
             "apps": list(self.cfg.apps),
+            # Serve adds any app with an active job (choose_apps), so a job
+            # for an app not listed here is still ticked (coverage.py).
+            "ticks_active_jobs": self.cfg.app_source is not None,
             "interval_s": self.cfg.interval_s,
             "running": {a: r.proc.pid for a, r in self.running.items()},
             "ticks_started": self.ticks_started,

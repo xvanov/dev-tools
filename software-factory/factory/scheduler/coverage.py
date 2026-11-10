@@ -2,11 +2,14 @@
 
 A code job only moves when its app is ticked: pm-sync, the chain's steps and
 the CI watch all run inside ``factory tick --app <app>``. ``factory serve``
-ticks only the apps it was started with (``serve_tick: true``, ``--app`` or
-``$FACTORY_SERVE_APPS``) and writes that list to ``state/scheduler/serve.json``;
-Linux hosts that have not moved to serve tick from ``factory-tick@<app>.timer``.
-A job for an app neither covers is accepted and then sits ``queued`` forever,
-so submit, status and ``app list`` report it from here.
+ticks the opted-in apps (``serve_tick: true``, ``--app`` or
+``$FACTORY_SERVE_APPS``) plus every app with an active job, and writes its
+current list to ``state/scheduler/serve.json`` with ``ticks_active_jobs:
+true``; such a running serve ticks ANY app a job is submitted to. A serve from
+before that flag ticks only its list. Linux hosts that have not moved to serve
+tick from ``factory-tick@<app>.timer``. A job for an app nothing covers is
+accepted and then sits ``queued`` forever, so submit, status and ``app list``
+report it from here.
 
 ``ticked`` is ``True`` / ``False`` when this host can tell, and ``None`` when
 it cannot: no serve has ever run here and no timer is active (a test root, a
@@ -40,9 +43,13 @@ class TickCoverage:
         serve_apps: list[str] | None,
         serve_running: bool,
         timers: Callable[[], list[str]] = lambda: [],
+        *,
+        serve_ticks_jobs: bool = False,
     ) -> None:
         self.serve_apps = serve_apps  # None: no serve status at all
         self.serve_running = serve_running
+        #: The running serve adds any app with an active job (a job here makes one).
+        self.serve_ticks_jobs = serve_ticks_jobs
         self._timers = timers
         self._timer_apps: list[str] | None = None
 
@@ -60,6 +67,10 @@ class TickCoverage:
         return self._timer_apps
 
     def ticked(self, app: str) -> bool | None:
+        """Whether a job for ``app`` gets ticked here (not whether ``app`` is ticked
+        while idle: a serve that ticks active jobs ticks it once one exists)."""
+        if self.serve_running and self.serve_ticks_jobs and self.serve_apps is not None:
+            return True
         if self.serve_running and self.serve_apps is not None and app in self.serve_apps:
             return True
         if app in self.timer_apps():
@@ -72,14 +83,20 @@ class TickCoverage:
         """One line for ``why`` / ``warnings`` when ``app`` is not ticked, else None."""
         if self.ticked(app) is not False:
             return None
-        hint = (
-            f"set `serve_tick: true` in apps/{app}/config.yaml and restart factory serve, "
+        if self.serve_running:
+            # Only a serve from before ticks_active_jobs gets here.
+            ticks = ", ".join(self.serve_apps or []) or "no app"
+            return (
+                f"app {app} is not ticked: factory serve ticks {ticks} and is too old to tick "
+                f"apps with active jobs; update and restart factory serve, set `serve_tick: true` "
+                f"in apps/{app}/config.yaml (`factory app set {app} --serve-tick on`), "
+                f"or run `factory tick --app {app}`"
+            )
+        return (
+            f"app {app} is not ticked: factory serve is not running and no timer ticks it; "
+            f"start factory serve (it ticks every app with an active job; docs/WINDOWS.md) "
             f"or run `factory tick --app {app}`"
         )
-        if self.serve_running:
-            ticks = ", ".join(self.serve_apps or []) or "no app"
-            return f"app {app} is not ticked: factory serve ticks {ticks}; {hint}"
-        return f"app {app} is not ticked: factory serve is not running and no timer ticks it; {hint}"
 
 
 def _fresh(updated_at: Any, now: float) -> bool:
@@ -106,7 +123,10 @@ def read_coverage(
     apps = st.get("apps")
     serve_apps = [str(a) for a in apps] if isinstance(apps, list) else None
     running = bool(st.get("running")) or _fresh(st.get("updated_at"), clock())
-    return TickCoverage(serve_apps, running, timers or serve.systemd_timers_active)
+    return TickCoverage(
+        serve_apps, running, timers or serve.systemd_timers_active,
+        serve_ticks_jobs=bool(st.get("ticks_active_jobs")),
+    )
 
 
 __all__ = ["FRESH_S", "TickCoverage", "read_coverage"]

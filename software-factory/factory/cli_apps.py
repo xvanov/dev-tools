@@ -135,6 +135,7 @@ def render_config(
     detection: Detection,
     pipeline_default: str = "chain",
     requires: dict[str, list[str]] | None = None,
+    serve_tick: bool = False,
 ) -> str:
     """The commented ``config.yaml`` text. Round-trips through ``AppConfig``."""
     lines = [
@@ -156,6 +157,11 @@ def render_config(
         "",
         "# The pipeline a job runs when it names none (or `auto`): chain | solo | auto.",
         f"pipeline_default: {pipeline_default}",
+        "",
+        "# factory serve (Windows) ticks this app on its interval even when it has no",
+        "# active job. Off: serve still ticks it while a job is active. Change with",
+        "# `factory app set <app> --serve-tick on|off`.",
+        f"serve_tick: {'true' if serve_tick else 'false'}",
         "",
         "# Gate commands: a shell command, `none` (the repo has no such check:",
         "# skipped, reported 'not configured: skipped'), or EMPTY = NOT CONFIGURED",
@@ -237,6 +243,20 @@ def _parse_pipeline(value: str | None) -> str | None:
     return v
 
 
+def _parse_on_off(value: str | bool | None, flag: str) -> bool | None:
+    """``on``/``off`` (and true/false, yes/no, 1/0) -> bool; ``None`` for absent."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    v = str(value).strip().lower()
+    if v in ("on", "true", "yes", "1"):
+        return True
+    if v in ("off", "false", "no", "0"):
+        return False
+    raise AppAddError("invalid_serve_tick", f"{flag} is on or off, got {value!r}")
+
+
 # --- in-place config edits (comment-preserving) ----------------------------- #
 
 _TOP_SCALAR = r"^{key}:[ \t]*(?P<val>[^#\n]*?)(?P<tail>[ \t]+#[^\n]*)?[ \t]*$"
@@ -312,8 +332,12 @@ def set_app(
     review_default: str | None = None,
     review_min_diff_lines: int | None = None,
     caps: dict[str, Any] | None = None,
+    serve_tick: str | bool | None = None,
 ) -> dict[str, Any]:
     """Change an app's default delivery level, default pipeline and/or gates.
+
+    ``serve_tick`` (on|off): whether ``factory serve`` ticks the app while it
+    has no active job (it always ticks an app with one).
 
     v1.9: ``review_default`` (off|on|auto), ``review_min_diff_lines`` (0 = no
     size rule) and ``caps`` (``{budget_usd|wall_clock_h|max_rounds: value}``).
@@ -353,6 +377,7 @@ def set_app(
         cap_values = parse_caps(caps or {})
     except ValueError as exc:
         raise AppAddError("invalid_cap", str(exc)) from exc
+    tick_value = _parse_on_off(serve_tick, "--serve-tick")
     if (
         level is None
         and pipeline is None
@@ -361,11 +386,12 @@ def set_app(
         and review_mode is None
         and review_min_diff_lines is None
         and not cap_values
+        and tick_value is None
     ):
         raise AppAddError(
             "nothing_to_set",
             "pass --delivery-default, --pipeline-default, --gate, --requires, "
-            "--review-default, --review-min-diff-lines and/or --cap",
+            "--review-default, --review-min-diff-lines, --cap and/or --serve-tick",
         )
 
     text = cfg_path.read_text(encoding="utf-8")
@@ -430,6 +456,9 @@ def set_app(
             cblock[key] = v
             new_text = _set_block_child(new_text, "caps", key, str(v))
         expected["caps"] = cblock
+    if tick_value is not None:
+        expected["serve_tick"] = tick_value
+        new_text = _set_top_scalar(new_text, "serve_tick", "true" if tick_value else "false")
 
     try:
         AppConfig.model_validate(expected)
@@ -454,6 +483,7 @@ def set_app(
             ),
             ("review", raw.get("review"), expected.get("review")),
             ("caps", raw.get("caps"), expected.get("caps")),
+            ("serve_tick", bool(raw.get("serve_tick")), bool(expected.get("serve_tick"))),
         )
         if before != after
     ]
@@ -470,6 +500,7 @@ def set_app(
         "delivery": {"default": cfg.delivery.default.value},
         "pipeline_default": cfg.pipeline_default,
         **policy_defaults(cfg),
+        "serve_tick": cfg.serve_tick,
         "gates": ready["gates"],
         "readiness": _readiness_view(ready),
         "changed": changed,
@@ -577,9 +608,13 @@ def add_app(
     enable_tick: bool = False,
     gates: dict[str, str] | None = None,
     requires: dict[str, Any] | None = None,
+    serve_tick: bool = False,
     runner: Runner = _run,
 ) -> dict[str, Any]:
     """Register ``repo`` as an app under ``root``; returns the success shape.
+
+    ``serve_tick``: ``factory serve`` ticks the app on its interval even while
+    it has no active job (it ticks an app with an active job regardless).
 
     ``gates`` / ``requires`` (as in :func:`set_app`) override detection: the
     confirmed values a human chose. Raises :class:`AppAddError` on every
@@ -655,6 +690,7 @@ def add_app(
         detection=detection,
         pipeline_default=pipeline,
         requires=req_values,
+        serve_tick=serve_tick,
     )
     # Never write a config the loader would reject.
     cfg = AppConfig.model_validate(yaml.safe_load(text))
@@ -675,6 +711,7 @@ def add_app(
         "requires": req_values,
         "delivery": {"default": delivery.default.value},
         "pipeline_default": pipeline,
+        "serve_tick": cfg.serve_tick,
         "missing_gates": detection.missing,
         "suggested_gates": detection.suggested,
         "docs_only": detection.docs_only,
@@ -724,6 +761,7 @@ def list_registered_apps(root: Path, *, coverage: Any = None) -> list[dict[str, 
                 "delivery": {"default": cfg.delivery.default.value},
                 "pipeline_default": cfg.pipeline_default,
                 **policy_defaults(cfg),  # v1.9
+                "serve_tick": cfg.serve_tick,
                 "ticked": coverage.ticked(app),  # v1.6
                 "gates": ready["gates"],
                 "readiness": _readiness_view(ready),
@@ -759,6 +797,7 @@ def show_app(root: Path, app: str) -> dict[str, Any]:
         "delivery": {"default": cfg.delivery.default.value},
         "pipeline_default": cfg.pipeline_default,
         **policy_defaults(cfg),
+        "serve_tick": cfg.serve_tick,
         "gates": ready["gates"],
         "readiness": _readiness_view(ready),
         "detected": {k: det.gates.get(k, "") for k in GATE_KEYS} if det else {},
@@ -842,6 +881,12 @@ def add_cmd(
         "--enable-tick",
         help="Also `systemctl --user enable --now factory-tick@<app>.timer`.",
     ),
+    serve_tick: bool = typer.Option(
+        False,
+        "--serve-tick",
+        help="factory serve (Windows) ticks the app on its interval even with no active job "
+        "(writes serve_tick: true). Without it serve ticks the app only while a job is active.",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
 ) -> None:
     """Register any GitHub repo as a factory app (writes apps/<app>/config.yaml)."""
@@ -857,6 +902,7 @@ def add_cmd(
             enable_tick=enable_tick,
             gates=_assignments(gate, "--gate"),
             requires=_assignments(requires, "--requires"),
+            serve_tick=serve_tick,
             runner=_run,  # module global, looked up per call (patchable)
         )
     except AppAddError as exc:
@@ -871,6 +917,11 @@ def add_cmd(
         typer.echo(f"  {gate_key}: {cmd or '(EMPTY — not configured)'}")
     typer.echo(f"  delivery default: {res['delivery']['default']}")
     typer.echo(f"  pipeline default: {res['pipeline_default']}")
+    typer.echo(
+        "  serve_tick: "
+        + ("on (factory serve ticks it on its interval)" if res["serve_tick"]
+           else "off (factory serve ticks it while a job is active)")
+    )
     if res["missing_gates"]:
         typer.echo("  MISSING gates (fill in by hand): " + ", ".join(res["missing_gates"]))
     for gate_key, sug in res["suggested_gates"].items():
@@ -914,6 +965,10 @@ def set_cmd(
     cap: list[str] | None = typer.Option(
         None, "--cap", help="v1.9: NAME=VALUE (repeat): budget_usd, wall_clock_h, max_rounds"
     ),
+    serve_tick: str | None = typer.Option(
+        None, "--serve-tick",
+        help="on | off: factory serve ticks the app on its interval even with no active job",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Print one JSON object (JOBS-API)."),
 ) -> None:
     """Change an app's defaults and gates (edits config.yaml in place)."""
@@ -928,6 +983,7 @@ def set_cmd(
             review_default=review_default,
             review_min_diff_lines=review_min_diff_lines,
             caps=_assignments(cap, "--cap"),
+            serve_tick=serve_tick,
         )
     except AppAddError as exc:
         _fail(json_out, exc.code, exc.message)
@@ -937,6 +993,7 @@ def set_cmd(
     typer.echo(f"{res['app']}: {res['config_path']}")
     typer.echo(f"  review: {res['review']}")
     typer.echo(f"  caps: {res['caps']}")
+    typer.echo(f"  serve_tick: {'on' if res['serve_tick'] else 'off'}")
     typer.echo(f"  delivery default: {res['delivery']['default']}")
     typer.echo(f"  pipeline default: {res['pipeline_default']}")
     _echo_gates(res)

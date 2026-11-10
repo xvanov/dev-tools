@@ -1028,6 +1028,86 @@ def list_jobs(
     return {"jobs": jobs}
 
 
+
+# --------------------------------------------------------------------------- #
+# Which apps have work a tick can move (serve's tick set)
+# --------------------------------------------------------------------------- #
+
+#: Story states a tick cannot move: a human owns it, it delivered, or it ended.
+_NO_TICK_STATES: frozenset[str] = frozenset(
+    HUMAN_STATES | DELIVERED_UNMERGED_STATES | LOCAL_MERGED_STATES | FAILED_STATES | IGNORED_STATES
+)
+
+
+def _job_wants_tick(conn: sqlite3.Connection | None, ref: JobRef) -> bool:
+    """True while a code job is queued, triaging, in progress, blocked or paused.
+
+    Local only (no GitHub): the cheap read ``factory serve`` repeats every few
+    seconds. Errs towards False only where the job state does: needs_human
+    (approval, needs-direction, a parked story), delivered, failed, cancelled.
+    """
+    rows = _query(
+        conn,
+        "SELECT state, last_rejection_reason FROM stories WHERE app = ? AND direction_id = ?",
+        (ref.app, ref.direction_id),
+    )
+    for r in rows:
+        state = str(r["state"] or "")
+        if (
+            _is_live(state)
+            and state not in _NO_TICK_STATES
+            and not is_dependency_cap_parked(state, r["last_rejection_reason"])
+        ):
+            return True
+    if rows:
+        return False
+    state_yaml = read_state_yaml(ref.dir_path)
+    if isinstance(state_yaml.get(CANCEL_KEY), dict):
+        return False
+    st = _query(
+        conn,
+        "SELECT status FROM directions WHERE app = ? AND direction_id = ?",
+        (ref.app, ref.direction_id),
+    )
+    status = str(st[0]["status"]) if st and st[0]["status"] else str(state_yaml.get("status") or "created")
+    if status == "pm-validated":
+        return True
+    if status != "created":
+        return False
+    try:
+        from factory.directions.parser import parse_direction_dir
+
+        direction = parse_direction_dir(ref.app, ref.dir_path)
+        direction.status = status
+        return not awaiting_operator_approval(direction)
+    except Exception:  # noqa: BLE001 - unreadable: a tick's pm-sync will say why
+        return True
+
+
+def apps_with_active_jobs(root: Path, apps: Collection[str] | None = None) -> list[str]:
+    """Registered apps with at least one code job a tick can move.
+
+    ``factory serve`` ticks these whatever their ``serve_tick`` says: a
+    submitted job is explicit intent to spend, and an app nothing ticks leaves
+    it ``queued`` forever (raven, 2026-11-09). Research/report jobs are not
+    counted: serve dispatches those in-process, without a tick. Never raises.
+    """
+    from factory.jobs.common import registered_apps
+
+    out: list[str] = []
+    conn = _ro_connect(state_db_path(root))
+    try:
+        for app in sorted(apps) if apps is not None else registered_apps(root):
+            try:
+                if any(_job_wants_tick(conn, ref) for ref in iter_jobs(root, app=app)):
+                    out.append(app)
+            except Exception:  # noqa: BLE001 - one broken app must not hide the rest
+                continue
+    finally:
+        if conn is not None:
+            conn.close()
+    return out
+
 #: Never parked by cancel — the human (or quarantine) already ruled.
 _CANCEL_LEAVE_STATES: frozenset[str] = frozenset(
     {_S.CLOSED_BY_OPERATOR.value, _S.QUARANTINED_INVALID_STATE.value}
@@ -1177,6 +1257,7 @@ __all__ = [
     "CANCEL_KEY",
     "JOB_STATES",
     "JobError",
+    "apps_with_active_jobs",
     "cancel_job",
     "job_status",
     "list_jobs",

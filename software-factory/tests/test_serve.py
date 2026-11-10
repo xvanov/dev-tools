@@ -354,6 +354,105 @@ def test_submit_wake_triages_without_starting_a_tick(tmp_path: Path) -> None:
     assert h.spawned[-1][2][serve.TICK_REASON_ENV] == "wake"
 
 
+class _Apps:
+    """A mutable app source: what choose_apps would answer right now."""
+
+    def __init__(self, *apps: str) -> None:
+        self.apps = list(apps)
+        self.calls = 0
+
+    def __call__(self) -> list[str]:
+        self.calls += 1
+        return list(self.apps)
+
+
+def _dynamic(tmp_path: Path, source: _Apps, refresh_s: float = 10.0) -> Harness:
+    h = Harness(tmp_path, source())
+    h.sched.cfg.app_source = source
+    h.sched.cfg.refresh_s = refresh_s
+    return h
+
+
+def test_a_new_active_app_is_ticked_without_a_restart(tmp_path: Path) -> None:
+    """raven (2026-11-09): serve ticked only the apps it started with, so a
+    job for a newly registered app sat queued forever."""
+    src = _Apps("a")
+    h = _dynamic(tmp_path, src)
+    h.sched.step()
+    assert h.apps_started() == ["a"]
+    src.apps = ["a", "raven"]  # a job was submitted to raven (no serve_tick)
+    h.now = 5
+    h.sched.step()  # not due for a re-read yet
+    assert h.apps_started() == ["a"]
+    h.now = 11
+    h.sched.step()
+    assert h.apps_started() == ["a", "raven"]
+    assert h.sched.snapshot()["apps"] == ["a", "raven"]
+    assert h.sched.snapshot()["ticks_active_jobs"] is True
+    # The job finished: raven leaves the set and is not ticked again.
+    src.apps = ["a"]
+    for _, p, _ in h.spawned:
+        p.rc = 0
+    h.now = 1000
+    h.sched.step()
+    assert h.apps_started()[2:] == ["a"]
+
+
+def test_a_wake_for_an_unknown_app_re_reads_at_once(tmp_path: Path) -> None:
+    src = _Apps("a")
+    h = _dynamic(tmp_path, src, refresh_s=3600)
+    h.sched.step()
+    src.apps = ["a", "raven"]
+    h.now = 1
+    h.sched.step({"raven": "resume raven:001"})
+    assert h.apps_started() == ["a", "raven"]
+    assert h.spawned[-1][2][serve.TICK_REASON_ENV] == "wake"
+
+
+def test_a_submit_to_a_new_app_triages_first(tmp_path: Path) -> None:
+    """The submit starts triage; the new app's first tick waits for triage's
+    wake instead of racing it with an interval tick (8.4.15)."""
+    seen: list[str] = []
+    src = _Apps("a")
+    h = _dynamic(tmp_path, src, refresh_s=3600)
+    h.sched.triage = lambda app: seen.append(app)
+    h.sched.step()
+    src.apps = ["a", "raven"]
+    h.now = 1
+    h.sched.step({"raven": "submit raven:001"})
+    _join_triage(h)
+    assert seen == ["raven"]
+    assert h.apps_started() == ["a"]
+    h.sched.step({"raven": "triaged"})
+    assert h.apps_started() == ["a", "raven"]
+
+
+def test_admit_from_the_api_adds_the_app(tmp_path: Path) -> None:
+    src = _Apps("a")
+    h = _dynamic(tmp_path, src, refresh_s=3600)
+    h.sched.triage = lambda app: None
+    h.sched.step()
+    assert h.sched.admit("raven", submit=True) is False  # no job yet
+    src.apps = ["a", "raven"]
+    assert h.sched.admit("raven", submit=True) is True
+    assert h.sched.next_due["raven"] == h.now + h.sched.cfg.interval_s
+
+
+def test_a_failing_app_source_keeps_the_current_set(tmp_path: Path) -> None:
+    def boom() -> list[str]:
+        raise RuntimeError("db locked")
+
+    h = Harness(tmp_path, ["a"])
+    h.sched.cfg.app_source = boom
+    h.sched.step()
+    assert h.apps_started() == ["a"] and h.sched.cfg.apps == ["a"]
+    assert any("re-reading the app set failed" in line for line in h.lines)
+
+
+def test_a_fixed_app_set_says_so(tmp_path: Path) -> None:
+    assert Harness(tmp_path, ["a"]).sched.snapshot()["ticks_active_jobs"] is False
+
+
 def test_interval_tick_does_not_carry_the_wake_reason(tmp_path: Path) -> None:
     h = Harness(tmp_path, ["a"])
     h.sched.step()

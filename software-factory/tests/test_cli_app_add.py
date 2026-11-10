@@ -580,6 +580,7 @@ def test_cli_list_json_shape(cli, factory_root: Path, tmp_path: Path) -> None:
             "pipeline_default",
             "review",  # v1.9
             "caps",  # v1.9
+            "serve_tick",
             "ticked",
             "gates",
             "readiness",
@@ -755,3 +756,45 @@ def test_app_config_pipeline_default_is_a_closed_set() -> None:
         assert AppConfig(name="a", repo="o/a", pipeline_default=ok).pipeline_default == ok
     with pytest.raises(ValidationError):
         AppConfig(name="a", repo="o/a", pipeline_default="swarm")
+
+
+# --------------------------------------------------------------------------- #
+# serve_tick (raven, 2026-11-09: an app added without it was never ticked)
+# --------------------------------------------------------------------------- #
+
+
+def test_add_serve_tick_is_off_unless_asked(factory_root: Path) -> None:
+    _git_repo(factory_root.parent / "widget", PY_UV, "git@github.com:Acme/Widget.git")
+    res = add_app(root=factory_root, repo="Acme/Widget", runner=_no_systemd)
+    assert res["serve_tick"] is False
+    assert load_app_config("widget", factory_root).serve_tick is False
+    res = add_app(root=factory_root, repo="Acme/Widget", force=True, serve_tick=True, runner=_no_systemd)
+    assert res["serve_tick"] is True
+    assert load_app_config("widget", factory_root).serve_tick is True
+    assert "serve-tick on|off" in (factory_root / "apps/widget/config.yaml").read_text(encoding="utf-8")
+
+
+def test_cli_add_and_set_serve_tick(cli, factory_root: Path) -> None:
+    _git_repo(factory_root.parent / "widget", PY_UV, "git@github.com:Acme/Widget.git")
+    r = cli("add", "--repo", "Acme/Widget", "--serve-tick", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["serve_tick"] is True
+    r = cli("set", "widget", "--serve-tick", "off", "--json")
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.stdout)
+    assert payload["serve_tick"] is False and payload["changed"] == ["serve_tick"]
+    assert load_app_config("widget", factory_root).serve_tick is False
+    r = cli("set", "widget", "--serve-tick", "maybe", "--json")
+    assert r.exit_code == 1 and json.loads(r.stdout)["error"] == "invalid_serve_tick"
+    rows = {row["app"]: row for row in list_registered_apps(factory_root)}
+    assert rows["widget"]["serve_tick"] is False
+
+
+def test_set_serve_tick_on_a_hand_written_config_keeps_comments(factory_root: Path) -> None:
+    path = _app(factory_root, HAND_WRITTEN)
+    res = set_app(root=factory_root, app="w", serve_tick="on")
+    assert res["serve_tick"] is True and res["comments_preserved"] is True
+    text = path.read_text(encoding="utf-8")
+    assert "# Hand-written header" in text and "serve_tick: true" in text
+    set_app(root=factory_root, app="w", serve_tick=False)
+    assert load_app_config("w", factory_root).serve_tick is False

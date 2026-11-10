@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8 and v1.9 2026-11-09, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8, v1.9 and v1.10 2026-11-09, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -374,6 +374,7 @@ A code job is refused at submit, before anything is written, with:
                              COMMAND `none` = no such check. Overrides detection.
 --requires NAME=tool,tool    optional, repeatable
 --enable-tick / --force      optional
+--serve-tick                 optional (v1.10): factory serve ticks the app on its interval
 ```
 Registers any repo as a factory app: writes `apps/<app>/config.yaml` with detected gate commands
 (deterministic toolchain detection: Makefile, Python, Node/TS, Go, Rust, .NET, JVM, Ruby, PHP;
@@ -739,8 +740,9 @@ job has no such key; its first `runs[].started_at` is the nearest stamp.
 ## v1.6 additions (2026-11-08): is the job's app ticked?
 
 Additive. A code job moves only when its app is ticked (`factory tick --app <app>`: pm-sync, every
-chain step, the CI watch). `factory serve` ticks only the apps it was started with (`serve_tick:
-true`, `--app`, `FACTORY_SERVE_APPS`) and lists them in `state/scheduler/serve.json`; a Linux host
+chain step, the CI watch). `factory serve` ticked only the apps it was started with (`serve_tick:
+true`, `--app`, `FACTORY_SERVE_APPS`; since v1.10 also every app with an active job) and lists them
+in `state/scheduler/serve.json`; a Linux host
 not yet on serve ticks from `factory-tick@<app>.timer`. A job for an app neither covers used to
 be accepted and then sat `queued` forever ("waiting for pm-sync on the next factory tick").
 
@@ -916,3 +918,25 @@ a weekday when not today) and is never `stalled`. `policy` is null for research/
 `"review": {"default", "auto_min_diff_lines"}` and `"caps": {"budget_usd", "wall_clock_h",
 "max_rounds"}`. Errors add `invalid_review`, `invalid_cap`.
 
+## v1.10 additions (2026-11-09): serve ticks every app with an active job
+
+Additive. raven (2026-11-09): an app registered with `factory app add` had no `serve_tick`, so
+serve never ticked it and the PA's job sat `queued` forever.
+
+- `factory serve` ticks the opted-in apps (`serve_tick: true`, `--app`, `FACTORY_SERVE_APPS`)
+  **plus every registered app with an active code job**: queued (not awaiting approval),
+  triaging, in progress, blocked or paused (`factory/jobs/status.py` `apps_with_active_jobs`;
+  local db and direction files only). A submitted job is the intent to spend. An idle app
+  without `serve_tick` is still never ticked. Serve re-reads the set every 10 s and at once when
+  a submit or resume names an app outside it (the wake file, or `POST /api/cli` `job submit`),
+  so neither a new job nor a `serve_tick` edit needs a restart. A submit to a newly added app
+  starts PM triage at once; its first tick follows triage, not the 300 s interval.
+- `state/scheduler/serve.json` adds `"ticks_active_jobs": true`. With a running serve that sets
+  it, `ticked` is `true` for every app (a job there will be ticked). A serve without the flag
+  keeps the v1.6 rule. So submit's `ticker:` warning now means nothing will tick the job: serve
+  is not running (or is too old) and no timer covers the app. The warning names the fix
+  (start factory serve, or `factory tick --app <app>`).
+- `factory app add --serve-tick` writes `serve_tick: true`; `factory app set <app> --serve-tick
+  on|off` changes it. `app add`, `app set`, `app show` and every `app list` row add
+  `"serve_tick": true | false`. Errors add `invalid_serve_tick`. The PA registers repos with
+  `--serve-tick` (you add a repo to send work to it).
