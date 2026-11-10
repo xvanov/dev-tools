@@ -720,6 +720,8 @@ function jobView(job: Job | null | undefined, pa: { id: number; url?: string | n
     billing: r?.billing === 'subscription' ? 'subscription' : 'metered',
     startedAt: r?.started_at || null,
     endedAt: r?.ended_at || null,
+    // JOBS-API v1.11: Build's run viewer can show this step's turns.
+    viewable: Boolean(r?.viewable),
     session: r?.session && safeUrl(r.session.url)
       ? {
         machine: r.session.machine ? clip(r.session.machine, 60) : null,
@@ -765,6 +767,28 @@ function jobView(job: Job | null | undefined, pa: { id: number; url?: string | n
     canCancel: !(Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state)),
     // The PA run that submitted it, and that run's card (plan E1: Build links back to Plan).
     paRun: pa ? { id: pa.id, url: safeUrl(pa.url), card: pa.card != null && /^\d+$/.test(String(pa.card)) ? String(pa.card) : null } : null,
+    // JOBS-API v1.9, for the Board view: a provider-limit pause, the last failover, and the caps against their use.
+    paused: job?.paused && typeof job.paused === 'object'
+      ? { runtime: RUNTIMES.includes(job.paused.runtime) ? job.paused.runtime : null, until: isoOrNull(job.paused.until), why: job.paused.why ? clip(job.paused.why, 200) : null }
+      : null,
+    failover: job?.failover && typeof job.failover === 'object'
+      ? { from: String(job.failover.from || '').slice(0, 20), to: String(job.failover.to || '').slice(0, 20), why: job.failover.why ? clip(job.failover.why, 200) : null }
+      : null,
+    caps: capsView(job?.policy?.caps),
+    startedAt: isoOrNull(job?.started_at),
+  };
+}
+
+/** Pure. A job's caps and what it has used of them (policy.caps, JOBS-API v1.9), or null. */
+function capsView(caps: Job | null | undefined) {
+  if (!caps || typeof caps !== 'object') return null;
+  const used = caps.used && typeof caps.used === 'object' ? caps.used : null;
+  const opt = (v: unknown) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+  return {
+    budgetUsd: opt(caps.budget_usd),
+    wallClockH: opt(caps.wall_clock_h),
+    maxRounds: opt(caps.max_rounds),
+    used: used ? { spendUsd: num(used.spend_usd), rounds: num(used.rounds), wallS: num(used.wall_s) } : null,
   };
 }
 

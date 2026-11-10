@@ -21,6 +21,19 @@
   var data = null;
   var busyForm = false;
 
+  // Board (default) or List, remembered per browser; a convenience, so storage may fail.
+  function view() {
+    try { return window.localStorage.getItem('pa.build.view') === 'list' ? 'list' : 'board'; } catch (e) { return 'board'; }
+  }
+  document.querySelectorAll('[data-view]').forEach(function (b) {
+    b.setAttribute('aria-pressed', String(b.getAttribute('data-view') === view()));
+    b.addEventListener('click', function () {
+      try { window.localStorage.setItem('pa.build.view', b.getAttribute('data-view')); } catch (e) { /* not kept */ }
+      document.querySelectorAll('[data-view]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      if (data) render();
+    });
+  });
+
   // This page's token (server.js issuePageToken): kept in memory only.
   var PAGE_TOKEN = (function () {
     var m = document.querySelector('meta[name="pa-page"]');
@@ -173,7 +186,9 @@
       r.session ? inLink(r.session.url, r.state === 'running' ? 'watch live' : 'session', 'This step\'s session in Run' + (r.session.machine ? ' on ' + r.session.machine : '')) : null);
   }
 
-  function jobCard(j) {
+  // A job's buttons (Read report, Approve, Open in termhub, Cancel, back links): the
+  // List view's card and the Board view's card (factory.board.client.js) both use them.
+  function jobActions(j) {
     var actions = el('div', { class: 'actions' });
     if (j.report) actions.append(clicker(el('button', { class: 'primary', type: 'button', text: 'Read report' }), function () { return readReport(j); }));
     if (j.canApprove) {
@@ -213,7 +228,11 @@
     // Back up the chain (plan E1): the card in Plan, and the PA run's own session in Run.
     if (j.paRun && j.paRun.card) actions.append(inLink('./#card-' + j.paRun.card, 'card #' + j.paRun.card, 'The card in Plan'));
     if (j.paRun) actions.append(j.paRun.url ? inLink(j.paRun.url, 'run #' + j.paRun.id, 'The run\'s follow session in Run') : chip('run #' + j.paRun.id, 'mono'));
+    return actions;
+  }
 
+  function jobCard(j) {
+    var actions = jobActions(j);
     var running = j.runs.filter(function (r) { return r.state === 'running'; });
     var others = j.runs.filter(function (r) { return r.state !== 'running'; });
     return el('div', { class: 'job ' + j.group, 'data-job': j.jobId },
@@ -268,6 +287,25 @@
     // Jarvis's "Waiting for your yes" card (permission.js) lives first in this
     // main; a re-render keeps it.
     var yes = document.getElementById('chatyes');
+    // The Board view (plan 8.8.2, factory.board.client.js): progress, the steps on a
+    // time axis and each step's turns in the page. The List view is the grouped list below.
+    if (view() === 'board' && window.FactoryBoard) {
+      board.classList.add('boardview');
+      window.FactoryBoard.render(board, data, { actions: jobActions, keep: function () { return document.getElementById('chatyes'); } });
+      fillForm();
+      // #job=<id>&step=<n> (plan E1) opens that step's turns here.
+      var hm = /^#job=([^&]+)&step=(\d+)$/.exec(location.hash || '');
+      if (hm && focused !== location.hash) {
+        focused = location.hash;
+        var jid = decodeURIComponent(hm[1]);
+        var all = Object.keys(data.groups || {}).reduce(function (a, k) { return a.concat(data.groups[k]); }, []);
+        var job = all.filter(function (x) { return x.jobId === jid; })[0];
+        var run = job && job.runs.filter(function (r) { return String(r.id) === hm[2]; })[0];
+        if (run) window.FactoryBoard.viewer.open(job, run);
+      }
+      return;
+    }
+    board.classList.remove('boardview');
     board.replaceChildren.apply(board, GROUPS.map(function (g) {
       var list = data.groups[g[0]] || [];
       return el.apply(null, ['section', { class: g[0] },
@@ -302,7 +340,10 @@
     }
     (step || card).scrollIntoView({ block: 'center' });
   }
-  window.addEventListener('hashchange', function () { focusFromHash(true); });
+  window.addEventListener('hashchange', function () {
+    if (view() === 'board' && data) render();
+    else focusFromHash(true);
+  });
 
   // ---- New job ----------------------------------------------------------------------
   var form = document.getElementById('newform');

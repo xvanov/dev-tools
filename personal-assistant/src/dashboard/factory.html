@@ -115,6 +115,77 @@
   #appform .row { display: flex; gap: 8px; align-items: center; }
   @media (max-width: 560px) { #appform .gaterow, #appform .two { grid-template-columns: minmax(0, 1fr); } }
 
+  /* The Board view (factory.board.client.js, plan 8.8.2). */
+  .viewsw { display: flex; gap: 4px; }
+  .viewsw button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
+  main.boardview { display: flex; flex-direction: column; gap: 14px; }
+  body.viewing main.boardview { margin-right: min(46vw, 720px); }
+  .bstrip, .brecent { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 14px; box-shadow: var(--shadow-1); }
+  .bstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
+  .bcards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); align-items: start;
+    background: none; border: 0; box-shadow: none; padding: 0; }
+  .bcard { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; box-shadow: var(--shadow-1);
+    display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .bcard.open { grid-column: 1 / -1; }
+  .bcard.needs_you { border-color: var(--amber); }
+  .bcard .t { font-weight: 600; }
+  .bprog, .bcost, .brow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+  .brow { justify-content: space-between; }
+  .pbar { flex: 1 1 120px; height: 6px; background: var(--surface-2); border-radius: var(--radius-pill); overflow: hidden; min-width: 80px; }
+  .pbar > span { display: block; height: 100%; background: var(--signal); border-radius: inherit; transition: width .4s var(--ease); }
+  .pbar.delivered > span { background: var(--ok); }
+  .pbar.needs_you > span, .pbar.warn > span { background: var(--amber); }
+  .pbar.ended > span { background: var(--bad); }
+  .pbar.unknown > span { width: 30% !important; animation: bslide 1.6s var(--ease) infinite alternate; opacity: .6; }
+  @keyframes bslide { from { margin-left: 0; } to { margin-left: 70%; } }
+  .bnow { font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: bpulse 1.4s ease-in-out infinite; }
+  @keyframes bpulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .pulse, .pbar.unknown > span { animation: none; } }
+  .dots { display: flex; flex-wrap: wrap; gap: 3px; }
+  .dot { width: 10px; height: 10px; padding: 0; border-radius: 50%; border: 0; background: var(--ink-3); cursor: pointer; }
+  .dot.ok { background: var(--ok); } .dot.failed { background: var(--bad); } .dot.running { background: var(--signal); animation: bpulse 1.4s ease-in-out infinite; }
+  button.linkish { border: 0; background: none; color: var(--signal); padding: 0; font-size: var(--text-sm); }
+  button.linkish:disabled { color: var(--ink-3); }
+  .trace { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .lane { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 8px; align-items: center; }
+  .lname { font: 600 var(--text-xs) var(--font-mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track { position: relative; height: 22px; background: var(--surface-2); border-radius: var(--radius-sm); }
+  .blk { position: absolute; top: 2px; bottom: 2px; padding: 0 4px; border-radius: 4px; border: 1px solid transparent; font: 10px/16px var(--font-mono);
+    color: var(--on-signal); background: var(--ok); overflow: hidden; white-space: nowrap; min-width: 6px; }
+  .blk.failed { background: var(--bad); } .blk.running { background: var(--signal); }
+  .blk.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .brecent ul.runs li { gap: 8px; }
+  .brecent h2 { margin: 0 0 6px; font-size: 13px; }
+  .brecent h2 + ul { margin-bottom: 10px; }
+
+  /* The run viewer: one step's turns, on the right, streaming. */
+  .fviewer { position: fixed; top: 0; right: 0; bottom: 0; width: min(46vw, 720px); z-index: 25; background: var(--surface-1);
+    border-left: 1px solid var(--line); box-shadow: var(--shadow-2); display: flex; flex-direction: column; }
+  .fviewer[hidden] { display: none; }
+  @media (max-width: 900px) { .fviewer { width: 100vw; } body.viewing main.boardview { margin-right: 0; } }
+  .vbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .vhead { padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+  .vhead .t { font-weight: 600; }
+  .vlist { flex: 1; overflow: auto; padding: 8px 12px 24px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .vtext { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 var(--font-mono); }
+  .vturn .vtext { font-family: var(--font-sans); font-size: 13px; }
+  .vtool { border: 1px solid var(--line); border-left: 3px solid var(--signal); border-radius: var(--radius-sm); padding: 4px 8px; background: var(--surface-2); }
+  .vtool.err { border-left-color: var(--bad); }
+  .vtool > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; list-style: none; min-width: 0; }
+  .vtool > summary::-webkit-details-marker { display: none; }
+  .tname { font: 600 12px var(--font-mono); flex: none; }
+  .targ { font: 12px var(--font-mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .tres { flex: none; font-weight: 700; } .tres.ok { color: var(--ok); } .tres.err { color: var(--bad); } .tres.pending { color: var(--ink-3); }
+  .vlabel { color: var(--ink-3); font-size: var(--text-xs); margin-top: 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .vthink, .vprompt, .vdiff { color: var(--ink-2); }
+  .vthink > summary, .vprompt > summary, .vdiff > summary { cursor: pointer; font-size: var(--text-sm); }
+  .vdiff ul { margin: 4px 0; padding-left: 16px; } .add { color: var(--ok); } .del { color: var(--bad); }
+  .vmeta { color: var(--ink-3); font: var(--text-xs) var(--font-mono); }
+  .vgate, .vresult { border-radius: var(--radius-sm); padding: 6px 8px; font-size: 13px; }
+  .vgate.pass, .vresult.pass { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .vgate.fail, .vresult.fail { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--surface-0); padding: 8px 14px; border-radius: var(--radius); font-size: 13px; opacity: 0;
     transition: opacity .2s var(--ease); pointer-events: none; max-width: 90vw; z-index: 40; }
@@ -128,6 +199,10 @@
 <div>
   <h2>Status</h2>
   <span class="meta" id="updated">loading…</span>
+</div>
+<div class="viewsw" role="group" aria-label="View">
+  <button type="button" data-view="board" title="Progress, the steps on a time axis, and each step's turns">Board</button>
+  <button type="button" data-view="list" title="Jobs grouped: needs you, running, delivered, ended">List</button>
 </div>
 <div>
   <h2>Spend</h2>
@@ -181,6 +256,7 @@
      Before factory.js, which takes the page token out of the DOM. -->
 <script src="login.js"></script>
 <script src="permission.js"></script>
+<script src="factory-board.js"></script>
 <script src="factory.js"></script>
 <script src="factory-apps.js"></script>
 </body>

@@ -249,7 +249,7 @@ const ROUTES: Route[] = [
   // The Factory layer (dashboard/factory.ts, factory.html): every factory job
   // from the worker's stored list, and its actions (X-PA guarded there).
   {
-    path: (url) => oneOf('/factory', '/factory.js', '/factory-apps.js', '/api/factory')(url) || url.pathname.startsWith('/api/factory/'),
+    path: (url) => oneOf('/factory', '/factory.js', '/factory-apps.js', '/factory-board.js', '/api/factory')(url) || url.pathname.startsWith('/api/factory/'),
     handle: (c) => require('./factory.ts').route(c.req, c.res, c.url, c),
   },
   // The live feed (dashboard/events.ts): GET /api/events, an SSE stream of

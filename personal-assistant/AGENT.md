@@ -93,6 +93,12 @@ checked against `factoryCore.JOB_ID` before anything, Approve runs only the `app
 factory named in that job's own warning (read from the stored list, never from the request), a new
 code job at `auto_merge`/`push_to_main` needs the page token and the level confirmed, and a report —
 agent-written — arrives as a parsed tree (`test/factoryBoard.test.js` fails on an HTML sink).
+Its Board view (`factory.board.client.js`, plan 8.8.2) shows each step's turns in the page — agent
+text, tool arguments and results, all built with `textContent` (`test/factoryBoardView.test.js`
+fails on an HTML sink) — through two reads, `GET /api/factory/board` and
+`GET /api/factory/steps/<id>/events` (`src/dashboard/factoryBoard.ts`), whose query values are
+checked (step id digits, cursor `<file>:<offset>`, limit, wait ≤ 20 s) before each becomes one
+argv element of `factory job board|step` (JOBS-API v1.11).
 
 The one sanctioned way off loopback is **termhub's `/pa/` proxy** (`TERMHUB_PA_URL`), which
 rewrites `Host` to loopback and forwards `X-PA`. That reaches exactly the people who can already

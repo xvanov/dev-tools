@@ -12,6 +12,9 @@
 //   POST /api/factory/events          a factory pushes job status changes (live feed)
 //   GET|POST /api/factory/apps[/<app>] the Repos section: registered repos, gates, add/edit
 //                                     (factoryApps.ts; page script factory.apps.client.js)
+//   GET  /api/factory/board           the Board view: `factory job board` (factoryBoard.ts)
+//   GET  /api/factory/steps/<id>/events one step's turns, paginated, long-polled
+//                                     (`factory job step`; page script factory.board.client.js)
 //
 // The page never makes the factory work per request: the board is the
 // `factory job list` the worker stored (factory.refreshBoard, sql/031). Only a
@@ -35,6 +38,7 @@ const F = require('../dispatch/factoryCore.ts');
 const PAGE = path.join(__dirname, 'factory.html');
 const CLIENT = path.join(__dirname, 'factory.client.js');
 const APPS_CLIENT = path.join(__dirname, 'factory.apps.client.js');
+const BOARD_CLIENT = path.join(__dirname, 'factory.board.client.js');
 
 const KIND_LABEL: Record<string, string> = { code: 'code — change a repo', research: 'research — answer a question, write a report', report: 'report — write a document', plan: 'plan — read-only: an implementation plan, change nothing' };
 const RUNTIME_LABEL: Record<string, string> = { api: 'API models (metered)', claude_session: 'Claude session (subscription)' };
@@ -160,6 +164,12 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
     send(res, 200, fs.readFileSync(APPS_CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
     return true;
   }
+  if (req.method === 'GET' && url.pathname === '/factory-board.js') {
+    send(res, 200, fs.readFileSync(BOARD_CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
+    return true;
+  }
+  // The Board view (factoryBoard.ts, plan 8.8.2): the factory's snapshot and one step's turns.
+  if (await require('./factoryBoard.ts').route(req, res, url, { send })) return true;
   if (req.method === 'GET' && url.pathname === '/api/factory') {
     send(res, 200, await boardData());
     return true;
