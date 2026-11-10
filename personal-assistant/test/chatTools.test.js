@@ -249,6 +249,10 @@ async function main() {
     const s = chat.settingsJson();
     for (const t of T.CHAT_READ_TOOL_NAMES) assert.ok(s.permissions.allow.includes(`mcp__pa-chat__${t}`), `${t} is allowed`);
     for (const t of T.CHAT_ACTION_TOOL_NAMES) assert.ok(!s.permissions.allow.some((r) => r.endsWith(`__${t}`)), `${t} asks`);
+    // Microsoft 365 reads run unasked, one by one; no wildcard that would let a send through.
+    assert.ok(s.permissions.allow.includes('mcp__claude_ai_Microsoft_365__outlook_email_search'));
+    assert.ok(!s.permissions.allow.some((r) => /Microsoft_365(__\*)?$/.test(r)), 'no server-wide M365 rule');
+    assert.ok(!s.permissions.allow.some((r) => /Microsoft_365__.*(send|create|update|delete|reply)/i.test(r)), 'no M365 write is allowed');
     const cmd = 'claude --permission-mode default';
     assert.deepStrictEqual(chat.verifyClaudeHome({ settings: s, command: cmd }), []);
     assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__factory_start'] } }, command: cmd }).join(), /action tool/);

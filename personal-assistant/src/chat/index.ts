@@ -275,6 +275,18 @@ const TASK_TOOL = 'task_add';
 // that would let one through.
 const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTION_TOOLS } = require('../mcp/chatTools.ts');
 
+// The claude.ai Microsoft 365 connector's tools that only read (search mail,
+// calendar, chats, people, SharePoint). Named one by one, never `mcp__..._365__*`,
+// so a send or write tool the connector adds later still asks. Without these
+// every search asked, and parallel searches asked again after each yes
+// (2026-11-10: "it keeps asking me about outlook search").
+const M365 = 'mcp__claude_ai_Microsoft_365__';
+const M365_READ_TOOLS = [
+  'outlook_email_search', 'outlook_calendar_search', 'outlook_find_available_time', 'find_meeting_availability',
+  'chat_message_search', 'teams_list_chats', 'teams_list_teams', 'teams_list_channels', 'teams_list_channel_messages',
+  'sharepoint_search', 'sharepoint_folder_search', 'search_people', 'read_resource', 'get_me', 'get_granted_scopes',
+];
+
 // The Claude chat's MCP server: the same server.js as everyone's, under its
 // own name and with PA_MCP_CHAT_TOOLS=1, so the read-only `pa` tool is listed
 // for this chat and for no other session.
@@ -303,7 +315,7 @@ function settingsJson() {
       // Reads through MCP tools only. A Bash prefix rule cannot tell `pa memory`
       // from `pa memory run`, so no `pa` shell command is allowed — every one asks.
       allow: [...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__${CHAT_MCP}__${t}`), `mcp__${CHAT_MCP}__pa`, `mcp__${CHAT_MCP}__${TASK_TOOL}`,
-        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`)],
+        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`), ...M365_READ_TOOLS.map((t) => `${M365}${t}`)],
       ask: [`Bash(${pa}:*)`, `Bash(${pa} *)`, ...[...ASK_COMMANDS, ...ALLOW_COMMANDS, ...CARD_COMMANDS].map((c) => `Bash(${pa} ${c}:*)`)],
     },
   };
@@ -411,4 +423,4 @@ async function ensureSession() {
   return { sessionId: created.id, created: true };
 }
 
-module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS };
+module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS, M365_READ_TOOLS };
