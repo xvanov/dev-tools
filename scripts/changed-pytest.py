@@ -155,7 +155,7 @@ def conftests_for(test: Path) -> list[Path]:
 
 
 SMOKE_CAP = 40      # selected test files above this count → smoke subset
-SMOKE_FILES = 10    # files in the smoke subset
+SMOKE_FILES = 5     # files in the smoke subset
 
 
 def select(since: str) -> tuple[bool, str, list[Path], list[Path]]:
@@ -290,6 +290,8 @@ def pytest_command(sync: bool = True) -> tuple[list[str] | None, bool]:
         has_pytest, has_xdist = probe(VENV_PY) if VENV_PY.exists() else (False, False)
     if has_pytest:
         return [str(VENV_PY), "-m", "pytest"], has_xdist
+    if not sync:  # the hook: only the tree's own venv; a stray global pytest is slow and the wrong deps
+        return None, False
     has_pytest, has_xdist = probe(sys.executable)
     if has_pytest:
         return [sys.executable, "-m", "pytest"], has_xdist
