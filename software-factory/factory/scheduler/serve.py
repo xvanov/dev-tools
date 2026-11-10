@@ -116,6 +116,32 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 
 
+def acquire_tick_lock(
+    fh: Any,
+    *,
+    wait_s: float = 0.0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Take the per-app tick lock; with ``wait_s`` keep trying until it frees.
+
+    A wake tick that finds the lock held (a tick a restarted serve left
+    running) used to skip and exit, and nothing woke the app again, so the
+    next step waited out the 300 s interval. Waiting hands the step over the
+    moment the running tick exits."""
+    from factory.oscompat import lock_file
+
+    deadline = clock() + wait_s
+    while True:
+        try:
+            lock_file(fh, blocking=False)
+            return True
+        except BlockingIOError:
+            if clock() >= deadline:
+                return False
+            sleep(1.0)
+
+
 def request_wake(root: Path, app: str | None = None, *, reason: str = "") -> None:
     """Ask a running ``factory serve`` to act now. Never raises.
 

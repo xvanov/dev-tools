@@ -1121,15 +1121,18 @@ def tick_cmd(
     # life, so a tick orphaned by a killed serve is never doubled by the next
     # one. systemd ticks (Linux) don't set the variable: unchanged.
     if os.environ.get("FACTORY_TICK_LOCK") == "1":
-        from factory.oscompat import lock_file
-        from factory.scheduler.serve import tick_lock_path
+        from factory.scheduler.serve import acquire_tick_lock, tick_lock_path
 
         lp = tick_lock_path(_FACTORY_ROOT, app_name)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _tick_lock_fh = lp.open("a+")  # held until this process exits
-        try:
-            lock_file(_tick_lock_fh, blocking=False)
-        except BlockingIOError:
+        # A wake tick queues behind a running tick (one a restarted serve left
+        # behind) instead of skipping: a skip woke nobody, so the job's next
+        # step waited out the interval. Interval ticks still skip.
+        _wait = float(os.environ.get("FACTORY_TICK_BUDGET_S") or 600) if (
+            os.environ.get("FACTORY_TICK_REASON") == "wake"
+        ) else 0.0
+        if not acquire_tick_lock(_tick_lock_fh, wait_s=_wait):
             console.print(f"tick for {app_name} already running (lock held); skipped")
             raise typer.Exit(code=0) from None
 

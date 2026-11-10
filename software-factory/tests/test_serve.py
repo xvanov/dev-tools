@@ -514,3 +514,34 @@ def test_python_m_factory_runs_the_cli() -> None:
     )
     assert proc.returncode == 0
     assert "serve" in proc.stdout
+
+
+def test_acquire_tick_lock_waits_for_a_held_lock(tmp_path: Path) -> None:
+    """A wake tick queues behind a running tick instead of skipping (a skip
+    woke nobody, so the next step waited out the 300 s interval)."""
+    from factory.scheduler.serve import acquire_tick_lock
+
+    class Fh:
+        busy = 3
+
+    import factory.oscompat as oscompat
+
+    calls = {"n": 0}
+
+    def fake_lock(fh, blocking=True):
+        calls["n"] += 1
+        if calls["n"] <= Fh.busy:
+            raise BlockingIOError
+
+    orig = oscompat.lock_file
+    oscompat.lock_file = fake_lock
+    try:
+        t = [0.0]
+        assert acquire_tick_lock(Fh(), wait_s=10, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0])
+        assert calls["n"] == 4
+        calls["n"] = 0
+        Fh.busy = 99
+        assert not acquire_tick_lock(Fh(), wait_s=0)
+        assert calls["n"] == 1
+    finally:
+        oscompat.lock_file = orig
