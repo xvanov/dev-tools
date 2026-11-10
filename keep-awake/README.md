@@ -52,3 +52,4 @@ Leave the window open (or minimize). Press `Ctrl+C` or close it to stop.
   common idle-logout and sleep cases.
 - F15 is chosen because no physical keyboard sends it, so it won't collide with
   anything you type.
+<!-- e2e-46358ca3 -->
