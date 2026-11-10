@@ -30,6 +30,7 @@
     b.addEventListener('click', function () {
       try { window.localStorage.setItem('pa.build.view', b.getAttribute('data-view')); } catch (e) { /* not kept */ }
       document.querySelectorAll('[data-view]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      if (window.FactoryBoard && window.FactoryBoard.resetPage) window.FactoryBoard.resetPage();
       if (data) render();
     });
   });

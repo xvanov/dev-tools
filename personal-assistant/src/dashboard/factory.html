@@ -138,6 +138,10 @@
   .pbar.ended > span { background: var(--bad); }
   .pbar.unknown > span { width: 30% !important; animation: bslide 1.6s var(--ease) infinite alternate; opacity: .6; }
   @keyframes bslide { from { margin-left: 0; } to { margin-left: 70%; } }
+  .pbar.still > span { animation: none; opacity: 1; margin-left: 0; }
+  .btop { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); align-items: start; }
+  .bpager { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .bpager button.cur { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
   .bnow { font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
   .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: bpulse 1.4s ease-in-out infinite; }
   @keyframes bpulse { 50% { opacity: .3; } }

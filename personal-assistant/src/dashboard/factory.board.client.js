@@ -289,11 +289,16 @@
       spend);
   }
 
-  function bar(ratio, cls) {
+  var STILL = ['cancelled', 'failed', 'done', 'needs_human', 'delivered'];
+  function still(job) {
+    return Boolean(job.terminal) || STILL.indexOf(job.state) >= 0 || job.group === 'ended' || job.group === 'delivered';
+  }
+  function bar(ratio, cls, isStill) {
     var b = el('div', { class: 'pbar ' + (cls || '') });
     var fill = el('span');
-    fill.style.width = ratio == null ? '0%' : Math.max(2, Math.round(ratio * 100)) + '%';
-    if (ratio == null) b.classList.add('unknown');
+    fill.style.width = ratio == null ? (isStill ? '100%' : '0%') : Math.max(2, Math.round(ratio * 100)) + '%';
+    if (ratio == null && !isStill) b.classList.add('unknown');
+    else if (ratio == null) b.classList.add('still');
     b.append(fill);
     return b;
   }
@@ -324,8 +329,8 @@
         job.canApprove ? chip('waiting for your approval', 's-needs_human') : null,
         job.failover ? chip('moved ' + job.failover.from + ' → ' + job.failover.to, 's-blocked', job.failover.why) : null));
     var progress = el('div', { class: 'bprog' },
-      bar(p, job.group),
-      el('span', { class: 'mono', text: p == null ? (job.terminal ? '' : 'running') : Math.round(p * 100) + '%' }),
+      bar(p, job.group, still(job)),
+      el('span', { class: 'mono', text: p == null ? (still(job) ? '' : 'running') : Math.round(p * 100) + '%' }),
       dir ? el('span', { class: 'meta', text: dir.completed_stories + '/' + dir.total_stories + ' stories · ' + dir.completed_handlers + '/' + dir.total_handlers + ' handlers' }) : null);
     var now = live && live.persona ? el('div', { class: 'bnow' },
       el('span', { class: 'pulse' }), el('b', { text: live.persona }),
@@ -375,7 +380,9 @@
 
   function recentPanel() {
     var s = snap || {};
-    var runs = s.recent_runs || [];
+    var allRuns = s.recent_runs || [];
+    var pg = pager('steps', allRuns.length, draw);
+    var runs = allRuns.slice((page.steps - 1) * PAGE, page.steps * PAGE);
     var vel = s.velocity || [];
     return el('section', { class: 'brecent' },
       el('h2', { text: 'Recent steps' }),
@@ -389,11 +396,33 @@
           el('span', { class: 'cost', text: r.runtime === 'claude_session' ? money(r.subscription_equiv_usd) + ' notional' : money(r.cost_usd) }),
           r.duration_s ? el('span', { class: 'meta', text: dur(r.duration_s) }) : null);
       }))) : el('div', { class: 'empty', text: 'No steps yet.' }),
+      pg,
       vel.length ? el('h2', { text: 'Velocity (estimate ÷ actual, 30 days)' }) : null,
       vel.length ? el.apply(null, ['ul', { class: 'runs' }].concat(vel.map(function (v) {
         return el('li', {}, el('b', { text: v.persona }), el('span', { class: 'meta', text: v.model_tier }),
           el('span', { class: 'mono', text: '×' + v.median + ' (P25 ×' + v.p25 + ', P75 ×' + v.p75 + ') · n=' + v.samples }));
       }))) : null);
+  }
+
+  var PAGE = 10;
+  var page = { jobs: 1, steps: 1 };
+  function pager(key, total, redo) {
+    var pages = Math.max(1, Math.ceil(total / PAGE));
+    if (page[key] > pages) page[key] = pages;
+    if (pages < 2) return null;
+    function go(n) { return function () { page[key] = n; redo(); }; }
+    var cur = page[key];
+    var kids = [el('button', { type: 'button', class: 'linkish', text: 'Prev', disabled: cur > 1 ? null : 'disabled', onclick: go(cur - 1) })];
+    var last = 0;
+    for (var n = 1; n <= pages; n++) {
+      if (n !== 1 && n !== pages && Math.abs(n - cur) > 1) continue;
+      if (last && n - last > 1) kids.push(el('span', { class: 'meta', text: '…' }));
+      kids.push(el('button', { type: 'button', class: 'linkish' + (n === cur ? ' cur' : ''), text: String(n), 'aria-current': n === cur ? 'page' : null,
+        'aria-pressed': String(n === cur), onclick: go(n) }));
+      last = n;
+    }
+    kids.push(el('button', { type: 'button', class: 'linkish', text: 'Next', disabled: cur < pages ? null : 'disabled', onclick: go(cur + 1) }));
+    return el.apply(null, ['nav', { class: 'bpager', 'aria-label': 'Pages' }].concat(kids));
   }
 
   function draw() {
@@ -404,9 +433,11 @@
     jobs.sort(function (a, b) { return (rank[a.group] - rank[b.group]) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')); });
     last.data.jobs = jobs;
     var keep = last.opts.keep ? last.opts.keep() : null;
-    c.replaceChildren(strip(),
-      el.apply(null, ['section', { class: 'bcards' }].concat(jobs.length ? jobs.map(function (j) { return card(j, last.opts); }) : [el('div', { class: 'empty', text: 'No jobs.' })])),
-      recentPanel());
+    var pg = pager('jobs', jobs.length, draw);
+    var shown = jobs.slice((page.jobs - 1) * PAGE, page.jobs * PAGE);
+    c.replaceChildren(el('div', { class: 'btop' }, strip(), recentPanel()),
+      el.apply(null, ['section', { class: 'bcards' }].concat(shown.length ? shown.map(function (j) { return card(j, last.opts); }) : [el('div', { class: 'empty', text: 'No jobs.' })])),
+      pg);
     if (keep) c.prepend(keep);
     pace();
   }
@@ -575,6 +606,7 @@
   })();
 
   core.render = render;
+  core.resetPage = function () { page.jobs = 1; page.steps = 1; };
   core.refresh = refresh;
   core.viewer = viewer;
   return core;
