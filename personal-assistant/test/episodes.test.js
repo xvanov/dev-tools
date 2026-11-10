@@ -103,4 +103,25 @@ const at = (mins, secs = 0) =>
   assert.strictEqual(isSubstantial({ speech_seconds: 600, parts: [{ transcript: '' }] }), false);
 }
 
+// Two events booked for the same hour (All Company on Teams, a Zoom webinar):
+// the one on the app that held the mic wins, whichever is listed first (2026-11-10).
+{
+  const slot = (id, subject, location) => ({
+    external_id: id, subject, occurred_at: '2026-11-10T18:00:00Z',
+    raw: { end: { dateTime: '2026-11-10T19:00:00', timeZone: 'UTC' }, attendees: ['all@example.test'], location, showAs: 'busy' },
+  });
+  const events = [
+    slot('zoom-1', 'Mainsail AI Engineering Show and Tell', 'https://example.zoom.us/j/1'),
+    slot('teams-1', 'All Company Meeting', 'Microsoft Teams Meeting'),
+  ];
+  const ep = { started_at: '2026-11-10T18:00:20Z', ended_at: '2026-11-10T19:00:10Z', streams: ['mic', 'loopback'] };
+  const teams = [{ start: Date.parse('2026-11-10T18:00:16Z'), end: Date.parse('2026-11-10T18:59:00Z'), why: 'MSTeams_8wekyb3d8bbwe' }];
+  assert.strictEqual(classify(ep, events, { calls: teams }).calendarEventId, 'teams-1');
+  assert.strictEqual(classify(ep, [...events].reverse(), { calls: teams }).calendarEventId, 'teams-1');
+  const zoom = [{ ...teams[0], why: 'Zoom' }];
+  assert.strictEqual(classify(ep, [...events].reverse(), { calls: zoom }).calendarEventId, 'zoom-1');
+  // No call evidence: the first listed, as before.
+  assert.strictEqual(classify(ep, events).calendarEventId, 'zoom-1');
+}
+
 console.log('episodes.test.js ok');

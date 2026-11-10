@@ -98,6 +98,34 @@ function attendable(event: any) {
   return end - start < 12 * 3600_000;
 }
 
+// The call app an event is held on, from its location, join link or body:
+// 'teams', 'zoom', 'meet', 'webex', or null.
+function platformOf(event: any) {
+  const raw = event.raw || {};
+  const text = [raw.location?.displayName ?? raw.location, raw.onlineMeeting?.joinUrl, raw.onlineMeetingProvider, raw.bodyPreview, raw.summary]
+    .map((v) => (typeof v === 'string' ? v : '')).join(' ').toLowerCase();
+  if (/zoom/.test(text)) return 'zoom';
+  if (/teams\.microsoft|microsoft teams|teamsforbusiness/.test(text)) return 'teams';
+  if (/meet\.google/.test(text)) return 'meet';
+  if (/webex/.test(text)) return 'webex';
+  return null;
+}
+
+// The call apps that held the mic during [start, end] (mic-calls.jsonl
+// windows; `why` is the app list), as platforms; null when none did.
+function appsDuring(start: number, end: number, calls: any[]) {
+  const out = new Set<string>();
+  for (const w of calls || []) {
+    if (!(w.end > start && w.start < end)) continue;
+    const why = String(w.why || '').toLowerCase();
+    if (/teams/.test(why)) out.add('teams');
+    if (/zoom/.test(why)) out.add('zoom');
+    if (/chrome|msedge|firefox/.test(why)) out.add('meet');
+    if (/webex/.test(why)) out.add('webex');
+  }
+  return out.size ? out : null;
+}
+
 // An event worth recording: attendable, and with someone else in it — a solo
 // focus block is not a conversation.
 function meetingEvent(event: any) {
@@ -191,8 +219,13 @@ function classify(episode: any, calendarEvents: any = [], { calls = [] }: { call
   // A brush with a slot — an hour-long conversation whose last four minutes
   // run into a meeting — is not that meeting: the overlap must be at least
   // half of the shorter of the two.
-  let best = null;
+  let best: any = null;
   let bestOverlap = -1;
+  // Two slots held equally (an all-company meeting and a webinar booked for
+  // the same hour): the one on the app that held your mic is the one you were
+  // in. Within a minute counts as equal.
+  const apps = appsDuring(start, end, calls);
+  const onApp = (event: any) => !!apps && apps.has(platformOf(event) || '');
   // Heard only through the mic, the slot is the only evidence of other people:
   // it must have someone else in it. A focus block you dictate through is not
   // a meeting.
@@ -203,9 +236,10 @@ function classify(episode: any, calendarEvents: any = [], { calls = [] }: { call
     const overlap = Math.min(end, ev.end) - Math.max(start, ev.start);
     if (overlap < 0) continue;
     if (overlap < 0.5 * Math.min(end - start, ev.end - ev.start)) continue;
-    if (overlap > bestOverlap) {
+    const tie = best && Math.abs(overlap - bestOverlap) <= 60_000;
+    if (tie ? onApp(event) && !onApp(best) : overlap > bestOverlap) {
       best = event;
-      bestOverlap = overlap;
+      bestOverlap = Math.max(overlap, bestOverlap);
     }
   }
   if (best) {
