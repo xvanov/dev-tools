@@ -61,9 +61,14 @@ is not used: it writes `context/` docs, not gate commands.
    (the installed template units). Failure here is `enable_tick_failed`, and the
    config is already written.
 
+7. Write `tracker:` (decision D29, `factory/tracker.py`): `--tracker` when
+   given, else derived from the owner — `github_issues` for a personal owner
+   (`FACTORY_PERSONAL_OWNERS`, default `xvanov`), `local` for every other repo.
+   `--tracker github_issues` on a non-personal repo is `invalid_tracker`.
+
 `--json` prints one object. Success:
 `{app, repo, path, config_path, gates, delivery: {default}, pipeline_default,
-missing_gates, toolchains, smoke_command, notes, cloned, tick}`. Failure, exit 1:
+tracker, missing_gates, toolchains, smoke_command, notes, cloned, tick}`. Failure, exit 1:
 `{"error": "<code>", "message": "..."}`.
 
 
@@ -74,7 +79,10 @@ so the assistant (and the dashboard's Repos section) can change a repo's
 settings after registration.
 
 - At least one of `--delivery-default` / `--pipeline-default` / `--gate` /
-  `--requires` (`nothing_to_set`).
+  `--requires` / `--review-default` / `--review-min-diff-lines` / `--cap` /
+  `--tracker` (`nothing_to_set`).
+- `--tracker github_issues|local` sets the top-level `tracker:` line;
+  `github_issues` on a non-personal repo is `invalid_tracker`.
 - `--gate NAME=COMMAND` (repeatable; NAME `lint|format_check|type_check|test`
   or the field name): COMMAND `none` = no such check, empty = unset. One line
   only (`invalid_gate`). `--requires NAME=tool,tool` replaces that gate's list;
@@ -93,8 +101,8 @@ settings after registration.
 - Written atomically (temp file + rename).
 
 `--json` success: `{app, config_path, delivery: {default}, pipeline_default,
-gates, readiness, changed: ["delivery.default", "gates.test_command", …],
-comments_preserved}`.
+tracker, tracker_source, gates, readiness, changed: ["delivery.default",
+"gates.test_command", "tracker", …], comments_preserved}`.
 
 ## `app show <app>` / `app list`
 
@@ -102,7 +110,8 @@ comments_preserved}`.
 `docs_only`, `ci` for its checkout (file reads only).
 
 `list`: `{"apps": [{app, repo, path, delivery: {default}, pipeline_default,
-ticked, gates, readiness}]}`. No detection, so it stays fast. A config that
+tracker, tracker_source, ticked, gates, readiness}]}`. `show` carries
+`tracker`/`tracker_source` too (`derived` when the config has no `tracker:`). No detection, so it stays fast. A config that
 fails to load is a row `{app, error}`; it never hides the others.
 
 ## Detection rules

@@ -28,6 +28,10 @@ from factory.directions.parser import Direction, MissingDirection, resolve_direc
 from factory.directions.schema import RESOLVED_DIRECTION_STATUSES
 from factory.directions.watcher import _root_from_direction, merge_state
 from factory.state_dir import state_dir
+from factory.tracker import KIND_DIRECTION, KIND_STORY, guard_issue_write, uses_github_issues
+from factory.tracker import add_note as _local_add_note
+from factory.tracker import close_item as _local_close
+from factory.tracker import upsert_item as _local_upsert
 
 _TRACKER_LABEL = "direction-tracker"
 _NEEDS_DIRECTION_LABEL = "needs-direction"
@@ -117,7 +121,11 @@ def open_or_update_tracker_issue(
     DUPLICATE tracker issue per direction per clone. Resolution is now
     row-first (:func:`resolve_tracker_issue`).
     """
-    repo = github_client.get_repo(app_config.repo)
+    # factory/tracker.py: a local-tracker app (every non-personal repo, or a
+    # repo with Issues disabled) keeps the tracker in state/factory.db and
+    # returns 0 — no issue number exists, and none is ever persisted.
+    local = not uses_github_issues(app_config, github_client)
+    repo: Any = None if local else github_client.get_repo(app_config.repo)
     pm_result = pm_result or {}
     child_issue_numbers = child_issue_numbers or []
 
@@ -146,13 +154,24 @@ def open_or_update_tracker_issue(
     )
     labels = _build_labels(direction, pm_labels)
 
-    existing_number = resolve_tracker_issue(direction, _db_for_direction(direction))
-    if existing_number:
-        issue = repo.get_issue(existing_number)
-        issue.edit(title=title, body=body, labels=labels)
-        return existing_number
+    if not local:
+        try:
+            existing_number = resolve_tracker_issue(direction, _db_for_direction(direction))
+            if existing_number:
+                issue = repo.get_issue(existing_number)
+                issue.edit(title=title, body=body, labels=labels)
+                return existing_number
 
-    issue = repo.create_issue(title=title, body=body, labels=labels)
+            issue = repo.create_issue(title=title, body=body, labels=labels)
+        except Exception as exc:
+            # A repo with Issues disabled must never wedge pm-sync (raven:001,
+            # 2026-11-09: the 410 looped a paid PM run every tick).
+            if not guard_issue_write(app_config, exc):
+                raise
+            local = True
+    if local:
+        _local_direction_upsert(direction, app_config, title=title, body=body, labels=labels)
+        return 0
     number = int(issue.number)
     _persist_tracker_issue(direction, number)
     # Best-effort, same as ``_persist_tracker_issue`` immediately above: the
@@ -173,6 +192,28 @@ def open_or_update_tracker_issue(
     except Exception:  # noqa: BLE001 - bookkeeping must never fail issue creation
         pass
     return number
+
+
+def _local_direction_upsert(
+    direction: Direction, app_config: AppConfig, *, title: str, body: str, labels: list[str]
+) -> None:
+    """The local-tracker twin of the tracker issue (factory/tracker.py)."""
+    db = _db_for_direction(direction)
+    if db is None:
+        return
+    body = body.replace(
+        "_This issue is maintained by the factory. Edits will be overwritten._",
+        "_Tracked locally by the factory (state/factory.db); no GitHub issue exists._",
+    )
+    _local_upsert(
+        db,
+        app=app_config.name,
+        kind=KIND_DIRECTION,
+        ref=direction.id or direction.slug,
+        title=title,
+        body=body,
+        labels=labels,
+    )
 
 
 def _db_for_direction(direction: Direction) -> Path | None:
@@ -259,8 +300,6 @@ def record_needs_direction(
         child_issue_numbers=[],
     )
 
-    repo = github_client.get_repo(app_config.repo)
-    issue = repo.get_issue(issue_number)
     missing_text = ", ".join(missing) if missing else "(unspecified)"
     comment_body = (
         f"**Needs direction.** Missing: {missing_text}.\n\n"
@@ -270,6 +309,20 @@ def record_needs_direction(
     )
     if detail_lines:
         comment_body += "\n\n" + "\n".join(detail_lines)
+    if not issue_number:
+        # Local tracker: the same note, deduped the same way, in factory.db.
+        db = _db_for_direction(direction)
+        if db is not None:
+            _local_add_note(
+                db,
+                app=app_config.name,
+                kind=KIND_DIRECTION,
+                ref=direction.id or direction.slug,
+                body=comment_body,
+            )
+        return 0
+    repo = github_client.get_repo(app_config.repo)
+    issue = repo.get_issue(issue_number)
     # Idempotent: re-validating an unchanged direction must not append the
     # same comment again — repeated pm-sync passes were spamming one
     # identical comment per pass onto every needs-direction tracker issue.
@@ -297,6 +350,8 @@ def close_story_issue(
     story: Any,
     app_config: AppConfig,
     github_client: Any,
+    *,
+    db_path: Path | None = None,
 ) -> bool:
     """Close a story's GitHub issue after it deploys. Idempotent, best-effort.
 
@@ -305,6 +360,18 @@ def close_story_issue(
     2026-07-18: 53 of them). Returns True if a close was attempted. Any GH
     error is swallowed — a bookkeeping close must never break the deploy path.
     """
+    if not uses_github_issues(app_config):
+        # Local tracker: close the story's factory.db item; GitHub untouched.
+        sid = getattr(story, "id", None)
+        if sid is None or db_path is None:
+            return False
+        try:
+            return _local_close(
+                db_path, app=app_config.name, kind=KIND_STORY, ref=sid,
+                note="Deployed (story reached DEPLOYED in the chain).",
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping
+            return False
     num = getattr(story, "github_issue_number", None)
     if not num:
         return False
@@ -448,6 +515,16 @@ def close_direction_issues(
     direction already in a resolved status.
     """
     report: dict[str, Any] = {"tracker_closed": None, "stories_closed": [], "errors": []}
+    if app_config is not None and not uses_github_issues(app_config):
+        return _close_direction_local(
+            direction,
+            app_config,
+            report,
+            db_path=db_path,
+            software_factory_root=software_factory_root,
+            by=by,
+            reason=reason,
+        )
     if github_client is None or app_config is None:
         return report
 
@@ -508,6 +585,69 @@ def close_direction_issues(
         except Exception as exc:  # noqa: BLE001 - one bad issue must not abort the sweep
             report["errors"].append(("story", num, str(exc)))
 
+    return report
+
+
+def _close_direction_local(
+    direction: Direction,
+    app_config: AppConfig,
+    report: dict[str, Any],
+    *,
+    db_path: Path | None,
+    software_factory_root: Path | None,
+    by: str | None,
+    reason: str | None,
+) -> dict[str, Any]:
+    """``close_direction_issues`` for a local-tracker app: close the direction's
+    item and its child story items in factory.db. Never touches GitHub."""
+    try:
+        if db_path is not None:
+            db = Path(db_path)
+        else:
+            root = (
+                Path(software_factory_root)
+                if software_factory_root is not None
+                else _root_from_direction(direction)
+            )
+            db = state_dir(root) / "factory.db"
+        context = _direction_closed_comments(direction.id, by, reason)
+        ref = direction.id or direction.slug
+        if _local_close(
+            db,
+            app=app_config.name,
+            kind=KIND_DIRECTION,
+            ref=ref,
+            note=f"Closed: {context}.",
+            reason="not_planned",
+        ):
+            report["tracker_closed"] = f"local:{ref}"
+        if db.exists() and direction.id:
+            from sqlmodel import Session, select
+
+            from factory.chain.state_machine import StoryRecord
+            from factory.runner import _engine
+
+            with Session(_engine(db)) as session:
+                ids = list(
+                    session.exec(
+                        select(StoryRecord.id).where(
+                            StoryRecord.app == direction.app,
+                            StoryRecord.direction_id == direction.id,
+                        )
+                    ).all()
+                )
+            for sid in ids:
+                if _local_close(
+                    db,
+                    app=app_config.name,
+                    kind=KIND_STORY,
+                    ref=str(sid),
+                    note=f"Closed: parent {context}.",
+                    reason="not_planned",
+                ):
+                    report["stories_closed"].append((sid, f"local:{sid}"))
+    except Exception as exc:  # noqa: BLE001 - best-effort by contract
+        report["errors"].append(("local", direction.id, str(exc)))
     return report
 
 
@@ -649,6 +789,24 @@ def maybe_close_tracker_issue(
             return False
         direction = parse_direction_dir(app_config.name, dirs[0], software_factory_root=root)
         db = db_path or (state_dir(root) / "factory.db")
+        if not uses_github_issues(app_config):
+            # Local tracker: close the direction's factory.db item; no GitHub.
+            with Session(_engine(db)) as session:
+                local_rows = session.exec(
+                    select(StoryRecord).where(
+                        StoryRecord.direction_id == direction_id,
+                        StoryRecord.app == app_config.name,
+                    )
+                ).all()
+            if not _direction_is_complete(list(local_rows)):
+                return False
+            return _local_close(
+                db,
+                app=app_config.name,
+                kind=KIND_DIRECTION,
+                ref=direction_id,
+                note=f"Direction complete: {len(local_rows)} child stories resolved.",
+            )
         # DB row first, gitignored ``state.yaml`` projection second — see
         # ``resolve_tracker_issue``.
         tracker = resolve_tracker_issue(direction, db)
@@ -771,6 +929,33 @@ def reconcile_completed_issues(
     by_direction: dict[str, list[Any]] = defaultdict(list)
     for r in story_rows:
         by_direction[r.direction_id].append(r)
+
+    if not uses_github_issues(app_config, github_client):
+        # Local tracker: the same hygiene on factory.db items, never GitHub.
+        if dry_run:
+            return report
+        for did, dstatus in direction_status.items():
+            rows = by_direction.get(did, [])
+            if (
+                dstatus in RESOLVED_DIRECTION_STATUSES or _direction_is_complete(rows)
+            ) and _local_close(
+                db,
+                app=app_config.name,
+                kind=KIND_DIRECTION,
+                ref=did,
+                note="Direction resolved (reconcile).",
+            ):
+                report["trackers_closed"].append((did, f"local:{did}"))
+        for r in story_rows:
+            if _story_is_resolved(r) and _local_close(
+                db,
+                app=app_config.name,
+                kind=KIND_STORY,
+                ref=str(r.id),
+                note=f"Story resolved: {r.state} (reconcile).",
+            ):
+                report["stories_closed"].append((r.id, f"local:{r.id}"))
+        return report
 
     try:
         repo = github_client.get_repo(app_config.repo)

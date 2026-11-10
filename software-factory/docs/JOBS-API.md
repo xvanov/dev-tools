@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8, v1.9 and v1.10 2026-11-09, v1.11 2026-11-10, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8, v1.9 and v1.10 2026-11-09, v1.11 and v1.12 2026-11-10, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -122,7 +122,8 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
   `factory job cancel`): the locked merge section refuses a cancelled job's story, the
   orchestrator never dispatches one (it re-parks it), and `persist_story` refuses to move a row
   out of `closed_by_operator` (a stale handler write-back); only `factory resume-story` may.
-- Known gap: at `none`, the factory still opens the story's GitHub ISSUE (no code is pushed).
+- At `none`, an issue-tracked app still opens the story's GitHub ISSUE (no code is pushed); a
+  local-tracker app opens none at any level (v1.12).
 
 PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,
 branch→branch, mr→draft_pr, full→draft_pr.
@@ -1010,4 +1011,52 @@ story in flight (as in the TUI); `progress` is completed handlers over all handl
   `duration_ms`, `stop_reason`). A text field cut at its cap (text 4000, tool result 1500,
   tool arguments 1500 characters) carries `full_len`.
 - Errors: `not_found` (no such step), `invalid_step_id`, `invalid_cursor`.
+## v1.12 additions (2026-11-10): local tracker, no GitHub Issues for work repos
+
+Decision D29 (docs/native/PLAN.md): the factory works without GitHub Issues, and a repo
+whose owner is not one of the operator's personal owners never uses them. Each app has a
+`tracker` (`apps/<app>/config.yaml`, `factory/tracker.py`):
+
+- `github_issues`: today's behaviour (a tracker issue per direction, an issue per story, the
+  pinned `[FACTORY] <app> live status` issue, the p0 deploy issue, `user-report` intake).
+- `local`: the same facts as rows in `state/factory.db` (`tracker_items`, `tracker_notes`).
+  Nothing is created, commented, labelled, closed or read on the repo's Issues. A story has
+  no `github_issue_number`; its branch, worktree and story file are named by its story id
+  (`story/<id>-<slug>`), and its PR body names it as "`<app>` story <id>", never `#n`.
+
+Default: `github_issues` only for a personal owner's repo (`FACTORY_PERSONAL_OWNERS`, comma
+list; unset = `xvanov`). Every other repo, and any repo whose owner cannot be read, gets
+`local`. Not the whole `FACTORY_GH_OWNER_MAP`: that map picks tokens and carries work owners
+too. An explicit `tracker:` wins, except that a non-personal repo never gets
+`github_issues`: `app add` / `app set` refuse it (`invalid_tracker`) and a hand-edited config
+is downgraded to `local` with a warning. A repo that reports `has_issues: false`, or answers
+an issue write with GitHub's 410 "Issues has been disabled", falls back to `local` for that
+process with a warning, so a misconfigured app never wedges pm-sync. PR comments and PR
+labels are not Issues and are unchanged.
+
+### Status / list: new field
+
+```
+"tracker": {"name": "github_issues" | "local", "source": "config" | "derived",
+            "direction": {"title", "state", "labels", "summary", "updated_at",
+                          "notes": [{"body", "created_at"}]} | null}
+```
+
+`direction` is the local item: what the tracker issue would have said (the PM summary, the
+needs-direction note, dual-draft and redesign notes). Null for a GitHub-tracked job.
+
+### App commands
+
+`factory app add --tracker github_issues|local` (absent: derived and written) and
+`factory app set <app> --tracker ...`; `app add`, `app set`, `app show` and every `app list`
+row add `"tracker"` and `"tracker_source"`. Errors add `invalid_tracker`.
+
+### Operator surface for a local app
+
+`factory why <story>` prints the story's and direction's latest notes; `factory inbox` lists
+open local items that need a human (needs-direction directions, escalations);
+`factory status-sync` writes the live status as a local item; `factory ingest-issue` is
+refused; the tick's `auto_intake`, issue hygiene and closed-issue reconcile never call
+GitHub Issues for it (hygiene closes the local items instead). A poisoned-row escalation for
+a local app stays on the alert stream instead of an issue on the factory's public repo.
 

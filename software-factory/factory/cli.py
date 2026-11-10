@@ -1246,7 +1246,14 @@ def tick_cmd(
                         len(intake_summary.accepted),
                     )
                 )
-            elif intake_reason not in {"disabled", "dry_run", "no_client", "no_new_issues"}:
+            elif intake_reason not in {
+                "disabled",
+                "dry_run",
+                "no_client",
+                "no_new_issues",
+                "tracker_local",
+                "issues_disabled",
+            }:
                 scheduled_results.append(("auto_intake", intake_reason, 0, 0))
         except Exception as exc:  # noqa: BLE001 - never fail the tick on intake
             scheduled_results.append(("auto_intake", f"errored:{exc!r}"[:60], 0, 0))
@@ -2258,6 +2265,10 @@ def inbox_cmd(
                 if drow.app not in app_cfg_cache:
                     app_cfg_cache[drow.app] = load_app_config(drow.app, _FACTORY_ROOT)
                 cfg = app_cfg_cache[drow.app]
+                from factory.tracker import uses_github_issues as _uses_issues
+
+                if not _uses_issues(cfg):
+                    continue  # local tracker: GitHub Issues are never read
                 if cfg.repo not in gh_clients:
                     gh_clients[cfg.repo] = build_github_client(cfg.repo)
                 gh_client = gh_clients[cfg.repo]
@@ -2292,6 +2303,33 @@ def inbox_cmd(
         console.print(
             "[dim]No terminal directions with a still-open tracker issue.[/dim]"
         )
+
+    # Local tracker (factory/tracker.py): what a GitHub tracker would have
+    # shown a human — needs-direction directions and escalations — for apps
+    # whose work is tracked in factory.db instead of GitHub Issues.
+    from factory.tracker import KIND_DIRECTION, KIND_ESCALATION
+    from factory.tracker import list_items as _local_items
+
+    _ldb = state_dir(_FACTORY_ROOT) / "factory.db"
+    local_rows = [
+        it
+        for a in apps
+        for it in _local_items(_ldb, app=a, state="open")
+        if it["kind"] == KIND_ESCALATION
+        or (it["kind"] == KIND_DIRECTION and "needs-direction" in it["labels"])
+    ]
+    if local_rows:
+        local_table = Table(title="local tracker: open items needing a human")
+        local_table.add_column("app")
+        local_table.add_column("kind")
+        local_table.add_column("ref")
+        local_table.add_column("title")
+        local_table.add_column("updated")
+        for it in local_rows:
+            local_table.add_row(
+                it["app"], it["kind"], str(it["ref"]), it["title"][:70], it["updated_at"][:19]
+            )
+        console.print(local_table)
 
     # Phase 6: recent scheduled runs (last 24h).
     from datetime import UTC as _UTC
@@ -3242,6 +3280,21 @@ def why_cmd(
         "",
         events_block,
     ]
+    # Local tracker (factory/tracker.py): the notes a GitHub tracker issue
+    # would have carried — needs-direction, redesign, superseded — live here.
+    if getattr(story, "tracker", None) == "local":
+        from factory.tracker import KIND_DIRECTION, KIND_STORY, item_view
+
+        note_lines: list[str] = []
+        for kind, ref in ((KIND_STORY, story.id), (KIND_DIRECTION, story.direction_id)):
+            view = item_view(db, app=story.app, kind=kind, ref=str(ref), note_limit=3)
+            if view is None:
+                continue
+            note_lines.append(f"local tracker {kind} item: state={view['state']}")
+            for n in view["notes"]:
+                note_lines.append(f"  {n['created_at'][:19]}  {(n['body'].splitlines() or [''])[0][:160]}")
+        if note_lines:
+            lines += ["", *note_lines]
     console.print(Panel("\n".join(lines), title=f"why story {story.id}"))
 
 
@@ -3377,9 +3430,11 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
     """
     import sqlite3
     from datetime import UTC, datetime
+    from types import SimpleNamespace
 
     from factory.chain.branch import feature_branch_name
     from factory.chain.event_log import read_story_events
+    from factory.chain.state_machine import story_number
     from factory.observability.queries import live_handlers
 
     db = state_dir(_FACTORY_ROOT) / "factory.db"
@@ -3389,7 +3444,7 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     sql = (
         "SELECT id, app, slug, state, chain_kind, dev_retries, reviewer_cycles, "
-        "github_issue_number, updated_at FROM stories WHERE state NOT IN "
+        "github_issue_number, tracker, updated_at FROM stories WHERE state NOT IN "
         "('deployed','blocked_tests_need_clarification','blocked_deploy_failed',"
         "'blocked_review_nonconvergent','blocked_underspecified',"
         "'superseded_by_sibling','story_created','closed_by_operator')"
@@ -3407,7 +3462,7 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
     for r in rows:
         sid = int(r["id"])
         # Tip commit on the story's feature branch — commit-verifiable progress.
-        branch = feature_branch_name(r["github_issue_number"], r["slug"])
+        branch = feature_branch_name(story_number(SimpleNamespace(**dict(r))), r["slug"])
         commit = "—"
         try:
             res = subprocess.run(
@@ -4213,15 +4268,21 @@ def status_sync_cmd(
         console.print(Panel(body, title=f"factory-status (dry-run) — app={app_name}"))
         return
 
-    gh = _ensure_github_client(_app_repo(app_name))
+    from factory.app_config import load_app_config
+    from factory.tracker import uses_github_issues
+
+    app_cfg = load_app_config(app_name, _FACTORY_ROOT)
+    gh = _ensure_github_client(app_cfg.repo) if uses_github_issues(app_cfg) else None
     number = update_status_issue(
         app=app_name,
         software_factory_root=_FACTORY_ROOT,
         github_client=gh,
+        app_config=app_cfg,
     )
+    where = f"issue #{number}" if number else "local tracker item (state/factory.db)"
     console.print(
         Panel.fit(
-            f"Updated [bold]factory-status[/bold] issue #{number} for app=[bold]{app_name}[/bold]",
+            f"Updated [bold]factory-status[/bold] {where} for app=[bold]{app_name}[/bold]",
             title="status-sync",
             style="green",
         )

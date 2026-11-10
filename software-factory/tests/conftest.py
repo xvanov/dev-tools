@@ -165,6 +165,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
+def _legacy_tracker_default(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests written before the tracker split (2026-11-09) drive mock GitHub
+    clients against placeholder owners (``o/r``, ``acme/x``). The real default
+    sends every non-personal owner to the LOCAL tracker, which would silently
+    route those tests away from the issue code they assert on. Keep them on
+    ``github_issues``; a test of the policy itself opts out with
+    ``@pytest.mark.real_tracker_policy``. An explicit ``tracker:`` in an app's
+    config still wins either way, and the has_issues fallback still applies.
+    """
+    from factory import tracker
+
+    tracker.reset_cache()
+    if request.node.get_closest_marker("real_tracker_policy") is None:
+        monkeypatch.setattr(tracker, "is_personal_repo", lambda repo: True)
+
+
+@pytest.fixture(autouse=True)
 def _tick_ci_health_does_not_call_gh(monkeypatch: pytest.MonkeyPatch) -> None:
     """``tick()`` polls main's required checks once per call (``ci_health.enabled``
     defaults on). That is one ``gh api``, and on a machine whose checkout owner is

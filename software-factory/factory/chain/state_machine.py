@@ -318,6 +318,11 @@ class StoryRecord(SQLModel, table=True):
     pickup_pr: int | None = None
     pickup_into: str | None = None
     github_issue_number: int | None = None
+    # factory/tracker.py, stamped at spawn: ``local`` = this story is tracked in
+    # factory.db, has NO GitHub issue, and its identity (branch, worktree, story
+    # file) is its own ``id`` — see :func:`story_number`. NULL = github_issues
+    # (every story spawned before 2026-11-09).
+    tracker: str | None = None
     github_branch: str | None = None
     github_pr_number: int | None = None
     story_file_path: str = ""
@@ -730,6 +735,23 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
 class IllegalTransitionError(ValueError):
     """Raised when ``advance`` is called with a (state, event) pair not in
     the transition table."""
+
+
+def story_number(story: Any) -> int | None:
+    """The number in a story's branch / worktree / story-file name.
+
+    The GitHub issue number for an issue-tracked story (historical); the story's
+    own row id for a local-tracker story (operator decision 2026-11-09: story
+    identity must not depend on an issue number); ``None`` (rendered ``0``) for
+    a dry-run story that has neither.
+    """
+    num = getattr(story, "github_issue_number", None)
+    if num is not None:
+        return int(num)
+    if getattr(story, "tracker", None) == "local":
+        sid = getattr(story, "id", None)
+        return int(sid) if sid is not None else None
+    return None
 
 
 def advance(story: StoryRecord, event: str, payload: dict[str, Any] | None = None) -> StoryState:

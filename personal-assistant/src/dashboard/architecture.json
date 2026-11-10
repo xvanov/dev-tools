@@ -1547,7 +1547,8 @@
       },
       "details": {
         "Location": "outside the repo, so no story worktree or agent working directory sits inside the live checkout: factory/state_dir.py resolves the gitignored software-factory/.state-dir pointer, else software-factory/state (no environment override, so a worktree copy of the factory never inherits the live state); `factory state migrate` (an operator step, serve stopped) moves it and writes the pointer, `factory state where` prints it; the PA reads the same pointer (resolveStateDir in src/dispatch/factoryPace.ts) for the pacer's watch and the backup bundle",
-        "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations",
+        "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations, tracker_items, tracker_notes",
+        "Tracker": "D29: each app's tracker is github_issues or local (apps/<app>/config.yaml::tracker; default github_issues only for a personal owner's repo, FACTORY_PERSONAL_OWNERS else xvanov). A local app's directions, stories, escalations and live status are rows in tracker_items/tracker_notes (factory/tracker.py), shown in `factory job status` (tracker, JOBS-API v1.12, so on Build), `factory why` and `factory inbox`; nothing touches its GitHub Issues, and its stories are named by story id. A repo with Issues disabled (has_issues false, or a 410) falls back to local",
         "Research/report jobs": "state/jobs/<task_id>-<slug>/ (job.yaml, ask.md, brief.md, report.md, workspace, Claude run dir, worker.log)",
         "Locks": "state/locks/story-<id>.lock around merge and cancel; serve.lock and tick-<app>.lock under factory serve (flock on Linux, LockFileEx on Windows: factory/oscompat.py)",
         "Apps": "apps/<app>/config.yaml; only apps/factory and apps/template-probe are tracked in this public repo",
@@ -1558,6 +1559,7 @@
         "software-factory/factory/runtime_state.py",
         "software-factory/factory/state_dir.py",
         "software-factory/factory/state_migrate.py",
+        "software-factory/factory/tracker.py",
         "software-factory/.gitignore"
       ]
     },

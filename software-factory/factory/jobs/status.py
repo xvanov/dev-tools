@@ -822,10 +822,34 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "paused": paused,
         "failover": _last_failover(ctx, rows),
         "policy": _policy_view(ctx, ref, rows, state_yaml),
+        # v1.12 (additive): where the job's work is tracked (factory/tracker.py).
+        "tracker": _tracker_view(ctx, cfg, ref),
         # v1.7: when the PR/CI fields were read. Null when GitHub was not asked
         # or could not answer (see docs/JOBS-API.md).
         "github_as_of": gh.as_of if gh is not None else None,
     }
+
+
+def _tracker_view(ctx: _Ctx, cfg: AppConfig, ref: JobRef) -> dict[str, Any]:
+    """v1.12: ``{"name", "source", "direction"}``. ``name`` is the app's
+    configured tracker (``github_issues`` | ``local``); ``direction`` is the
+    local tracker item (title, state, labels, summary, latest notes) — what the
+    tracker issue would have said — or null for a GitHub-tracked job."""
+    from factory.state_dir import state_dir
+    from factory.tracker import KIND_DIRECTION, configured_tracker, item_view, tracker_source
+
+    name = configured_tracker(cfg)
+    view: dict[str, Any] | None = None
+    try:
+        view = item_view(
+            state_dir(ctx.root) / "factory.db",
+            app=ref.app,
+            kind=KIND_DIRECTION,
+            ref=ref.direction_id,
+        )
+    except Exception:  # noqa: BLE001 - a read view must never fail status
+        view = None
+    return {"name": name, "source": tracker_source(cfg), "direction": view}
 
 
 def _code_pause(ctx: _Ctx, live: list[Any]) -> dict[str, Any] | None:

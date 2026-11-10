@@ -1890,6 +1890,13 @@ def reconcile_closed_trackers(
     Returns ``(slug, from_state, to_state)`` tuples for the TickSummary.
     """
     from factory.chain.handlers import persist_story
+    from factory.tracker import uses_github_issues
+
+    if not uses_github_issues(cfg):
+        # Local tracker (factory/tracker.py): there is no issue to read, and
+        # GitHub Issues must not be queried. Operators settle these stories
+        # with ``factory job cancel`` instead.
+        return []
 
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
@@ -2771,7 +2778,10 @@ def _worktree_keep_ids(stories: Iterable[StoryRecord]) -> set[int]:
     story row id. Keyed by row id, every tick pruned the in-flight story's own
     worktree (2026-11-08: story 11's worktree was ``dev-tools-35-...``).
     """
-    return {int(s.github_issue_number or 0) for s in stories}
+    from factory.chain.state_machine import story_number
+
+    # Local-tracker stories are named by their row id (``story_number``).
+    return {int(story_number(s) or 0) for s in stories}
 
 
 def _issue_hygiene_marker(root: Path, app: str) -> Path:
@@ -3966,9 +3976,15 @@ def tick(
                 if _hyg_mode not in {"paused", "drain-reviews"}:
                     from factory.directions.tracker_issue import reconcile_completed_issues
                     from factory.providers.github import build_github_client
+                    from factory.tracker import uses_github_issues as _uses_gh_issues
 
-                    _gh = build_github_client(getattr(cfg, "repo", None))
-                    if _gh is not None:
+                    # Local tracker: reconcile closes factory.db items, no client.
+                    _gh = (
+                        build_github_client(getattr(cfg, "repo", None))
+                        if _uses_gh_issues(cfg)
+                        else None
+                    )
+                    if _gh is not None or not _uses_gh_issues(cfg):
                         _rep = reconcile_completed_issues(
                             cfg, _gh, software_factory_root=root, db_path=db
                         )
@@ -4039,8 +4055,15 @@ def tick(
                 current_mode = get_mode(root, db_path=db)
                 if current_mode not in {"paused", "drain-reviews"}:
                     from factory.manager.poison_escalation import escalate_poisoned_rows
+                    from factory.tracker import uses_github_issues as _uses_issues
 
-                    _poison_result = escalate_poisoned_rows(root, db_path=db, apps=[app])
+                    # The escalation issue lands on the factory's own (public)
+                    # repo and names this app's rows; a local-tracker app's
+                    # escalation stays on the alert stream (repo=None).
+                    _poison_kw: dict[str, Any] = {} if _uses_issues(cfg) else {"repo": None}
+                    _poison_result = escalate_poisoned_rows(
+                        root, db_path=db, apps=[app], **_poison_kw
+                    )
                     if _poison_result.get("status") not in (
                         "no_skip_signal",
                         "no_poisoned_rows",

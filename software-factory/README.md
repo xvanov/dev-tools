@@ -276,9 +276,10 @@ Register an app — any GitHub repo — without hand-writing its config:
 
 ```bash
 uv run factory app add --repo owner/name [--path ~/name] [--name x] \
-    [--delivery-default draft_pr] [--pipeline-default chain] [--enable-tick] [--force] [--json]
+    [--delivery-default draft_pr] [--pipeline-default chain] [--tracker github_issues|local] \
+    [--enable-tick] [--force] [--json]
 uv run factory app set <app> [--delivery-default <level>] [--pipeline-default chain|solo|auto] \
-    [--gate test="<cmd>"|none] [--requires test=lychee,docker] [--json]
+    [--gate test="<cmd>"|none] [--requires test=lychee,docker] [--tracker local] [--json]
 uv run factory app show <app> [--json]      # gates, readiness, suggested gates (incl. from CI)
 uv run factory app list [--json]
 ```
@@ -299,7 +300,16 @@ when its app's test gate is empty on a repo with no `tests/`, or a required tool
 missing. Detection also spots docs-only repos and reads `.github/workflows/*.yml`
 and `.gitlab-ci.yml` to suggest gates that mirror CI; suggestions are shown, never
 written, until you confirm them with `--gate`. It refuses to
-overwrite an existing config without `--force`. Details:
+overwrite an existing config without `--force`.
+
+`app add` also writes the app's `tracker`. Only a personal owner's repo
+(`FACTORY_PERSONAL_OWNERS`, default `xvanov`) may use `github_issues`, the
+issue-per-direction/story tracking. Every other repo, such as a work org's,
+gets `local`: directions, stories, escalations and live status are kept in
+`state/factory.db` and shown by `factory job status` (`tracker`), `factory why`
+and `factory inbox`, and nothing touches the repo's GitHub Issues. A repo with
+Issues disabled falls back to `local` on its own (decision D29,
+`factory/tracker.py`, JOBS-API v1.12). Details:
 `apps/factory/context/modules/app-registration.md`. For a hand-tuned example see
 `apps/sacrifice/config.yaml`.
 
@@ -316,7 +326,7 @@ Day-to-day operator surface:
 
 ```bash
 factory inbox                 # everything awaiting a human, across apps
-factory status-sync --app X   # pinned [FACTORY] live-status GitHub issue
+factory status-sync --app X   # pinned [FACTORY] live-status issue (a local item for a local-tracker app)
 factory why <story-id>        # per-story event trail
 factory resume                # clear an FMS halt (operator-only)
 ```

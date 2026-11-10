@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from factory.delivery import DeliveryConfig
 from factory.job_policy import JobCapsConfig, ReviewConfig
+from factory.tracker import TrackerName
 
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
@@ -371,6 +372,15 @@ class AppConfig(BaseModel):
     # jobs the repo's workflows mark ``continue-on-error``.
     ci_required_checks: list[str] = Field(default_factory=list)
     ci_informational_checks: list[str] = Field(default_factory=list)
+
+    # Where directions, stories, escalations and live status are tracked
+    # (factory/tracker.py, operator decision 2026-11-09): ``github_issues`` or
+    # ``local`` (state/factory.db; nothing touches GitHub Issues). Absent =
+    # derived: a personal owner's repo -> github_issues, every other repo ->
+    # local. Read it through ``factory.tracker.effective_tracker``, which also
+    # falls back to local when the repo has Issues disabled. Set by
+    # ``factory app add`` / ``factory app set --tracker``.
+    tracker: TrackerName | None = None
 
     @property
     def repo_owner(self) -> str:

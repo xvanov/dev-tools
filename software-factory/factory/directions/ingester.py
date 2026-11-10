@@ -101,10 +101,23 @@ def ingest_github_direction_issue(
     bound to a specific repo. If omitted, we look it up via
     ``apps/<app>/config.yaml``.
     """
-    if repo_full_name is None:
-        from factory.app_config import load_app_config
+    from factory.app_config import load_app_config
+    from factory.tracker import configured_tracker
 
-        repo_full_name = load_app_config(app, software_factory_root).repo
+    try:
+        app_cfg: Any = load_app_config(app, software_factory_root)
+    except FileNotFoundError:
+        app_cfg = None
+    if app_cfg is not None and configured_tracker(app_cfg) != "github_issues":
+        # factory/tracker.py: a local-tracker app never reads GitHub Issues.
+        raise ValueError(
+            f"app {app!r} uses the local tracker; GitHub issues are not read for it. "
+            "Submit the work with `factory job submit` instead."
+        )
+    if repo_full_name is None:
+        if app_cfg is None:
+            raise FileNotFoundError(f"no app config for {app!r}")
+        repo_full_name = app_cfg.repo
 
     repo = github_client.get_repo(repo_full_name)
     issue = repo.get_issue(issue_number)

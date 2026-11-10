@@ -48,7 +48,7 @@ from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-e
     evaluate_all_gates,
     required_gate_labels,
 )
-from factory.chain.state_machine import StoryRecord, StoryState
+from factory.chain.state_machine import StoryRecord, StoryState, story_number
 from factory.delivery import DeliveryLevel
 from factory.state_dir import state_dir
 
@@ -3214,8 +3214,8 @@ def _reset_branch_for_fresh_rebuild(
     from factory.chain.worktree import remove_worktree_for_story
 
     branch = story.github_branch or (
-        feature_branch_name(story.github_issue_number, story.slug)
-        if story.github_issue_number is not None
+        feature_branch_name(story_number(story), story.slug)
+        if story_number(story) is not None
         else None
     )
     # 1. Close the PR + delete its remote head. A closed PR can never merge;
@@ -3250,7 +3250,7 @@ def _reset_branch_for_fresh_rebuild(
             source_repo,
             software_factory_root=root,
             app=story.app,
-            story_id=story.github_issue_number,
+            story_id=story_number(story),
             slug=story.slug,
         )
     except Exception:  # noqa: BLE001 - best-effort cleanup
@@ -4413,7 +4413,7 @@ def auto_merge_tick(
                 source_repo,
                 software_factory_root=root,
                 app=app,
-                story_id=db_story.github_issue_number,
+                story_id=story_number(db_story),
                 slug=db_story.slug,
                 base_branch=story_into(db_story, cfg),
                 branch=str(db_story.pickup_branch) if is_pickup(db_story) else None,
@@ -4430,8 +4430,8 @@ def auto_merge_tick(
             from factory.chain.branch import feature_branch_name
 
             feat = db_story.github_branch or (
-                feature_branch_name(db_story.github_issue_number, db_story.slug)
-                if db_story.github_issue_number is not None
+                feature_branch_name(story_number(db_story), db_story.slug)
+                if story_number(db_story) is not None
                 else None
             )
             if feat:

@@ -269,9 +269,6 @@ def update_status_issue(
 
     Returns the issue number. Always idempotent; never opens a duplicate.
     """
-    if github_client is None:
-        raise ValueError("github_client is required for real-run update_status_issue")
-
     software_factory_root = Path(software_factory_root)
     db = db_path or (state_dir(software_factory_root) / "factory.db")
 
@@ -283,6 +280,20 @@ def update_status_issue(
     body = compose_status_body(app, software_factory_root)
     title = f"[FACTORY] {app} live status"
     labels = [_STATUS_LABEL]
+
+    from factory.tracker import KIND_STATUS, guard_issue_write, upsert_item, uses_github_issues
+
+    def _local() -> int:
+        # Local tracker (factory/tracker.py): the live status is a factory.db
+        # item; returns 0 because no issue exists.
+        upsert_item(db, app=app, kind=KIND_STATUS, ref="live", title=title, body=body,
+                    labels=labels)
+        return 0
+
+    if not uses_github_issues(app_config, github_client):
+        return _local()
+    if github_client is None:
+        raise ValueError("github_client is required for real-run update_status_issue")
 
     repo = github_client.get_repo(app_config.repo)
     existing = _find_existing_issue(app, db)
@@ -296,7 +307,12 @@ def update_status_issue(
             # Stale row (issue deleted manually). Fall through and create.
             pass
 
-    issue = repo.create_issue(title=title, body=body, labels=labels)
+    try:
+        issue = repo.create_issue(title=title, body=body, labels=labels)
+    except Exception as exc:
+        if guard_issue_write(app_config, exc):
+            return _local()
+        raise
     number = int(issue.number)
     _persist_issue_number(app, number, db)
     return number

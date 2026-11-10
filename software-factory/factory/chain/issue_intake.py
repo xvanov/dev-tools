@@ -42,7 +42,8 @@ def maybe_auto_intake(
 
     Returns ``(summary, reason)``. ``summary`` is None (with a reason string)
     when intake did no work: ``disabled``, ``dry_run`` (no GH in dry-run),
-    ``no_client``, or ``no_new_issues``.
+    ``no_client``, ``tracker_local`` (the app's tracker is local),
+    ``issues_disabled`` (the repo has Issues off), or ``no_new_issues``.
     """
     from factory.settings.loader import load_settings
 
@@ -56,9 +57,17 @@ def maybe_auto_intake(
 
     from factory.app_config import load_app_config
     from factory.directions.ingester import ingest_github_direction_issue
+    from factory.tracker import configured_tracker, issues_enabled
 
-    repo_full = load_app_config(app, software_factory_root).repo
+    app_cfg = load_app_config(app, software_factory_root)
+    repo_full = app_cfg.repo
+    # A local-tracker app (factory/tracker.py) never reads GitHub Issues:
+    # directions arrive by ``factory job submit`` / on disk instead.
+    if configured_tracker(app_cfg) != "github_issues":
+        return None, "tracker_local"
     client = github_client_factory()
+    if issues_enabled(client, repo_full) is False:
+        return None, "issues_disabled"
     repo = client.get_repo(repo_full)
 
     summary = IntakeSummary()

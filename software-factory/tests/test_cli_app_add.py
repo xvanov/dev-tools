@@ -581,6 +581,8 @@ def test_cli_list_json_shape(cli, factory_root: Path, tmp_path: Path) -> None:
             "review",  # v1.9
             "caps",  # v1.9
             "serve_tick",
+            "tracker",  # v1.12
+            "tracker_source",  # v1.12
             "ticked",
             "gates",
             "readiness",

@@ -90,6 +90,12 @@ def backfill_tracker_issues(
     root = Path(software_factory_root)
     db = Path(db_path) if db_path is not None else state_dir(root) / "factory.db"
 
+    from factory.tracker import uses_github_issues
+
+    if not uses_github_issues(app_config, github_client):
+        # factory/tracker.py: a local-tracker app has no tracker issues to find.
+        return result
+
     try:
         repo = github_client.get_repo(app_config.repo)
         issues = list(repo.get_issues(state="all"))

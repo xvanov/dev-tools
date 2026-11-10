@@ -82,8 +82,9 @@ def story_branch(story: Any) -> str:
     if is_pickup(story):
         return str(story.pickup_branch).strip()
     from factory.chain.branch import feature_branch_name
+    from factory.chain.state_machine import story_number
 
-    return feature_branch_name(getattr(story, "github_issue_number", None), story.slug)
+    return feature_branch_name(story_number(story), story.slug)
 
 
 def story_into(story: Any, app_config: Any) -> str:

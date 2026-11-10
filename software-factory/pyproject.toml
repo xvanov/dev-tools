@@ -102,6 +102,7 @@ addopts = "-q -n auto -m \"not slow\""
 markers = [
   "slow: heavy test, excluded from the default run (run with -m slow)",
   "flaky_under_load: passes alone, fails under -n auto load; tracked for later",
+  "real_tracker_policy: use the real owner-derived tracker default (factory/tracker.py)",
 ]
 
 [tool.coverage.run]

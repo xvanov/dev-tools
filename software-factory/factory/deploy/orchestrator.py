@@ -422,25 +422,50 @@ def _file_p0_issue(
     github_client: Any,
     repo: str,
     dry_run: bool,
+    app_config: Any = None,
+    db_path: Path | None = None,
 ) -> int | None:
     """File the deploy-regression p0 issue. Dry-run returns a synthesized number.
 
     Mirrors the rollback worker's p0 conventions so the reviewer/inbox can
-    consume both consistently.
+    consume both consistently. A local-tracker app (factory/tracker.py) gets a
+    factory.db escalation item instead and returns ``None`` (no issue exists).
     """
+    from factory.tracker import KIND_ESCALATION, guard_issue_write, upsert_item, uses_github_issues
+
+    title = f"[p0] Deploy failed for PR #{merged_pr_number} (sha {merged_sha})"
+    body = (
+        f"Deploy of PR #{merged_pr_number} (sha `{merged_sha}`) failed.\n\n"
+        f"Error: {error}\n\n"
+        "Rollback command was attempted. Factory mode auto-flipped to `fix-only`."
+    )
+    labels = ["priority/p0", "deploy-regression"]
+
+    def _local() -> int | None:
+        if dry_run or db_path is None:
+            return None
+        upsert_item(
+            db_path,
+            app=app,
+            kind=KIND_ESCALATION,
+            ref=f"deploy-{merged_sha}",
+            title=title,
+            body=body,
+            labels=labels,
+        )
+        return None
+
+    if app_config is not None and not uses_github_issues(app_config, github_client):
+        return _local()
     if dry_run or github_client is None:
         # Synthesize a deterministic number so tests can assert on it.
         return 7000 + int(merged_pr_number)
-    gh_repo = github_client.get_repo(repo)
-    issue = gh_repo.create_issue(
-        title=f"[p0] Deploy failed for PR #{merged_pr_number} (sha {merged_sha})",
-        body=(
-            f"Deploy of PR #{merged_pr_number} (sha `{merged_sha}`) failed.\n\n"
-            f"Error: {error}\n\n"
-            "Rollback command was attempted. Factory mode auto-flipped to `fix-only`."
-        ),
-        labels=["priority/p0", "deploy-regression"],
-    )
+    try:
+        issue = github_client.get_repo(repo).create_issue(title=title, body=body, labels=labels)
+    except Exception as exc:
+        if app_config is not None and guard_issue_write(app_config, exc):
+            return _local()
+        raise
     return int(issue.number)
 
 
@@ -654,6 +679,8 @@ def deploy_post_merge(  # noqa: C901 - top-level orchestration; refactor when ph
             github_client=github_client,
             repo=cfg.repo,
             dry_run=dry_run,
+            app_config=cfg,
+            db_path=db,
         )
         # Mode flip — real-run only. Dry-run synthesizes the would-be mode.
         if not dry_run:

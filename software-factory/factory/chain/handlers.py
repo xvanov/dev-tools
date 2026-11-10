@@ -64,6 +64,7 @@ from factory.chain.state_machine import (
     StoryState,
     advance,
     is_terminal,
+    story_number,
 )
 from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
@@ -141,7 +142,7 @@ def _writing_worktree(
         source_repo,
         software_factory_root=software_factory_root,
         app=story.app,
-        story_id=story.github_issue_number,
+        story_id=story_number(story),
         slug=story.slug,
         base_branch=story_into(story, app_config),
         stack_on=parent.github_branch if parent is not None else None,
@@ -219,10 +220,10 @@ def _will_cut_new_branch(source_repo: Path, software_factory_root: Path, story: 
     from factory.chain.worktree import _worktree_slots, feature_branch_name, worktree_path
 
     try:
-        wt = worktree_path(software_factory_root, story.app, story.github_issue_number, story.slug)
+        wt = worktree_path(software_factory_root, story.app, story_number(story), story.slug)
         if any((p / ".git").exists() for p in _worktree_slots(wt)):
             return False
-        branch = feature_branch_name(story.github_issue_number, story.slug)
+        branch = feature_branch_name(story_number(story), story.slug)
         probe = subprocess.run(
             ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
             cwd=str(source_repo),
@@ -287,6 +288,8 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     "pickup_into": "TEXT",
     # JOBS-API v1.9 job policy (StoryRecord.policy_json). NULL = pre-v1.9.
     "policy_json": "TEXT",
+    # factory/tracker.py: ``local`` = no GitHub issue; identity is the row id.
+    "tracker": "TEXT",
     # JSONL of prior dev sandbox attempts (one entry per chain-level retry):
     # ``[{attempt, ts, test_output_tail, files_touched, summary}, ...]``.
     # Fed forward into the next dev invocation's initial message so the LLM
@@ -614,6 +617,99 @@ def _author_acceptance_oracle(
         )
 
 
+def _open_story_issue(
+    app_config: AppConfig,
+    github_client: Any,
+    *,
+    title: str,
+    body: str,
+    labels: list[str],
+    local: bool,
+) -> tuple[int | None, bool]:
+    """Open a story's GitHub issue unless the app is tracked locally.
+
+    Returns ``(issue_number, local)``. A create GitHub refuses with "Issues has
+    been disabled" (410) flips the app to the local tracker for the rest of
+    this spawn instead of failing it (factory/tracker.py).
+    """
+    if local:
+        return None, True
+    from factory.tracker import guard_issue_write
+
+    try:
+        issue = github_client.get_repo(app_config.repo).create_issue(
+            title=title, body=body, labels=labels
+        )
+    except Exception as exc:
+        if guard_issue_write(app_config, exc):
+            return None, True
+        raise
+    return int(issue.number), False
+
+
+def _finish_local_story(
+    story: StoryRecord,
+    db: Path,
+    app_config: AppConfig,
+    *,
+    title: str,
+    body: str,
+    labels: list[str],
+) -> None:
+    """A persisted local-tracker story: name its branch and story file by its
+    row id (never an issue number) and record its factory.db tracker item."""
+    from factory.chain.state_machine import story_number
+    from factory.tracker import KIND_STORY, upsert_item
+
+    n = story_number(story)
+    if n is None:
+        return
+    story.github_branch = f"story/{n}-{story.slug}"
+    if story.story_file_path == f"stories/0-{story.slug}.md":
+        story.story_file_path = f"stories/{n}-{story.slug}.md"
+    persist_story(story, db)
+    try:
+        upsert_item(
+            db,
+            app=app_config.name,
+            kind=KIND_STORY,
+            ref=n,
+            title=title,
+            body=body,
+            labels=labels,
+        )
+    except Exception as exc:  # noqa: BLE001 - the story row is the truth; the item is a view
+        _logger.warning("story %s: local tracker item not written: %r", n, exc)
+
+
+def _note_local_alternatives(
+    direction: Direction,
+    app_config: AppConfig,
+    db: Path,
+    stories: list[StoryRecord],
+    interpretations: Any,
+) -> None:
+    """Local twin of ``dual_draft.link_alternatives``: a note on the direction."""
+    from factory.tracker import KIND_DIRECTION, add_note
+
+    lines = ["Dual-draft alternatives spawned:"]
+    for story, interp in zip(stories, interpretations, strict=False):
+        lines.append(
+            f"- story {story.id} (`{interp.interpretation_id}`): {interp.title} — "
+            f"{interp.key_assumption_diff}"
+        )
+    try:
+        add_note(
+            db,
+            app=app_config.name,
+            kind=KIND_DIRECTION,
+            ref=direction.id or direction.slug,
+            body="\n".join(lines),
+        )
+    except Exception:  # noqa: BLE001 - never fail the spawn on a note
+        pass
+
+
 def handle_stories_spawned(
     direction: Direction,
     pm_result: dict[str, Any],
@@ -648,6 +744,12 @@ def handle_stories_spawned(
 
     db = db_path or (state_dir(software_factory_root) / "factory.db")
     out: list[StoryRecord] = []
+    # factory/tracker.py (operator decision 2026-11-09): a local-tracker app
+    # never gets a story issue; the story is a factory.db item instead and its
+    # identity is its row id (``state_machine.story_number``).
+    from factory.tracker import uses_github_issues
+
+    local_tracker = not uses_github_issues(app_config, None if dry_run else github_client)
 
     # Per-job routing (operator decision 2026-11-02): resolve the direction's
     # ``models``/``pipeline`` frontmatter against the app config ONCE, here, and
@@ -730,22 +832,28 @@ def handle_stories_spawned(
             title = f"{interp.title}"[:200]
             issue_number: int | None = None
             story_file_path = f"stories/0-{slug}.md"
+            dd_labels = ["story", f"scope/{scope}", "draft-alternative"]
+            dd_interp = (
+                f"\n_Interpretation: `{interp.interpretation_id}` — "
+                f"{interp.key_assumption_diff}_\n"
+            )
+            dd_body = f"{interp.body}\n\n_Direction: `{direction.id}-{direction.slug}`._\n{dd_interp}"
             if not dry_run and github_client is not None:
-                repo = github_client.get_repo(app_config.repo)
-                body = (
-                    f"{interp.body}\n\n"
-                    f"_Direction: `{direction.id}-{direction.slug}` "
-                    f"(tracker: #{direction.state.get('tracker_issue', '?')})._\n"
-                    f"\n_Interpretation: `{interp.interpretation_id}` — "
-                    f"{interp.key_assumption_diff}_\n"
-                )
-                issue = repo.create_issue(
+                issue_number, local_tracker = _open_story_issue(
+                    app_config,
+                    github_client,
                     title=title,
-                    body=body,
-                    labels=["story", f"scope/{scope}", "draft-alternative"],
+                    body=(
+                        f"{interp.body}\n\n"
+                        f"_Direction: `{direction.id}-{direction.slug}` "
+                        f"(tracker: #{direction.state.get('tracker_issue', '?')})._\n"
+                        f"{dd_interp}"
+                    ),
+                    labels=dd_labels,
+                    local=local_tracker,
                 )
-                issue_number = int(issue.number)
-                story_file_path = f"stories/{issue_number}-{slug}.md"
+                if issue_number is not None:
+                    story_file_path = f"stories/{issue_number}-{slug}.md"
 
             # Dual-draft path: use the first child's points as a hint
             # (interpretations share the same underlying work item).
@@ -778,6 +886,7 @@ def handle_stories_spawned(
                 runtime=routing.runtime,
                 runtime_model=routing.claude_model,
                 github_issue_number=issue_number,
+                tracker="local" if local_tracker else None,
                 github_branch=f"story/{issue_number or 0}-{slug}",
                 story_file_path=story_file_path,
                 points=dd_points,
@@ -800,6 +909,10 @@ def handle_stories_spawned(
             # stories that the tick then executed).
             if not dry_run:
                 persist_story(story, db)
+                if local_tracker:
+                    _finish_local_story(
+                        story, db, app_config, title=title, body=dd_body, labels=dd_labels
+                    )
                 log_spawn_level(story, _dl_info, software_factory_root)
                 _author_acceptance_oracle(
                     story,
@@ -811,8 +924,10 @@ def handle_stories_spawned(
                 )
             out.append(story)
 
+        if not dry_run and local_tracker and len(out) >= 2:
+            _note_local_alternatives(direction, app_config, db, out, interpretations)
         # Post the comparison comment on the tracker (real-run only).
-        if not dry_run and github_client is not None and len(out) >= 2:
+        if not dry_run and github_client is not None and not local_tracker and len(out) >= 2:
             try:
                 link_alternatives(
                     out[0],
@@ -1008,22 +1123,24 @@ def handle_stories_spawned(
         )
         issue_number = None
         story_file_path = f"stories/0-{slug}.md"
+        story_labels = ["story", f"scope/{scope}"]
 
         if not dry_run and github_client is not None:
             # Real-run: open GH issue, then story_file_path uses the issue number.
-            repo = github_client.get_repo(app_config.repo)
-            body = (
-                f"{child.get('rationale') or ''}\n\n"
-                f"_Direction: `{direction.id}-{direction.slug}` "
-                f"(tracker: #{direction.state.get('tracker_issue', '?')})._\n"
-            )
-            issue = repo.create_issue(
+            issue_number, local_tracker = _open_story_issue(
+                app_config,
+                github_client,
                 title=title,
-                body=body,
-                labels=["story", f"scope/{scope}"],
+                body=(
+                    f"{child.get('rationale') or ''}\n\n"
+                    f"_Direction: `{direction.id}-{direction.slug}` "
+                    f"(tracker: #{direction.state.get('tracker_issue', '?')})._\n"
+                ),
+                labels=story_labels,
+                local=local_tracker,
             )
-            issue_number = int(issue.number)
-            story_file_path = f"stories/{issue_number}-{slug}.md"
+            if issue_number is not None:
+                story_file_path = f"stories/{issue_number}-{slug}.md"
 
         story = StoryRecord(
             direction_id=direction.id or direction.slug,
@@ -1038,6 +1155,7 @@ def handle_stories_spawned(
             runtime=routing.runtime,
             runtime_model=routing.claude_model,
             github_issue_number=issue_number,
+            tracker="local" if local_tracker else None,
             github_branch=f"story/{issue_number or 0}-{slug}",
             story_file_path=story_file_path,
             points=points,
@@ -1060,6 +1178,18 @@ def handle_stories_spawned(
         # oracle (see the dual-draft branch above and the 2026-07-20 incident).
         if not dry_run:
             persist_story(story, db)
+            if local_tracker:
+                _finish_local_story(
+                    story,
+                    db,
+                    app_config,
+                    title=title,
+                    body=(
+                        f"{child.get('rationale') or ''}\n\n"
+                        f"_Direction: `{direction.id}-{direction.slug}`._\n"
+                    ),
+                    labels=story_labels,
+                )
             log_spawn_level(story, _dl_info, software_factory_root)
             _author_acceptance_oracle(
                 story,
@@ -1199,7 +1329,7 @@ def _dry_run_sm(
                 "scope": story.scope,
                 "file_content": file_content,
                 "target_path": story.story_file_path
-                or f"stories/{story.github_issue_number or 0}-{story.slug}.md",
+                or f"stories/{story_number(story) or 0}-{story.slug}.md",
             }
         ],
         "summary": f"Dry-run SM story for {story.slug!r}.",
@@ -1511,7 +1641,7 @@ def handle_sm(
     target_path_rel = str(matched.get("target_path") or story.story_file_path)
     target_path_rel = _substitute_issue_number_in_path(
         target_path_rel,
-        issue_number=story.github_issue_number,
+        issue_number=story_number(story),
         slug=story.slug,
     )
 
@@ -6730,8 +6860,11 @@ def _post_factory_needs_redesign_comment(
     direction = find_direction_for_story(story, software_factory_root)
     if direction is None:
         return
+    from factory.tracker import uses_github_issues
+
+    local = not uses_github_issues(app_config)
     tracker = direction.state.get("tracker_issue") if hasattr(direction, "state") else None
-    if not tracker:
+    if not tracker and not local:
         return
     repo = f"{app_config.repo_owner}/{app_config.repo_name}"
     body_parts = [
@@ -6760,6 +6893,22 @@ def _post_factory_needs_redesign_comment(
     body_parts.append("")
     body_parts.append(f"Inspect via `factory trace {story.id}` for the per-attempt event log.")
     body = "\n".join(body_parts)
+
+    if local:
+        # Local tracker: the same note on the direction's factory.db item.
+        from factory.tracker import KIND_DIRECTION, add_note
+
+        try:
+            add_note(
+                state_dir(Path(software_factory_root)) / "factory.db",
+                app=app_config.name,
+                kind=KIND_DIRECTION,
+                ref=story.direction_id,
+                body=body,
+            )
+        except Exception:  # noqa: BLE001 - best-effort surface
+            pass
+        return
 
     import subprocess
 
@@ -7504,8 +7653,14 @@ def _open_pr_for_story(
     body = (
         stack_note + f"Generated by the factory {story.chain_kind} chain "
         f"({getattr(story, 'pipeline', 'chain') or 'chain'} pipeline) for story "
-        f"#{story.github_issue_number}.\n\n"
-        f"Branch: `{branch}`\n"
+        # A local-tracker story has no issue: name it by its factory story id
+        # with no ``#`` (which GitHub would link to an unrelated issue/PR).
+        + (
+            f"#{story.github_issue_number}.\n\n"
+            if story.github_issue_number
+            else f"`{story.app}` story {story.id} (tracked in the factory, no issue).\n\n"
+        )
+        + f"Branch: `{branch}`\n"
         f"Story slug: `{story.slug}`\n"
         f"Direction: `{story.direction_id}`\n\n"
         + (
@@ -7814,7 +7969,11 @@ def _close_issues_on_deploy(
     if dry_run:
         return
     client = github_client
-    if client is None:
+    from factory.tracker import uses_github_issues
+
+    if not uses_github_issues(app_config):
+        client = None  # local tracker: factory.db items only, no GitHub client
+    elif client is None:
         from factory.providers.github import build_github_client
 
         client = build_github_client(getattr(app_config, "repo", None))
@@ -7831,7 +7990,7 @@ def _close_issues_on_deploy(
             maybe_close_tracker_issue,
         )
 
-        close_story_issue(story, app_config, client)
+        close_story_issue(story, app_config, client, db_path=db)
         if story.direction_id:
             maybe_close_tracker_issue(
                 story.direction_id,

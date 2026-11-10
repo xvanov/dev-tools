@@ -454,7 +454,22 @@ def close_abandoned_draft_sibling(
             # 2. Close the loser's still-open tracker issue (best-effort).
             #    Needs a pygithub client; skipped when none is available (the
             #    reconcile-issues sweep / next tick with a token closes it later).
-            if sib.github_issue_number and github_client is not None:
+            if getattr(sib, "tracker", None) == "local":
+                # Local tracker (factory/tracker.py): close the factory.db item.
+                try:
+                    from factory.tracker import KIND_STORY, close_item
+
+                    close_item(
+                        Path(db_path),
+                        app=sib.app,
+                        kind=KIND_STORY,
+                        ref=str(sib.id),
+                        note=f"Superseded by sibling story {winner.id} which shipped.",
+                        reason="not_planned",
+                    )
+                except Exception:  # noqa: BLE001 — bookkeeping must never break merge
+                    pass
+            elif sib.github_issue_number and github_client is not None:
                 try:
                     repo = github_client.get_repo(app_config.repo)
                     issue = repo.get_issue(int(sib.github_issue_number))

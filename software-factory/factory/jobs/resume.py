@@ -49,6 +49,7 @@ from typing import Any
 import yaml
 
 from factory.jobs.common import JobError, find_job, read_state_yaml, state_db_path
+from factory.tracker import uses_github_issues as _uses_issues
 
 RESUMED_BY = "factory job resume"
 
@@ -221,7 +222,7 @@ def resume_job(root: Path, job_id: str, *, github: bool = True) -> dict[str, Any
                 "point": plan.point,
             }
         )
-        if was_cancelled and story.github_issue_number and github:
+        if was_cancelled and story.github_issue_number and github and _uses_issues(cfg):
             _issue_reopen(cfg.repo, int(story.github_issue_number))
 
     if requeue:
