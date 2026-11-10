@@ -439,9 +439,11 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   });
 
   // Build runs (src/build, D30): a run whose session has gone ended without
-  // `pa run done`. Cost, tool calls and the caps join this pass in 8.7.3.
+  // `pa run done`; the transcripts of the live ones read for cost, tool calls
+  // and subagents, and a run over its cost or time cap stopped.
   every(15, 'build-runs', async () => {
     await require('./build/index.ts').reconcile();
+    await require('./build/track.ts').tick();
   });
 
   // Factory jobs (src/dispatch/factory.ts): their status onto the run rows,

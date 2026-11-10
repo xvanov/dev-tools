@@ -1301,15 +1301,17 @@
       "details": {
         "Run row": "build_run (state starting|running|waiting|done|failed|stopped, model, worktree, branch, termhub session, Claude session id, result, caps, cost, tokens, track JSON) and build_msg (note, ask, done from the agent; reply, send from Jarvis). Env JARVIS_RUN_ID tells the agent its run.",
         "Model": "haiku | sonnet | opus per card (default sonnet), passed as claude --model; --session-id fixes the transcript path (~/.claude/projects/<cwd with non-alphanumerics as ->/<session>.jsonl).",
-        "Guards": "a run whose session vanishes without `pa run done` is failed (worker pass build-runs, every 15 s). Cost and wall-clock caps: planned (8.7.3).",
-        "Messaging": "Agent to Jarvis: `pa run note \"<text>\"` (FYI), `pa run ask \"<question>\"` (blocks, polling its build_msg row, up to 30 min; prints the answer; the run is `waiting` and a notice says it needs you), `pa run done --result \"<PR url | report path | one line>\"`. The run id is $JARVIS_RUN_ID, set at launch. Jarvis to agent: `pa run reply <run> \"<text>\"` (answers the open ask), `pa run send <run> \"<text>\"` (typed into the live termhub session), `pa run stop <run>`; the chat has build_runs, build_run (reads) and build_reply, build_send, build_stop (ask)."
+        "Guards": "a run whose session vanishes without `pa run done` is failed; a live run over its cost cap (PA_BUILD_COST_CAP_USD, default $5, notional subscription dollars) or its wall-clock cap (PA_BUILD_WALL_CAP_MIN, default 120) is stopped: session killed, run stopped with the reason. Card-overridable (build.card.<id>). Worker pass build-runs, every 15 s.",
+        "Messaging": "Agent to Jarvis: `pa run note \"<text>\"` (FYI), `pa run ask \"<question>\"` (blocks, polling its build_msg row, up to 30 min; prints the answer; the run is `waiting` and a notice says it needs you), `pa run done --result \"<PR url | report path | one line>\"`. The run id is $JARVIS_RUN_ID, set at launch. Jarvis to agent: `pa run reply <run> \"<text>\"` (answers the open ask), `pa run send <run> \"<text>\"` (typed into the live termhub session), `pa run stop <run>`; the chat has build_runs, build_run (reads) and build_reply, build_send, build_stop (ask).",
+        "Tracking": "src/build/track.ts reads the session transcript and its subagents (<session>/subagents/agent-<id>.jsonl, with .meta.json) every 15 s: per agent tokens (in, out, cache read/write; usage deduped by message id), notional cost at API list prices (haiku $1/$5, sonnet $3/$15, opus $5/$25 per M tokens; cache read 0.1x, write 1.25x/2x), tool calls (name, short args, ok/err, ms). The view is build_run.track (JSON), the totals build_run.cost_usd/tokens_*. When a run ends the raw logs are copied to <data>/build-logs/run-<id>/."
       },
       "code": [
         "personal-assistant/src/build/index.ts",
         "personal-assistant/src/build/agent-prompt.md",
         "personal-assistant/src/repo/buildRuns.ts",
         "personal-assistant/src/cli/run.ts",
-        "personal-assistant/src/build/messages.ts"
+        "personal-assistant/src/build/messages.ts",
+        "personal-assistant/src/build/track.ts"
       ],
       "env": [
         {
