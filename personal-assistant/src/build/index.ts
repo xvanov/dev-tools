@@ -115,12 +115,20 @@ function paCommand(): string {
 async function briefContext(target: Json, task: string): Promise<string> {
   try {
     const c = await require('../dispatch/compose.ts').compose({ target, task, delivery: null, route: 'claude' });
-    return String(c.brief || '').trim();
+    return String(c.brief || '').trim().slice(0, 2500);
   } catch (err) {
     log.warn('compose failed, using the plain ask', { message: (err as Error).message });
     const c = target.commitment;
     return [c?.summary, c?.detail].filter(Boolean).join('\n\n');
   }
+}
+
+/** Startup-context cuts for a build agent: no MCP servers, no skill listing, no user-level hooks/plugins
+ *  (the owner's SessionStart hooks, plugin skills and claude.ai connectors were ~45k tokens of the first
+ *  turn, re-read from cache on every turn). Project CLAUDE.md and subagents are untouched. Auth is OAuth, not a setting. */
+function leanFlags(line: string): string {
+  const want: Array<[string, string]> = [['--strict-mcp-config', ''], ['--disable-slash-commands', ''], ['--setting-sources', ' project,local']];
+  return want.filter(([f]) => !line.includes(f)).map(([f, v]) => ` ${f}${v}`).join('');
 }
 
 /** Starts a run. What it made is undone when the session does not open. */
@@ -174,7 +182,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model, prompt: null });
     const session = await termhub.createSession({
       cwd,
-      command: `${launch.command} --session-id ${claudeSession}`,
+      command: `${launch.command}${leanFlags(launch.command)} --session-id ${claudeSession}`,
       title: `jarvis#${run.id} ${task.slice(0, 40)}`,
       env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}` },
       links: { card: commitmentId, external: `build-${run.id}` },
