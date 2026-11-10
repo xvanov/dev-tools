@@ -626,13 +626,26 @@ const sdkMsg = {
         model: () => 'claude-opus-5',
         approvalTimeoutMs: () => 1000,
         env: () => ({}),
+        executable: () => 'C:\\pa\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe',
         hub: () => null,
       });
       await assert.rejects(feed.send({ text: 'hi' }), (e) => e.status === 503 && /module not installed/.test(e.message));
       fail = false;
       await feed.send({ text: 'hi' });
       assert.strictEqual(sdk.runs[0].options.model, 'claude-opus-5', 'PA_CHAT_MODEL is passed through');
+      assert.strictEqual(sdk.runs[0].options.pathToClaudeCodeExecutable, 'C:\\pa\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe', 'the binary found on disk is passed: the compiled jarvisd cannot resolve it');
       feed.stop();
+    }
+
+    // claudeExecutable: the SDK's platform package on disk first (the compiled
+    // jarvisd's own module URL is virtual), then the installed claude, else null.
+    {
+      const pkg = path.join('/pa', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-x64', 'claude.exe');
+      const have = (set) => (p) => set.includes(p);
+      assert.strictEqual(S.claudeExecutable({ platform: 'win32', arch: 'x64', dirs: ['', '/nowhere', '/pa'], installed: () => 'claude', exists: have([pkg]) }), pkg);
+      const home = path.resolve('/home/k/.local/bin/claude');
+      assert.strictEqual(S.claudeExecutable({ platform: 'linux', arch: 'x64', dirs: ['/pa'], installed: () => home, exists: have([home]) }), home, 'falls back to the installed claude');
+      assert.strictEqual(S.claudeExecutable({ platform: 'linux', arch: 'x64', dirs: ['/pa'], installed: () => 'claude', exists: () => false }), null, 'nothing found: the SDK resolves its own');
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

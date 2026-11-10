@@ -380,15 +380,18 @@ function start(o: { file: string; name: string; eventId?: string | null; title?:
   const job: Row = { id: crypto.randomBytes(6).toString('hex'), name: o.name, state: 'queued', queuedAt: new Date().toISOString() };
   JOBS.push(job);
   while (JOBS.length > 20) JOBS.shift();
+  // The upload is deleted before the job reads done or error: a poller that
+  // sees the end state also sees the file gone.
+  const drop = () => fs.promises.rm(o.file, { force: true }).catch(() => {});
   queue = queue.then(async () => {
     try {
       const r = await importMeeting({ ...o, onProgress: (p) => Object.assign(job, p) });
+      await drop();
       Object.assign(job, { state: 'done', done: undefined, total: undefined, episodeId: r.episodeId, title: r.title, debriefId: r.debrief?.debrief?.id ?? null, finishedAt: new Date().toISOString() });
     } catch (err: any) {
       log.warn('import failed', { name: o.name, message: err.message });
+      await drop();
       Object.assign(job, { state: 'error', error: err.message, finishedAt: new Date().toISOString() });
-    } finally {
-      fs.rm(o.file, { force: true }, () => {});
     }
   });
   return { ...job };

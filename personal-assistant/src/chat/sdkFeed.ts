@@ -55,6 +55,35 @@ function httpError(status: any, message: any) {
 }
 
 /**
+ * The Claude Code binary for the SDK to spawn, or null to let the SDK find its
+ * own. The SDK looks for its platform package (claude-agent-sdk-<os>-<arch>)
+ * relative to its own module URL, which inside the compiled jarvisd executable
+ * is a virtual bundle path with no node_modules beside it: the chat then never
+ * starts ("Native CLI binary for win32-x64 not found"). So look on disk: the
+ * PA's node_modules (from its tool dir, the working directory, or beside
+ * jarvisd/dist), then the installed `claude` (config.claudeBinary).
+ */
+function claudeExecutable({
+  platform = process.platform,
+  arch = process.arch,
+  dirs = (() => {
+    const cfg = require('../config.ts');
+    return [cfg.config.toolDir, process.cwd(), path.resolve(path.dirname(process.execPath), '..', '..', 'personal-assistant')];
+  })(),
+  installed = () => require('../config.ts').claudeBinary(),
+  exists = (p: string) => { try { return fs.statSync(p).isFile(); } catch { return false; } },
+}: { platform?: string; arch?: string; dirs?: string[]; installed?: () => string; exists?: (p: string) => boolean } = {}): string | null {
+  const exe = platform === 'win32' ? 'claude.exe' : 'claude';
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const p = path.join(dir, 'node_modules', '@anthropic-ai', `claude-agent-sdk-${platform}-${arch}`, exe);
+    if (exists(p)) return p;
+  }
+  const bin = installed();
+  return bin && path.isAbsolute(bin) && exists(bin) ? bin : null;
+}
+
+/**
  * Pure. The environment the SDK's Claude Code runs with: the worker's, minus
  * API credentials (so it signs in with the machine's Claude login, i.e. the
  * subscription), marked as the PA chat the way termhub's session is.
@@ -209,6 +238,7 @@ function createSdkFeed({
   approvalTimeoutMs = () => require('../config.ts').config.chat.approvalTimeoutMs,
   jobLookup = null,
   env = () => subscriptionEnv(),
+  executable = () => claudeExecutable(),
   hub = () => require('../dispatch/termhub.ts'),
   viewCommand = (file: any) => {
     const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
@@ -621,6 +651,7 @@ function createSdkFeed({
     ensureView({ force: true }); // not awaited: termhub being down never blocks the chat
     input = createInputQueue();
     const m = model();
+    const exe = executable();
     const options = {
       cwd: home,
       // Manual approvals through canUseTool, whatever a settings file says.
@@ -632,6 +663,7 @@ function createSdkFeed({
       includePartialMessages: true,
       env: env(),
       ...(m ? { model: m } : {}),
+      ...(exe ? { pathToClaudeCodeExecutable: exe } : {}),
       ...(resume ? { resume } : {}),
     };
     q = queryFn({ prompt: input, options });
@@ -666,6 +698,7 @@ function createSdkFeed({
     try {
       return await starting;
     } catch (err: any) {
+      log.warn('the SDK chat could not start', { message: err.message });
       throw httpError(503, `the PA chat could not start: ${err.message}`);
     }
   }
@@ -776,4 +809,4 @@ function createSdkFeed({
   return { send, history, subscribe, session, open, doorbell, answerPermission, drain, undrain, stop, canUseTool, preToolUse, onMessage };
 }
 
-module.exports = { createSdkFeed, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };
+module.exports = { createSdkFeed, claudeExecutable, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };
