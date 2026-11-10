@@ -100,8 +100,13 @@ Prefer these over \`pa\` commands, files or the shell — they answer in one cal
 - \`card <id>\` — one card's full context (summary, detail, source excerpt, links, repo, blockers, runs, offers).
 - \`factory_jobs\`, \`factory_job <job>\` — factory jobs: state, why, PRs, CI, cost, subscription-equivalent,
   report excerpt, follow link. \`sessions\` — live termhub sessions and the run each belongs to.
+- \`build_runs\`, \`build_run <run>\` — Build agents (Do starts one Claude Code agent per task): state, cost, steps and the
+  notes/questions they sent. \`needs_you\` lists agents blocked on a question: tell the user, and answer with \`build_reply\`.
 
 Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
+
+- \`build_reply <run> <text>\` answers a Build agent's question; \`build_send <run> <text>\` types at its session;
+  \`build_stop <run>\` kills it.
 
 - \`factory_start\` — start work from a card (\`card\`: its context becomes the brief, composed server-side)
   and/or the user's words (\`ask\`). kind code (default) | research | report. **Runtime: claude_session
@@ -232,7 +237,7 @@ lists the unread pushes, oldest first, each headed \`## notification <id>\`.
 // them for Claude Code, src/chat/agent.js for opencode.
 const ALLOW_COMMANDS = [
   'brief', 'inbox', 'show', 'search', 'who', 'runs', 'review', 'drafts', 'memory', 'meeting',
-  'routine list', 'backup list', 'context', 'projects',
+  'routine list', 'backup list', 'context', 'projects', 'run list', 'run status',
   // Listing is reading.
   'proposals', 'delivery list', 'factory apps',
   // The factory's jobs (the worker's stored list), one job, a finished report.
@@ -240,7 +245,7 @@ const ALLOW_COMMANDS = [
   // Reading the feed.
   'notify list', 'notify weights', 'notify digest',
 ];
-const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'remember', 'forget', 'routine add',
+const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
   // Accepting a card starts work; a repo default changes what every later run delivers.
   'answer', 'delivery set', 'delivery clear', 'factory add',
   // A factory job: code becomes a card, research/report may start (pa factory

@@ -356,7 +356,9 @@
           "card",
           "factory_jobs",
           "factory_job",
-          "sessions"
+          "sessions",
+          "build_runs",
+          "build_run"
         ],
         "ask": [
           "remember",
@@ -367,7 +369,10 @@
           "factory_resume",
           "factory_cancel",
           "factory_approve",
-          "session_start"
+          "session_start",
+          "build_reply",
+          "build_send",
+          "build_stop"
         ]
       },
       "pa_verbs": {
@@ -394,7 +399,9 @@
           "factory report",
           "notify list",
           "notify weights",
-          "notify digest"
+          "notify digest",
+          "run list",
+          "run status"
         ],
         "ask": [
           "do",
@@ -415,7 +422,10 @@
           "notify ack",
           "doctor",
           "notify feedback",
-          "propose"
+          "propose",
+          "run reply",
+          "run send",
+          "run stop"
         ]
       },
       "env": [
@@ -494,7 +504,12 @@
           "factory_resume",
           "factory_cancel",
           "factory_approve",
-          "session_start"
+          "session_start",
+          "build_runs",
+          "build_run",
+          "build_reply",
+          "build_send",
+          "build_stop"
         ]
       },
       "code": [
@@ -1286,13 +1301,15 @@
       "details": {
         "Run row": "build_run (state starting|running|waiting|done|failed|stopped, model, worktree, branch, termhub session, Claude session id, result, caps, cost, tokens, track JSON) and build_msg (note, ask, done from the agent; reply, send from Jarvis). Env JARVIS_RUN_ID tells the agent its run.",
         "Model": "haiku | sonnet | opus per card (default sonnet), passed as claude --model; --session-id fixes the transcript path (~/.claude/projects/<cwd with non-alphanumerics as ->/<session>.jsonl).",
-        "Guards": "a run whose session vanishes without `pa run done` is failed (worker pass build-runs, every 15 s). Cost and wall-clock caps: planned (8.7.3)."
+        "Guards": "a run whose session vanishes without `pa run done` is failed (worker pass build-runs, every 15 s). Cost and wall-clock caps: planned (8.7.3).",
+        "Messaging": "Agent to Jarvis: `pa run note \"<text>\"` (FYI), `pa run ask \"<question>\"` (blocks, polling its build_msg row, up to 30 min; prints the answer; the run is `waiting` and a notice says it needs you), `pa run done --result \"<PR url | report path | one line>\"`. The run id is $JARVIS_RUN_ID, set at launch. Jarvis to agent: `pa run reply <run> \"<text>\"` (answers the open ask), `pa run send <run> \"<text>\"` (typed into the live termhub session), `pa run stop <run>`; the chat has build_runs, build_run (reads) and build_reply, build_send, build_stop (ask)."
       },
       "code": [
         "personal-assistant/src/build/index.ts",
         "personal-assistant/src/build/agent-prompt.md",
         "personal-assistant/src/repo/buildRuns.ts",
-        "personal-assistant/src/cli/run.ts"
+        "personal-assistant/src/cli/run.ts",
+        "personal-assistant/src/build/messages.ts"
       ],
       "env": [
         {

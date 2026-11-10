@@ -10,12 +10,12 @@
 // read-only surface — a coding session in bypass mode must never see a tool
 // that starts work.
 //
-//   reads    board, card, factory_jobs, factory_job, sessions
+//   reads    board, card, factory_jobs, factory_job, sessions, build_runs, build_run
 //            Allowed without a prompt (src/chat/index.js CHAT_READ_TOOLS).
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
 //   actions  factory_start, factory_continue, factory_resume, factory_cancel,
-//            factory_approve, session_start
+//            factory_approve, session_start, build_reply, build_send, build_stop
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.ts start,
@@ -43,8 +43,8 @@ type Json = Record<string, any>;
 
 const repository = require('../repo');
 
-const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions'];
-const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start'];
+const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions', 'build_runs', 'build_run'];
+const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_reply', 'build_send', 'build_stop'];
 
 // The user's rule: a factory job runs on Claude Code (their subscription)
 // unless they ask for the API ("with DeepSeek", "use the API", a model id).
@@ -129,9 +129,52 @@ const READ_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'build_runs',
+    description:
+      'Build agents (one Claude Code agent per task, started by Do): the live ones and the recent ones, each with state (running, waiting = it asked a question, done, failed, stopped), model, notional cost, branch, result, and `needs_you`: the open questions agents are blocked on (answer one with build_reply). Call this for "what are the agents doing", "is anything waiting on me".',
+    inputSchema: {
+      type: 'object',
+      properties: { all: { type: 'boolean', default: false, description: 'Include ended runs (the last 15).' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'build_run',
+    description:
+      'One Build agent run in detail: state, cost and tokens, its agents (main and subagents) and last tool calls, and every message it and Jarvis exchanged (notes, asks, replies), plus the termhub link.',
+    inputSchema: { type: 'object', properties: { run: { type: 'integer', minimum: 1 } }, required: ['run'], additionalProperties: false },
+  },
 ];
 
 const ACTION_TOOLS = [
+  {
+    name: 'build_reply',
+    description:
+      "Answer a Build agent's open question (the user approves each call). The agent is blocked on `pa run ask` and carries on with this answer. `run` from build_runs.needs_you.",
+    inputSchema: {
+      type: 'object',
+      properties: { run: { type: 'integer', minimum: 1 }, text: { type: 'string', maxLength: 4000 } },
+      required: ['run', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'build_send',
+    description:
+      "Type a message into a running Build agent's terminal session (the user approves each call): an instruction, a correction, a nudge. Use build_reply instead when the agent asked a question.",
+    inputSchema: {
+      type: 'object',
+      properties: { run: { type: 'integer', minimum: 1 }, text: { type: 'string', maxLength: 4000 } },
+      required: ['run', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'build_stop',
+    description: 'Stop a Build agent: kills its terminal session and marks the run stopped (the user approves each call).',
+    inputSchema: { type: 'object', properties: { run: { type: 'integer', minimum: 1 } }, required: ['run'], additionalProperties: false },
+  },
   {
     name: 'factory_start',
     description:
@@ -710,6 +753,34 @@ async function sessionStartTool(args: Json) {
   return startOrCard(o);
 }
 
+function runView(r: Row): Json {
+  return {
+    id: r.id, state: r.state, task: String(r.task).slice(0, 160), model: r.model, cost_usd: Number(r.cost_usd || 0), branch: r.branch || null,
+    result: r.result || null, error: r.error || null, started_at: r.started_at, ended_at: r.ended_at || null, card: r.commitment_id || null,
+  };
+}
+
+async function buildRunsTool({ all = false }: { all?: boolean } = {}) {
+  const B = require('../build/index.ts');
+  const runs: Row[] = await B.list({ live: !all, limit: 15 });
+  return { runs: runs.map(runView), needs_you: await require('../build/messages.ts').needsYou() };
+}
+
+async function buildRunTool({ run }: { run?: number }) {
+  const B = require('../build/index.ts');
+  const r: Row | null = await B.get(Number(run));
+  if (!r) throw new Error(`no run #${run}`);
+  let track: Json | null = null;
+  try { track = r.track ? JSON.parse(String(r.track)) : null; } catch { /* a half-written view: none */ }
+  const msgs: Row[] = await repository.buildRuns.msgs(r.id);
+  return {
+    ...runView(r), url: r.url || null, tokens: { in: Number(r.tokens_in), out: Number(r.tokens_out), cache_read: Number(r.tokens_cache_read), cache_write: Number(r.tokens_cache_write) },
+    caps: { cost_usd: Number(r.cost_cap_usd), wall_min: Number(r.wall_cap_min) },
+    agents: track?.agents || [],
+    messages: msgs.map((m) => ({ id: m.id, from: m.dir, kind: m.kind, text: m.body, answer: m.answer || null, at: m.created_at })),
+  };
+}
+
 async function handle(name: string, args: Json = {}) {
   const factory = () => require('../dispatch/factory.ts');
   switch (name) {
@@ -735,6 +806,20 @@ async function handle(name: string, args: Json = {}) {
       return { job: r.jobId, approved: true, output: r.output || null };
     }
     case 'session_start': return sessionStartTool(args);
+    case 'build_runs': return buildRunsTool(args);
+    case 'build_run': return buildRunTool(args as { run?: number });
+    case 'build_reply': {
+      const r = await require('../build/messages.ts').reply(Number(args.run), args.text);
+      return { run: Number(args.run), answered: r.id };
+    }
+    case 'build_send': {
+      await require('../build/messages.ts').send(Number(args.run), args.text);
+      return { run: Number(args.run), sent: true };
+    }
+    case 'build_stop': {
+      const r = await require('../build/index.ts').stop(Number(args.run), 'stopped from the chat');
+      return { run: r.id, state: r.state };
+    }
     default: return undefined;
   }
 }

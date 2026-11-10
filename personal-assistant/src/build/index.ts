@@ -157,7 +157,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
       ? `A fresh git worktree of \`${wanted}\` on the new branch \`${branch}\`. Your current directory is that worktree.`
       : `An empty scratch folder (${cwd}). ${wanted ? `The card names the repo \`${wanted}\`, which is not a checkout here.` : 'No repository is involved unless the task says otherwise.'}`;
     const reportsDir = path.join(config.dataDir, 'build-reports', `run-${run.id}`).replace(/\\/g, '/');
-    const prompt = renderPrompt(fs.readFileSync(path.join(__dirname, 'agent-prompt.md'), 'utf8'), {
+    const prompt = renderPrompt(fs.readFileSync(path.join(config.toolDir, 'src', 'build', 'agent-prompt.md'), 'utf8'), {
       run_id: String(run.id), task, context: await briefContext(target, task), where, pa: paCommand(), reports_dir: reportsDir,
     });
     const promptPath = path.join(config.worktreesRoot, `build-${run.id}.PROMPT.md`);

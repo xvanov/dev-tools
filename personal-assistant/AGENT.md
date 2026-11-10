@@ -558,6 +558,22 @@ way.
 **Eval cases are private data.** `eval_case` holds real questions about real mail, so it lives in
 Postgres and nowhere else. Tests use invented names; fixtures never hold a real question.
 
+## Build: one Claude Code agent per task (D30)
+
+Do on a card (and `pa do`, the planner, accepted cards, the chat's start tools) calls `dispatch.start`, which
+hands to `src/build`: one interactive Claude Code session in termhub on the subscription, model haiku | sonnet |
+opus (card setting, default sonnet), in a fresh worktree on a new branch when the card names a repo. The agent
+prompt is one file, `src/build/agent-prompt.md`; edit it there. The factory path (`src/dispatch/factory.ts`,
+`settings.ts`) is frozen and reachable only with `PA_BUILD=factory`.
+
+- Rows: `build_run`, `build_msg` (`src/repo/buildRuns.ts`; the SQLite twin re-exports it, the SQL is portable).
+- Agent verbs, run id from `$JARVIS_RUN_ID`: `pa run note "<text>"`, `pa run ask "<question>"` (blocks up to
+  30 min, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
+- Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),
+  `pa run send <id> "<text>"` (typed into the session). Chat tools: `build_runs`, `build_run`, `build_reply`,
+  `build_send`, `build_stop`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
+- A run whose session vanishes without `pa run done` is failed (worker pass `build-runs`).
+
 ## Conventions
 
 - **Language:** plain CommonJS JavaScript, matching termhub — which is not TypeScript, and is

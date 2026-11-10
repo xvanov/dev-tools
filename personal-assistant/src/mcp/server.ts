@@ -256,6 +256,9 @@ const READ_VERBS: Record<string, Spec> = {
   'factory jobs': {},
   'factory status': {},
   'factory report': {},
+  // Build agents: the runs and one run's state, reads only.
+  'run list': {},
+  'run status': {},
 };
 
 // Flags that make a reading verb act, on every verb.
