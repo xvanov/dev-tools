@@ -1815,9 +1815,9 @@ def serve_cmd(
                 # Windows) now, not on the first caller or the first triage.
                 def _warm() -> None:
                     _api.run_cli(["app", "list", "--json"])
-                    import litellm  # noqa: F401
+                    from factory.runner import import_litellm
 
-                    import factory.runner  # noqa: F401
+                    import_litellm()
 
                 _threading.Thread(target=_warm, daemon=True).start()
             except OSError as exc:

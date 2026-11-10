@@ -763,7 +763,10 @@ def pm_sync(
 
 
 def _pm_runs_last_hour(db_path: Path) -> int:
-    """Count real ``pm`` persona rows recorded in the last hour."""
+    """Count ``pm`` persona rows recorded in the last hour that reached a model.
+
+    A run that failed before the model call (``premodel_infra``: import error,
+    missing key) spent no budget and must not lock pm-sync out for an hour."""
     import sqlite3
     from datetime import UTC, datetime, timedelta
 
@@ -774,7 +777,8 @@ def _pm_runs_last_hour(db_path: Path) -> int:
         conn = sqlite3.connect(str(db_path))
         try:
             row = conn.execute(
-                "SELECT COUNT(*) FROM runs WHERE persona='pm' AND ts > ?",
+                "SELECT COUNT(*) FROM runs WHERE persona='pm' AND ts > ? "
+                "AND NOT (success = 0 AND COALESCE(premodel_infra, 0) = 1)",
                 (cutoff,),
             ).fetchone()
             return int(row[0]) if row else 0

@@ -57,6 +57,22 @@ from factory.state_dir import root_for_db, state_dir
 
 _log = logging.getLogger(__name__)
 
+_LITELLM_IMPORT_LOCK = threading.Lock()
+
+
+def import_litellm() -> Any:
+    """Import litellm once at a time.
+
+    serve's warm-up thread and the in-process triage lane both import it; two
+    threads inside its (~25 s) circular import make the second see a
+    "partially initialized module" and fail the pm run as "litellm not
+    installed".
+    """
+    import importlib
+
+    with _LITELLM_IMPORT_LOCK:
+        return importlib.import_module("litellm")
+
 _DEFAULT_DB_PATH = state_dir(Path(__file__).parent.parent) / "factory.db"
 _PERSONAS_DIR = Path(__file__).parent / "personas"
 
@@ -3845,7 +3861,7 @@ def text_run(
     )
 
     try:
-        import litellm
+        litellm = import_litellm()
     except Exception as exc:
         if _tw["watch"] is not None or _tw["row"] is not None:
             with contextlib.suppress(Exception):
