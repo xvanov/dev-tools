@@ -28,14 +28,16 @@ EVENT_RESOLVED = "review_threads_resolved"
 _QUERY = """
 query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){
 pullRequest(number:$pr){isDraft headRefOid
+commits(last:1){nodes{commit{statusCheckRollup{contexts(first:60){nodes{
+__typename ... on StatusContext{context state} ... on CheckRun{name conclusion}}}}}}}
 reviews(last:50){nodes{author{login} commit{oid}}}
-reviewThreads(first:100){nodes{id isResolved path line
+reviewThreads(first:100){nodes{id isResolved isOutdated path line
 comments(first:5){nodes{author{login} body}}}}}}}
 """
 
 
 def is_review_bot(login: Any) -> bool:
-    return str(login or "").lower().startswith("coderabbitai")
+    return str(login or "").lower().startswith("coderabbit")
 
 
 def _gh(args: list[str], timeout: int = 60) -> tuple[bool, str]:
@@ -87,6 +89,10 @@ def read_state(repo: str, pr: int) -> dict[str, Any] | None:
         node = json.loads(out)["data"]["repository"]["pullRequest"]
         reviews = node["reviews"]["nodes"]
         threads = node["reviewThreads"]["nodes"]
+        rollup = ((node["commits"]["nodes"] or [{}])[0].get("commit") or {}).get(
+            "statusCheckRollup"
+        )
+        contexts = ((rollup or {}).get("contexts") or {}).get("nodes") or []
     except (ValueError, KeyError, TypeError):
         return None
     heads = sorted(
@@ -100,7 +106,8 @@ def read_state(repo: str, pr: int) -> dict[str, Any] | None:
     open_threads: list[dict[str, Any]] = []
     for t in threads:
         comments = (t.get("comments") or {}).get("nodes") or []
-        if t.get("isResolved") or not comments:
+        # An outdated thread points at code the PR no longer has: nothing to fix.
+        if t.get("isResolved") or t.get("isOutdated") or not comments:
             continue
         if not is_review_bot((comments[0].get("author") or {}).get("login")):
             continue
@@ -112,6 +119,15 @@ def read_state(repo: str, pr: int) -> dict[str, Any] | None:
                 "body": str(comments[0].get("body") or "")[:3000],
             }
         )
+    # The bot's own check finishing on the head also means "reviewed": an
+    # incremental review with nothing to say posts no review object.
+    bot_done = any(
+        is_review_bot(c.get("context") or c.get("name"))
+        and str(c.get("state") or c.get("conclusion") or "").upper() == "SUCCESS"
+        for c in contexts
+    )
+    if bot_done and node.get("headRefOid"):
+        heads = sorted({*heads, str(node["headRefOid"])})
     return {
         "head": node.get("headRefOid"),
         "is_draft": bool(node.get("isDraft")),
