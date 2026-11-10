@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { parseMarkdown, parseInline, inlineText, pageSummary } = require('../src/dashboard/markdown.ts');
-const { duplicatePairs, handleOf, route, clean } = require('../src/dashboard/memory.ts');
+const { duplicatePairs, pairKey, handleOf, route, clean } = require('../src/dashboard/memory.ts');
 
 // ------------------------------------------------------------ markdown -----
 
@@ -119,6 +119,26 @@ const { duplicatePairs, handleOf, route, clean } = require('../src/dashboard/mem
   assert.strictEqual(withMe[0].into.id, 1);
   assert.deepStrictEqual(duplicatePairs([]), []);
   assert.deepStrictEqual(duplicatePairs(null), []);
+
+  // Same first name, different surname: "mateuszmichon-innergy" is Michon, and
+  // Migas's "mateuszm" abbreviation must not swallow it as a prefix (2026-11-10).
+  const twoMateusz = [
+    { id: 61, display_name: 'Mateusz Migas', primary_email: 'mateusz.migas@example.test', identities: [], claims: 1, commitments: 2 },
+    { id: 40, display_name: 'github:mateuszmichon-innergy', identities: [{ kind: 'github_username', value: 'mateuszmichon-innergy' }], claims: 0, commitments: 1 },
+    { id: 41, display_name: 'Mateusz Michon', identities: [], claims: 0, commitments: 0 },
+  ];
+  const mm = duplicatePairs(twoMateusz);
+  assert.ok(!mm.some((x) => [x.into.id, x.from.id].sort().join() === '40,61'), 'Migas is not Michon');
+  assert.ok(mm.some((x) => [x.into.id, x.from.id].sort().join() === '40,41'), 'the handle still finds Michon');
+  // An abbreviation still matches when it is the whole handle.
+  const abbrev = duplicatePairs([
+    { id: 1, display_name: 'Brannoc Quill', identities: [], claims: 1 },
+    { id: 2, display_name: 'github:brannocq', identities: [{ kind: 'github_username', value: 'brannocq' }] },
+  ]);
+  assert.strictEqual(abbrev.length, 1);
+  // "Not the same": a pair you kept apart is never suggested again, either way round.
+  assert.ok(!duplicatePairs(twoMateusz, { distinct: [pairKey(41, 40)] }).some((x) => [x.into.id, x.from.id].sort().join() === '40,41'));
+  assert.strictEqual(pairKey(41, 40), pairKey('40', 41));
 }
 
 // --------------------------------------------------------------- routes -----

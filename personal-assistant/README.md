@@ -569,7 +569,9 @@ reason recorded (`draft.closed_reason`).
   again.
 - **Possible duplicate people** — the same colleague seen by GitHub handle and by email — with a
   **Merge** that moves identities, commitments and claims to the person kept, deletes the other's
-  page and rewrites the survivor's. There is no unmerge, so it asks first.
+  page and rewrites the survivor's. There is no unmerge, so it asks first. **Keep the other** flips
+  which of the two survives; **Not the same** records the pair as two people (the
+  `memory.people_distinct` setting) so it is never suggested again.
 
 Pages are written by a model from other people's mail and chat, so the page never renders them
 as HTML: the server parses the markdown into a tree (`src/dashboard/markdown.js`) and the browser

@@ -1632,7 +1632,12 @@ function dupCard(pair) {
   const confirmRow = el('div', { class: 'confirm' });
   confirmRow.hidden = true;
   const merge = el('button', { class: 'primary' }, 'Merge…');
-  const swap = el('button', { title: 'Keep the other one instead' }, 'Swap');
+  const swap = el('button', { title: 'Flip which one is kept: the kept one keeps its name; the other is folded into it' }, 'Keep the other');
+  const distinct = el('button', { title: 'They are two different people: stop suggesting this pair' }, 'Not the same');
+  distinct.addEventListener('click', memAct(distinct, async () => {
+    await post('api/memory/people/distinct', { a: into.id, b: from.id });
+    toast(`#${into.id} and #${from.id} kept apart — won't be suggested again`);
+  }));
   const draw = () => body.replaceChildren(el('div', { class: 'sub' }, 'keep'), personLine(into),
     el('div', { class: 'sub' }, 'merge into it'), personLine(from));
   swap.addEventListener('click', () => {
@@ -1657,7 +1662,7 @@ function dupCard(pair) {
   draw();
   return el('div', { class: 'item' }, body,
     el('div', { class: 'sub' }, pair.reasons.join(' · ')),
-    el('div', { class: 'actions' }, merge, into.is_me ? null : swap), confirmRow);
+    el('div', { class: 'actions' }, merge, into.is_me ? null : swap, distinct), confirmRow);
 }
 
 async function loadMemory() {

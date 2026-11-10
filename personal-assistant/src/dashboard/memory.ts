@@ -16,7 +16,7 @@ type PersonRow = {
   id?: unknown; display_name?: unknown; page_title?: unknown; primary_email?: unknown; is_me?: unknown;
   identities?: { kind: string; value: unknown }[] | null; claims?: number | null; commitments?: number | null;
 };
-type Profile = { names: string[][]; handles: Set<string>; forms: Set<string>; firsts: Set<string>; loneFirst: string | null; handleOnly: boolean };
+type Profile = { names: string[][]; handles: Set<string>; forms: Set<string>; abbrevs: Set<string>; firsts: Set<string>; loneFirst: string | null; handleOnly: boolean };
 type Subject = { kind: string; id: number | null; label: string };
 
 const { parseMarkdown, pageSummary } = require('./markdown.ts');
@@ -67,17 +67,21 @@ function profile(p: PersonRow): Profile {
 
   // How people turn a name into a handle: brannocquill, quillbrannoc,
   // bquill, brannocq, quillb.
+  // Whole names may carry an org or number on either end; abbreviations must
+  // match exactly ("mateuszm" + "ichoninnergy" is Mateusz Michon, not Mateusz M-anyone).
   const forms = new Set<string>();
+  const abbrevs = new Set<string>();
   for (const t of names) {
     const f = t[0] ?? '';
     const l = t[t.length - 1] ?? '';
-    for (const v of [f + l, l + f, f.charAt(0) + l, f + l.charAt(0), l + f.charAt(0), t.join('')]) if (v.length >= 4) forms.add(v);
+    for (const v of [f + l, l + f, t.join('')]) if (v.length >= 4) forms.add(v);
+    for (const v of [f.charAt(0) + l, f + l.charAt(0), l + f.charAt(0)]) if (v.length >= 4 && !forms.has(v)) abbrevs.add(v);
   }
   // A one-word label that is a plain word ("Brannoc") is probably a first name.
   const firsts = new Set(names.map((t) => t[0] ?? ''));
   const single = labels.find((l) => /^\p{L}{3,}$/u.test(String(l).trim()));
   const loneFirst = single ? fold(single) : null;
-  return { names, handles, forms, firsts, loneFirst, handleOnly: !names.length };
+  return { names, handles, forms, abbrevs, firsts, loneFirst, handleOnly: !names.length };
 }
 
 function rank(p: PersonRow) {
@@ -92,10 +96,12 @@ function better(a: PersonRow, b: PersonRow) {
 }
 
 // A handle built from a name, possibly with an org or number stuck on either
-// end ("qbrannoc-acme", "AcmeBrannocQuill"). Short forms must match exactly.
-function fitsName(handles: Set<string>, forms: Set<string>) {
+// end ("qbrannoc-acme", "AcmeBrannocQuill"). Abbreviated and short forms
+// must match exactly.
+function fitsName(handles: Set<string>, p: Profile) {
   for (const h of handles) {
-    for (const f of forms) {
+    if (p.abbrevs.has(h)) return h;
+    for (const f of p.forms) {
       if (h === f || (f.length >= 6 && (h.startsWith(f) || h.endsWith(f)))) return h;
     }
   }
@@ -114,7 +120,7 @@ function comparePair(a: PersonRow, b: PersonRow, pa: Profile, pb: Profile) {
     score += 3;
     reasons.push(`same handle or email prefix "${shared[0]}"`);
   }
-  const looks = fitsName(pa.handles, pb.forms) || fitsName(pb.handles, pa.forms);
+  const looks = fitsName(pa.handles, pb) || fitsName(pb.handles, pa);
   if (looks && !shared.includes(looks)) {
     score += 2;
     reasons.push(`handle "${looks}" fits the other's name`);
@@ -152,7 +158,8 @@ function comparePair(a: PersonRow, b: PersonRow, pa: Profile, pb: Profile) {
 // people: [{id, display_name, primary_email, is_me, page_title, identities:[{kind,value}], claims, commitments}]
 // → [{into, from, score, reasons}], best first. `into` is the row worth keeping:
 // you, then the one with a real name, then the one with more history.
-function duplicatePairs(people: PersonRow[] | null | undefined, { min = 2, limit = 40 }: { min?: number; limit?: number } = {}) {
+function duplicatePairs(people: PersonRow[] | null | undefined, { min = 2, limit = 40, distinct = [] }: { min?: number; limit?: number; distinct?: string[] } = {}) {
+  const notSame = new Set(distinct);
   const list = (people || []).filter((p) => p && p.id != null);
   const profiles = new Map(list.map((p) => [p.id, profile(p)]));
   const out: { into: Brief; from: Brief; score: number; reasons: string[] }[] = [];
@@ -161,6 +168,7 @@ function duplicatePairs(people: PersonRow[] | null | undefined, { min = 2, limit
       const a = list[i] as PersonRow;
       const b = list[j] as PersonRow;
       if (a.is_me && b.is_me) continue;
+      if (notSame.has(pairKey(a.id, b.id))) continue;
       const { score, reasons } = comparePair(a, b, profiles.get(a.id) as Profile, profiles.get(b.id) as Profile);
       if (score < min) continue;
       const [into, from] = better(a, b) ? [a, b] : [b, a];
@@ -169,6 +177,20 @@ function duplicatePairs(people: PersonRow[] | null | undefined, { min = 2, limit
   }
   out.sort((x, y) => y.score - x.score || Number(x.into.id) - Number(y.into.id));
   return out.slice(0, limit);
+}
+
+// One key for a pair, whichever way round it is asked.
+function pairKey(a: unknown, b: unknown) {
+  const [x, y] = [Number(a), Number(b)].sort((m, n) => m - n);
+  return `${x}:${y}`;
+}
+
+// Pairs you said are two different people (the dashboard's "Not the same").
+const DISTINCT_SETTING = 'memory.people_distinct';
+async function distinctPairs(): Promise<string[]> {
+  const row = await require('../repo').system.setting(DISTINCT_SETTING).catch(() => null);
+  const v = row?.value;
+  return Array.isArray(v) ? v.map(String) : [];
 }
 
 type Brief = ReturnType<typeof brief>;
@@ -270,7 +292,7 @@ async function route(method: string, url: URL, body: Row = {}, memory: Module = 
       return { subject: r.subject, lexicalOnly: r.lexicalOnly, results: r.results.map(clean) };
     }
     if (p === '/review') return { claims: await memory.reviewQueue() };
-    if (p === '/duplicates') return { pairs: duplicatePairs(await memory.people()) };
+    if (p === '/duplicates') return { pairs: duplicatePairs(await memory.people(), { distinct: await distinctPairs() }) };
     if ((m = p.match(/^\/claims\/(\d+)$/))) {
       const r = await memory.explain(idParam(m[1]));
       if (!r) throw httpError(404, 'no such claim');
@@ -302,6 +324,15 @@ async function route(method: string, url: URL, body: Row = {}, memory: Module = 
       }
       return memory.forget(id);
     }
+    if (p === '/people/distinct') {
+      const a = idParam(body.a);
+      const b = idParam(body.b);
+      if (a === b) throw httpError(400, 'pick two different people');
+      const key = pairKey(a, b);
+      const list = await distinctPairs();
+      if (!list.includes(key)) await require('../repo').system.setSetting(DISTINCT_SETTING, [...list, key]);
+      return { distinct: key };
+    }
     if (p === '/people/merge') {
       const into = idParam(body.into);
       const from = idParam(body.from);
@@ -313,4 +344,4 @@ async function route(method: string, url: URL, body: Row = {}, memory: Module = 
   return undefined;
 }
 
-module.exports = { route, duplicatePairs, nameTokens, handleOf, humanName, clean };
+module.exports = { route, duplicatePairs, pairKey, nameTokens, handleOf, humanName, clean };
