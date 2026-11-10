@@ -22,7 +22,11 @@ const { logger } = require('../log.ts');
 
 const log = logger('build');
 const URL_USAGE = 'https://api.anthropic.com/api/oauth/usage';
-const TTL_MS = 15_000;
+// The endpoint rate-limits hard (a 15 s poll got 429s within minutes): a
+// minute between calls, and after a 429 its Retry-After (at least 2 min),
+// serving the last good numbers marked stale meanwhile.
+const TTL_MS = 60_000;
+const BACKOFF_MS = 120_000;
 const TIMEOUT_MS = 8_000;
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -92,7 +96,8 @@ function token(): string | null {
   }
 }
 
-let cache: { at: number; value: Json } | null = null;
+let cache: { at: number; ttl: number; value: Json } | null = null;
+let lastGood: Json | null = null;
 let inflight: Promise<Json> | null = null;
 
 async function fetchOnce(): Promise<Json> {
@@ -104,6 +109,10 @@ async function fetchOnce(): Promise<Json> {
       headers: { Authorization: `Bearer ${t}`, 'anthropic-beta': 'oauth-2025-04-20' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    if (res.status === 429) {
+      const after = Number(res.headers.get('retry-after')) * 1000;
+      return { ok: false, reason: 'usage endpoint rate-limited', fetched_at: now, retry_ms: Math.max(BACKOFF_MS, Number.isFinite(after) ? after : 0) };
+    }
     if (!res.ok) return { ok: false, reason: `usage endpoint answered ${res.status}`, fetched_at: now };
     const { meters, extra } = parseUsage(await res.json());
     if (!meters.length && !extra) return { ok: false, reason: 'usage payload had no limits', fetched_at: now };
@@ -114,19 +123,33 @@ async function fetchOnce(): Promise<Json> {
   }
 }
 
-/** The limits, cached 15 s (failures too, so a dead endpoint is not hammered); a burst shares one call. */
+/**
+ * The limits, cached a minute (failures too, so a dead endpoint is not
+ * hammered; a 429 waits out its Retry-After); a burst shares one call. While
+ * failing, the last good numbers are served with `stale: true` and the reason.
+ */
 async function usage(): Promise<Json> {
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.value;
+  if (cache && Date.now() - cache.at < cache.ttl) return cache.value;
   inflight ??= fetchOnce().then((v) => {
-    cache = { at: Date.now(), value: v };
-    return v;
+    if (v.ok) lastGood = v;
+    const ttl = Number(v.retry_ms) || TTL_MS;
+    const { retry_ms: _drop, ...plain } = v;
+    const value = !v.ok && lastGood ? { ...lastGood, stale: true, reason: v.reason } : plain;
+    cache = { at: Date.now(), ttl, value };
+    return value;
   }).finally(() => { inflight = null; });
   return inflight;
 }
 
+/** Ends the cache window but keeps the last good numbers (tests). */
+function expireCache() {
+  cache = null;
+}
+
 function resetCache() {
   cache = null;
+  lastGood = null;
   inflight = null;
 }
 
-module.exports = { usage, parseUsage, severityOf, resetCache, URL_USAGE };
+module.exports = { usage, parseUsage, severityOf, resetCache, expireCache, URL_USAGE };

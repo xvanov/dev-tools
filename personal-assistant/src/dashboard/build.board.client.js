@@ -183,7 +183,7 @@
 
   var state = { data: null, page: 1, timer: null, open: {}, usage: null, usageTimer: null };
 
-  // The subscription limits (api/factory/usage, cached 15 s server side): bars by severity, the Fable one lit when Fable is the chosen model.
+  // The subscription limits (api/factory/usage, cached a minute server side; stale numbers say so): bars by severity, the Fable one lit when Fable is the chosen model.
   function drawUsage() {
     var box = document.getElementById('usage');
     if (!box) return;
@@ -206,13 +206,14 @@
         el('div', { class: 'mh' }, el('span', { text: 'Extra usage' }), el('b', { text: money(x.used_usd) + ' / ' + money(x.limit_usd) })),
         el('div', { class: 'bar' }, el('i', { style: 'width:' + Math.max(0, Math.min(100, num(x.percent))) + '%' }))));
     }
+    if (u.stale) rows.push(el('div', { class: 'meta', text: 'as of ' + new Date(u.fetched_at).toLocaleTimeString() + ' · ' + (u.reason || 'refresh failed') }));
     box.replaceChildren.apply(box, rows.length ? rows : [el('div', { class: 'meta', text: 'limits unavailable' })]);
   }
   function loadUsage() {
     clearTimeout(state.usageTimer);
     return fetch('api/factory/usage').then(function (r) { return r.json(); }).then(function (d) { state.usage = d; drawUsage(); })
       .catch(function () { state.usage = { ok: false }; drawUsage(); })
-      .then(function () { state.usageTimer = setTimeout(loadUsage, 20000); });
+      .then(function () { state.usageTimer = setTimeout(loadUsage, 30000); });
   }
 
   function load() {

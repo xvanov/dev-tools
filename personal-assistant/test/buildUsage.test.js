@@ -1,7 +1,7 @@
 'use strict';
 
 // src/build/usage.ts: the usage payload parsed (full, partial, junk), the
-// fallbacks to five_hour/seven_day, a 15 s cache that survives failure, no token
+// fallbacks to five_hour/seven_day, a minute's cache that survives failure, a 429 backoff, no token
 // in the answer, and Fable among the Build model choices everywhere one is made.
 
 const assert = require('assert');
@@ -54,7 +54,7 @@ assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'fac
 assert.ok(require('../src/dashboard/dispatchMenu.client.js').rows({ settings: { model: 'fable' }, options: { models: B.MODELS } }));
 assert.strictEqual(require('../src/build/track.ts').priceOf('claude-fable-5-1').in, 10);
 
-// Fetch: token re-read from the file each time, cached 15 s, failures are {ok:false}, token never returned.
+// Fetch: token re-read from the file each time, cached a minute, a 429 backs off serving the last good numbers stale, failures are {ok:false}, token never returned.
 async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-usage-'));
   const cred = path.join(dir, 'c.json');
@@ -82,6 +82,18 @@ async function main() {
     assert.ok(!JSON.stringify(a).includes('SECRET-TOKEN') && b === a);
     await U.usage();
     assert.strictEqual(calls, 1, 'cached');
+
+    // Rate-limited (seen live, 2026-11-10): the last good numbers, marked stale, and no retry inside the backoff.
+    U.expireCache();
+    answer = () => ({ ok: false, status: 429, headers: { get: () => '300' }, json: async () => ({}) });
+    const before = calls;
+    const stale = await U.usage();
+    assert.strictEqual(stale.ok, true);
+    assert.strictEqual(stale.stale, true);
+    assert.strictEqual(stale.meters.length, 3);
+    assert.match(stale.reason, /rate-limited/);
+    await U.usage();
+    assert.strictEqual(calls, before + 1, 'no retry inside the backoff');
 
     U.resetCache();
     answer = () => ({ ok: false, status: 500, json: async () => ({}) });
