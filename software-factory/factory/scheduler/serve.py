@@ -659,6 +659,12 @@ class Scheduler:
         now = self.clock()
         reasons = _wake_reasons(wakes)
         added = set(self.refresh_apps())
+        if self.triage is not None:
+            # An app the refresh just added has a job triage is about to pick
+            # up; do not start an interval tick beside it (8.4.15), whether or
+            # not its submit wake lands in this same step.
+            for app in added:
+                self.next_due.setdefault(app, now + self.cfg.interval_s)
         for app, why in reasons.items():
             if app != ALL_APPS:
                 self.admit(app, submit=why.startswith("submit"), added=added)

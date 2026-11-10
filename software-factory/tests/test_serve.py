@@ -427,6 +427,24 @@ def test_a_submit_to_a_new_app_triages_first(tmp_path: Path) -> None:
     assert h.apps_started() == ["a", "raven"]
 
 
+def test_an_app_added_by_the_periodic_refresh_does_not_tick_beside_triage(
+    tmp_path: Path,
+) -> None:
+    """The 10 s refresh can add the app before the submit wake arrives; it must
+    not start an interval tick that races triage (8.4.15)."""
+    src = _Apps("a")
+    h = _dynamic(tmp_path, src, refresh_s=5)
+    h.sched.triage = lambda app: None
+    h.sched.step()
+    src.apps = ["a", "raven"]
+    h.now = 10
+    h.sched.step()  # refresh adds raven; no wake yet
+    assert h.apps_started() == ["a"]
+    h.sched.step({"raven": "submit raven:001"})
+    _join_triage(h)
+    assert h.apps_started() == ["a"]
+
+
 def test_admit_from_the_api_adds_the_app(tmp_path: Path) -> None:
     src = _Apps("a")
     h = _dynamic(tmp_path, src, refresh_s=3600)
