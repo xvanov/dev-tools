@@ -40,7 +40,7 @@ from factory.app_config import (
     load_app_config,
     targets_factory_repo,
 )
-from factory.chain import delivery_gate
+from factory.chain import delivery_gate, review_ready
 from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-exported
     ALL_GATE_LABELS,
     LOOP4_REQUIRED_GATE_LABELS,
@@ -2821,6 +2821,8 @@ def _redispatch_ci_fix(
     db: Path,
     root: Path,
     extra: dict[str, Any] | None = None,
+    finding_override: dict[str, Any] | None = None,
+    source: str = "ci_failure",
 ) -> None:
     """Send a red CI run back to dev: the failing log becomes a reviewer-style
     finding, the story re-enters at ``REVIEWER_REQUESTED_CHANGES`` and a
@@ -2846,7 +2848,7 @@ def _redispatch_ci_fix(
     # findings with ``f.get(...)``. A string element crashed the dev
     # re-dispatch ("'str' object has no attribute 'get'"), silently breaking
     # this entire CI-failure feedback loop.
-    finding = {
+    finding = finding_override or {
         "severity": "high",
         "criterion": "ci",
         "location": f"GitHub Actions CI (PR #{pr_number})",
@@ -2857,8 +2859,12 @@ def _redispatch_ci_fix(
     }
     reviewer_payload = {
         "findings": [finding],
-        "source": "ci_failure",
-        "summary": "Real GitHub Actions CI failed; fix the exact failure it reported.",
+        "source": source,
+        "summary": (
+            "Real GitHub Actions CI failed; fix the exact failure it reported."
+            if source == "ci_failure"
+            else "The review bot left comments on the PR; address them."
+        ),
     }
 
     # Re-entry point: REVIEWER_REQUESTED_CHANGES (not DEV_IN_PROGRESS) is the
@@ -3817,6 +3823,147 @@ def deliver_watched_pr_with_note(
     return True
 
 
+def _review_ready_phase(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    cfg: AppConfig,
+    root: Path,
+    db: Path,
+    now: float,
+    start: float | None,
+    since_fix: list[dict[str, Any]],
+    review_rounds: list[dict[str, Any]],
+    locked: Any,
+    act: Any,
+    deliver: Any,
+    head: str | None,
+) -> MergeAction | None:
+    """CI is green on a ``review_ready`` app's PR: mark it ready, wait for the
+    review bot, send its open comments to the dev (``review_ready.MAX_REVIEW_ROUNDS``
+    rounds), reply to / resolve what the dev handled. Returns the action to
+    return from the watch, or None to fall through to the normal delivery."""
+    from factory.chain.event_log import log_story_event
+
+    pr = fixture.pr_number
+    sid = story.id
+    repo = cfg.repo
+    state = review_ready.read_state(repo, pr)
+    marks = [e for e in since_fix if e.get("event") == review_ready.EVENT_MARKED]
+    stamps = [
+        t
+        for t in (
+            _parse_event_ts(e.get("ts"))
+            for e in since_fix
+            if e.get("event") in (review_ready.EVENT_MARKED, "fix_push", EVENT_CI_WATCH_STARTED)
+        )
+        if t is not None
+    ]
+    wait_start = max(stamps) if stamps else (start or now)
+    waited = max(0.0, now - wait_start)
+
+    def _log(event: str, data: dict[str, Any]) -> None:
+        with contextlib.suppress(Exception):
+            log_story_event(
+                sid,
+                event,
+                {"pr_number": pr, **data},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+
+    if state is None:
+        if waited >= review_ready.REVIEW_WAIT_S:
+            return deliver(
+                f"review state of PR #{pr} unreadable",
+                f"could not read PR #{pr}'s review state from GitHub — delivered unreviewed",
+            )
+        return act(f"waiting: PR #{pr} review state unreadable; re-checked next tick")
+
+    if fixture.is_draft or state["is_draft"]:
+        if marks:
+            # Already marked once; GitHub still says draft (lag) — don't loop on it.
+            if waited < 120:
+                return act(f"PR #{pr} marked ready; waiting for GitHub to show it")
+            return deliver(
+                f"PR #{pr} could not be marked ready",
+                f"PR #{pr} is still a draft after `gh pr ready` — delivered as it is",
+            )
+        err = review_ready.mark_ready(repo, pr)
+        if err:
+            return deliver(
+                f"PR #{pr} could not be marked ready",
+                f"`gh pr ready` failed on PR #{pr}: {err[:200]} — delivered as a draft",
+            )
+        _log(review_ready.EVENT_MARKED, {"head_sha": state.get("head")})
+        return act(f"CI green on PR #{pr}: marked ready for review; waiting for CodeRabbit")
+
+    # Threads the dev was sent in the last round and has since pushed a fix for:
+    # answer and resolve them once (the bot re-opens what is still wrong).
+    last = review_rounds[-1] if review_rounds else None
+    done = any(e.get("event") == review_ready.EVENT_RESOLVED for e in since_fix)
+    if last and not done and any(e.get("event") == "fix_push" for e in since_fix):
+        sent = set(last.get("thread_ids") or [])
+        fix_head = str(_expected_pr_head(since_fix) or "")[:12]
+        for t in state["open_threads"]:
+            if t["id"] in sent:
+                review_ready.reply_and_resolve(
+                    str(t["id"]),
+                    f"Reviewed by the factory dev in review round {last.get('round')}; "
+                    f"any change is in {fix_head or 'the latest commit'}. "
+                    "CodeRabbit re-opens it if it still applies.",
+                )
+        _log(review_ready.EVENT_RESOLVED, {"threads": sorted(sent)})
+        state = review_ready.read_state(repo, pr) or state
+
+    reviewed = bool(state.get("head")) and state["head"] in (state.get("reviewed_heads") or [])
+    if not reviewed:
+        if waited >= review_ready.REVIEW_WAIT_S:
+            return deliver(
+                f"CodeRabbit did not review PR #{pr} in time",
+                f"CodeRabbit did not review PR #{pr}'s head within "
+                f"{review_ready.REVIEW_WAIT_S // 60} min — delivered ready, unreviewed",
+            )
+        return act(f"waiting for CodeRabbit's review of PR #{pr}")
+
+    threads = state["open_threads"]
+    if not threads:
+        return None
+    if len(review_rounds) >= review_ready.MAX_REVIEW_ROUNDS:
+        return deliver(
+            f"CodeRabbit comments left on PR #{pr} after the round cap",
+            f"{len(threads)} CodeRabbit comment(s) still open on PR #{pr} after "
+            f"{len(review_rounds)} review round(s) (cap {review_ready.MAX_REVIEW_ROUNDS}) — "
+            "ready for a human",
+        )
+    rnd = len(review_rounds) + 1
+
+    def _redispatch() -> MergeAction:
+        _redispatch_ci_fix(
+            story=story,
+            pr_number=pr,
+            logs="",
+            signature=f"review-{rnd}",
+            attempt=rnd,
+            db=db,
+            root=root,
+            extra={
+                "kind": "review",
+                "round": rnd,
+                "thread_ids": [t["id"] for t in threads],
+                "head_sha": head,
+            },
+            finding_override=review_ready.review_finding(pr, threads, rnd),
+            source="review_bot",
+        )
+        return act(
+            f"CodeRabbit left {len(threads)} comment(s) on PR #{pr}; re-dispatched to dev "
+            f"(review round {rnd}/{review_ready.MAX_REVIEW_ROUNDS})"
+        )
+
+    return locked(_redispatch)
+
+
 def _watch_ci_then_deliver(
     *,
     story: StoryRecord,
@@ -3876,7 +4023,11 @@ def _watch_ci_then_deliver(
         events = read_story_events(sid, software_factory_root=root, slug_hint=story.slug)
     except Exception:  # noqa: BLE001 - an unreadable stream starts a fresh wait
         events = []
-    prior, since_fix, start = _ci_watch_scope(events)
+    prior_all, since_fix, start = _ci_watch_scope(events)
+    # Review-bot rounds (``kind: review``) share the redispatch event (so each
+    # one resets the wait clock) but have their own cap; the CI cap counts CI only.
+    prior = [e for e in prior_all if e.get("kind") != "review"]
+    review_rounds = [e for e in prior_all if e.get("kind") == "review"]
     if start is None:
         try:
             log_story_event(
@@ -3936,14 +4087,14 @@ def _watch_ci_then_deliver(
     # A CI-fix cycle that came back WITHOUT moving the PR head: the PR still
     # shows the commit that was red. Say exactly why, and stop (re-grading the
     # old head would only re-dispatch the same failure).
-    if prior and not any(e.get("event") == "fix_push" for e in since_fix):
+    if prior_all and not any(e.get("event") == "fix_push" for e in since_fix):
         not_pushed = [e for e in since_fix if e.get("event") in _FIX_NOT_PUSHED_EVENTS]
         if not_pushed:
             last = not_pushed[-1]
             why = str(last.get("error") or last.get("note") or last.get("event"))
             return _deliver(
-                f"CI fix {len(prior)} was not pushed to PR #{pr}",
-                f"CI fix {len(prior)} was NOT pushed to PR #{pr} ({last.get('event')}: "
+                f"CI fix {len(prior_all)} was not pushed to PR #{pr}",
+                f"CI fix {len(prior_all)} was NOT pushed to PR #{pr} ({last.get('event')}: "
                 f"{why[:200]}); the PR head is still the commit whose CI was red — "
                 "delivered for a human",
             )
@@ -3983,6 +4134,28 @@ def _watch_ci_then_deliver(
     )
 
     if ci_state == "passing":
+        if (
+            not foreign_head
+            and level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR)
+            and getattr(getattr(cfg, "delivery", None), "review_ready", False)
+        ):
+            phase = _review_ready_phase(
+                story=story,
+                fixture=fixture,
+                cfg=cfg,
+                root=root,
+                db=db,
+                now=now,
+                start=start,
+                since_fix=since_fix,
+                review_rounds=review_rounds,
+                locked=_locked,
+                act=_act,
+                deliver=_deliver,
+                head=pr_head,
+            )
+            if phase is not None:
+                return phase
         return _deliver(
             f"CI green on PR #{pr}",
             f"{foreign_note}; its CI is green" if foreign_head else None,

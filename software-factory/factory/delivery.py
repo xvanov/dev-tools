@@ -84,6 +84,11 @@ class DeliveryConfig(BaseModel):
     """``delivery:`` block of ``apps/<app>/config.yaml``."""
 
     default: DeliveryLevel = LEGACY_DEFAULT
+    # ``draft_pr`` / ``pr`` only: once CI is green, mark a draft PR ready, wait
+    # for the review bot (CodeRabbit), have the dev address its comments (at
+    # most 3 rounds), then deliver. Off = a draft stays a draft
+    # (``factory/chain/review_ready.py``).
+    review_ready: bool = False
 
     @model_validator(mode="before")
     @classmethod

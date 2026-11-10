@@ -15,7 +15,7 @@ is a success shape; non-zero = stdout is `{"error": "<code>", "message": "..."}`
 
 - `none`      — work stays in the factory's worktree/local branch; nothing pushed.
 - `branch`    — push the branch; open no PR.
-- `draft_pr`  — push + open a DRAFT PR; never mark ready, never merge.
+- `draft_pr`  — push + open a DRAFT PR; never merge (marks ready only with `delivery.review_ready`).
 - `pr`        — open a ready PR; never merge.
 - `auto_merge`— today's behaviour: merge when chain gates (+ required CI) pass.
 - `push_to_main` — gates pass → fast-forward the default branch directly (no PR).
@@ -701,7 +701,13 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
   else the app config's `ci_required_checks`; else every check except
   `ci_informational_checks` (fnmatch patterns) and `continue-on-error` jobs in the repo's
   workflows. Ignored checks are listed under `ignored`.
-- Automated review comments (e.g. a review bot): partly. A picked-up PR's unresolved threads are
+- Review-ready (v1.13, opt-in `delivery.review_ready: true` in the app config, `draft_pr`/`pr`
+  only): once CI is green the factory marks a draft PR ready, waits (20 min) for CodeRabbit to
+  review the head, sends its open threads to the dev (`ci_fix_redispatch` with `kind: review`,
+  3 rounds, separate from the 3 CI-fix cycles), replies to and resolves the threads after the
+  dev's fix is pushed, then delivers. Never merges. A review that never comes, a round cap, or a
+  failed `gh pr ready` deliver with a `ci_note`. Code: `factory/chain/review_ready.py`.
+- Automated review comments (e.g. a review bot), without `review_ready`: partly. A picked-up PR's unresolved threads are
   fed to the dev at submit (a snapshot). Comments posted later are not read, and threads are
   never replied to or resolved.
 - Merge: only at `auto_merge` (gates + required CI). A draft PR is never merged or marked ready.
