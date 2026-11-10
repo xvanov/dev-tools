@@ -1885,12 +1885,16 @@ not in the Map is not done, and a new one gets added there first.
   the teams-ask step point at `sqlite-store`. The store dot pings whichever store `PA_DB`
   selects; factory-api's dot probes local `factory serve`.
 - [ ] **8.7 One Claude Code agent per task (D30).**
-  - [ ] **8.7.0 D30 and the plan.**
-  - [ ] **8.7.1 Launch, run row, done/state** (`src/build/`, tables `build_run`, `build_msg`).
-  - [ ] **8.7.2 Messaging**: `pa run note|ask|done|reply|send|list|status|stop`, chat tools, needs-you.
-  - [ ] **8.7.3 Transcript tracking** (tokens, notional cost, tool calls, subagents) and the cost/time caps.
-  - [ ] **8.7.4 The board** (`/factory`) shows these runs.
-  - [ ] **8.7.5 Live test**: a docs task on haiku, a research question on sonnet with one subagent.
+  - [x] **8.7.0 D30 and the plan** (39f1963).
+  - [x] **8.7.1 Launch, run row, done/state** (d6127c4) (`src/build/`, tables `build_run`, `build_msg`).
+  - [x] **8.7.2 Messaging** (9fa7b37): `pa run note|ask|done|reply|send|list|status|stop`, chat tools, needs-you.
+  - [x] **8.7.3 Transcript tracking** (9244d40) (tokens, notional cost, tool calls, subagents) and the cost/time caps.
+  - [x] **8.7.4 The board** (8d60bcf) (`/factory`) shows these runs.
+  - [x] **8.7.5 Live test** (2026-11-10): a docs task on haiku, a research question on sonnet with one subagent.
+    Run 3 (research, sonnet, no repo): 113 s, $0.58 notional, one subagent lane, one `pa run ask` answered with
+    `pa run reply`, report written. Run 2 (docs, haiku, dev-tools worktree): draft PR, but 528 s and $0.22 against
+    the < 2 min / < $0.10 target: four commits through dev-tools' pre-commit hook (~90 s each) and an unasked test
+    file; the agent prompt now says to do exactly what was asked and wait out hooks.
 - [ ] **8.6 Every PA dispatch through the factory (D28).**
   - [x] **8.6.1 A read-only `plan` job kind** (6ffea2f): `factory job submit --kind plan`; on
     `claude_session` Claude Code starts with `--permission-mode plan` instead of skipping
