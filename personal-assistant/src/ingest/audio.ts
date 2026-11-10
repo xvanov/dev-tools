@@ -114,8 +114,8 @@ async function supersedeLeftovers(episodes: any, claimed: any) {
 }
 
 async function run() {
-  const spool = config.audioDir;
-  const files = sidecarFiles(spool);
+  const audioDir = config.audioDir;
+  const files = sidecarFiles(audioDir);
   if (!files.length) return 0;
 
   const all = files.map(readSidecar).filter(Boolean);
