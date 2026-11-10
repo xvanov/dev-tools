@@ -102,7 +102,7 @@ async function resolve(rawIdentity: any, displayName: any) {
   return created.id;
 }
 
-// "shane.govenor@innergy.com" -> "Shane Govenor"; null unless it is first.last.
+// "brannoc.quill@example.test" -> "Brannoc Quill"; null unless it is first.last.
 function nameFromEmail(email: any) {
   const m = /^([a-z]{2,})[._]([a-z]{2,})@/i.exec(String(email || ''));
   return m ? [m[1], m[2]].map((w = "") => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') : null;
