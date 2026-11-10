@@ -759,7 +759,8 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 # Run resume: the worker died (serve restart, crash), the job did
                 # not fail. Back in the queue; dispatch starts it again below.
                 if not dry_run:
-                    update_meta(
+                    # Keep ref.meta current: the start loop below reads it.
+                    ref.meta = update_meta(
                         ref.dir_path,
                         state=QUEUED,
                         worker_pid=None,

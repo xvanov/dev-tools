@@ -208,10 +208,11 @@ def test_dispatch_starts_up_to_the_cap_and_reaps_dead_workers(
     assert tasks.dispatch_tasks(root)["started"] == []  # cap still full
     monkeypatch.setattr(tasks, "pid_alive", lambda pid: False)
     out = tasks.dispatch_tasks(root)
-    assert sorted(out["reaped"]) == sorted(ids[:2]) and out["started"] == [ids[2]]
-    # Run resume: a dead worker re-queues the job (bounded), it does not fail it.
+    # Run resume: a dead worker re-queues the job (bounded), it does not fail it,
+    # and the same dispatch pass starts it again (no extra wait).
+    assert sorted(out["reaped"]) == sorted(ids[:2]) and out["started"] == ids[:2]
     st = job_status(root, ids[0])
-    assert st["state"] == "queued" and "resuming" in st["why"]
+    assert st["state"] == "in_progress"
     assert tasks.read_meta(tasks.find_task(root, ids[0]).dir_path)["resumes"] == 1
 
 
