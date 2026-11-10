@@ -35,6 +35,8 @@ Tune everything (paths, ages, thresholds) via a JSON config — see
 
 ## Run it manually
 
+Before the first real run, do a `--dry-run` to see what would be freed.
+
 ```bash
 python disk_janitor.py --dry-run   # see what it would free, delete nothing
 python disk_janitor.py             # actually clean
