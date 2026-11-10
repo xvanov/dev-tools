@@ -56,6 +56,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D28 | 2026-11-09 | **Every agent session the PA dispatches goes through the software factory**; no route choice | The owner's call. So each one is on Build and metered: on `claude_session` through the credit pool (`llm_spend`), on `api` through the API keys. Plan mode becomes a read-only factory `plan` job (Claude Code's plan permission mode, JOBS-API v1.8); `--via`, `PA_DISPATCH_VIA`, the routing rule and `--machine` go. A card's dispatch defaults: runtime `claude_session`, mode `full`, the end state from the factory app's `delivery.default`, the job kind decided from the ask (overridable per card). Item 8.6. |
 | D29 | 2026-11-09 | **The factory works without GitHub Issues; non-personal repos never use them** | The owner's call, after job raven:001 (`innergy-dev/raven`, Issues disabled) looped in pm-sync on GitHub's 410 and paid for a PM run every tick. Each app has a `tracker`: `github_issues` or `local` (`state/factory.db`, `software-factory/factory/tracker.py`). Default: a personal owner's repo (`FACTORY_PERSONAL_OWNERS`, else `xvanov`) gets `github_issues`; every other repo gets `local`, and `github_issues` is refused for it. Nothing is created, commented, labelled, closed or read on a local app's Issues; a local story is named by its story id, not an issue number, and its PR body cites no issue. A repo that reports `has_issues: false` or answers 410 falls back to `local` with a warning. PR comments and labels are not Issues and stay. |
 | D27 | 2026-11-08 | **Latency targets are reset from measurements** once the current 8.4 fixes land | Several targets do not fit this laptop (a job start in < 1 s when one GitHub round trip is ~1 s; whats-on's first audio in 0.7 s). After the fixes, the lead measures each hop on an idle machine, proposes the new target per hop in the Map with the measurement, and the owner sees the numbers; the reviewers then score against those. |
+| D30 | 2026-11-10 | **Build is one Claude Code agent per task; the factory is frozen** (supersedes D28) | The owner's call: the factory's pm→sm→dev→tech_writer→reviewer chain is buggy, slow and expensive. Do on a Plan card composes the brief and opens ONE interactive Claude Code session in termhub (a fresh worktree on a new branch when the card names a repo), on the claude.ai subscription only, on a model the card picks (haiku, sonnet or opus; default sonnet). The agent decides what kind of task it is (PR, report, other), uses subagents for long or parallel work, never merges or pushes to the default branch, and talks to Jarvis through `pa run note|ask|done`; Jarvis answers with `pa run reply` and types into the session with `pa run send`. The PA tails the session's transcripts (and its subagents') for tokens, notional subscription cost and tool calls, and stops a run over its cost cap ($5) or wall-clock cap (2 h). `software-factory` stays in the tree, unchanged, no longer the dispatch target; job kinds, runtimes and end states leave this path. Item 8.7. |
 
 ## Prerequisites (before phase 0)
 
@@ -1883,6 +1884,13 @@ not in the Map is not done, and a new one gets added there first.
   postgres; CI's contract job still runs it) and is not the store on either stack. Edges and
   the teams-ask step point at `sqlite-store`. The store dot pings whichever store `PA_DB`
   selects; factory-api's dot probes local `factory serve`.
+- [ ] **8.7 One Claude Code agent per task (D30).**
+  - [ ] **8.7.0 D30 and the plan.**
+  - [ ] **8.7.1 Launch, run row, done/state** (`src/build/`, tables `build_run`, `build_msg`).
+  - [ ] **8.7.2 Messaging**: `pa run note|ask|done|reply|send|list|status|stop`, chat tools, needs-you.
+  - [ ] **8.7.3 Transcript tracking** (tokens, notional cost, tool calls, subagents) and the cost/time caps.
+  - [ ] **8.7.4 The board** (`/factory`) shows these runs.
+  - [ ] **8.7.5 Live test**: a docs task on haiku, a research question on sonnet with one subagent.
 - [ ] **8.6 Every PA dispatch through the factory (D28).**
   - [x] **8.6.1 A read-only `plan` job kind** (6ffea2f): `factory job submit --kind plan`; on
     `claude_session` Claude Code starts with `--permission-mode plan` instead of skipping
