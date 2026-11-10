@@ -131,6 +131,14 @@ function leanFlags(line: string): string {
   return want.filter(([f]) => !line.includes(f)).map(([f, v]) => ` ${f}${v}`).join('');
 }
 
+/** User settings are not loaded (see leanFlags), so the one-time bypass-permissions confirmation the owner
+ *  accepted there would block the session on a prompt: carry just that flag in a small settings file. */
+function settingsFlag(): string {
+  const file = path.join(config.worktreesRoot, 'build-settings.json');
+  fs.writeFileSync(file, JSON.stringify({ skipDangerousModePermissionPrompt: true }), 'utf8');
+  return ` --settings "${file}"`;
+}
+
 /** Starts a run. What it made is undone when the session does not open. */
 async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null }): Promise<Row> {
   const dispatch = require('../dispatch');
@@ -182,7 +190,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model, prompt: null });
     const session = await termhub.createSession({
       cwd,
-      command: `${launch.command}${leanFlags(launch.command)} --session-id ${claudeSession}`,
+      command: `${launch.command}${leanFlags(launch.command)}${settingsFlag()} --session-id ${claudeSession}`,
       title: `jarvis#${run.id} ${task.slice(0, 40)}`,
       env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}` },
       links: { card: commitmentId, external: `build-${run.id}` },
