@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Changed-files mode for software-factory's pytest suite (the sibling of `run-tests.js --changed`).
 
-    python scripts/changed-pytest.py [--list] [--since REF] [-- extra pytest args]
+    python scripts/changed-pytest.py [--list] [--since REF] [--no-sync] [-- extra pytest args]
 
 Runs only the test files that import, transitively, a module changed against HEAD (staged plus
 unstaged, untracked included). Standard library only: the import graph comes from `ast`, no
@@ -19,7 +19,8 @@ Exit status is pytest's (0 when nothing was selected).
 Tests run in software-factory/.venv. A fresh worktree (a factory story worktree, an agent's) has none,
 or one a bare `uv run` made without the dev extras, so when that venv lacks pytest or pytest-xdist
 this runs `uv sync --all-extras` there first. Without xdist it runs serially; without pytest at all
-it fails and says why (exit 1), never a silent pass.
+it fails and says why (exit 1), never a silent pass. `--no-sync` (the pre-commit hook) never
+runs uv: with no pytest it prints a skip note and exits 0, leaving the suite to CI.
 """
 from __future__ import annotations
 
@@ -218,7 +219,14 @@ def main(argv: list[str]) -> int:
         rel = [str(t.relative_to(FACTORY)).replace("\\", "/") for t in tests]
         why += f"; capped to a {len(tests)}-file smoke subset, full suite left to CI (--all to override)"
     print(f"changed mode (software-factory): {why}; {len(tests)} test file(s) selected", file=sys.stderr)
-    cmd, has_xdist = pytest_command()
+    cmd, has_xdist = pytest_command(sync="--no-sync" not in argv)
+    if cmd is None and "--no-sync" in argv:
+        print(
+            "changed mode (software-factory): skipped: no pytest in software-factory/.venv and --no-sync "
+            "(the hook never installs dependencies; CI runs the suite)",
+            file=sys.stderr,
+        )
+        return 0
     if cmd is None:
         print(
             "changed mode (software-factory): cannot run: no pytest in software-factory/.venv or in "
@@ -271,14 +279,14 @@ def uv_sync() -> bool:
     return True
 
 
-def pytest_command() -> tuple[list[str] | None, bool]:
+def pytest_command(sync: bool = True) -> tuple[list[str] | None, bool]:
     """The pytest command for this tree and whether pytest-xdist is available to it.
 
     None when there is no pytest anywhere. The tree's own .venv comes first, synced with the dev
     extras when it lacks pytest or xdist; the interpreter running this script is the fallback.
     """
     has_pytest, has_xdist = probe(VENV_PY) if VENV_PY.exists() else (False, False)
-    if not has_xdist and uv_sync():
+    if not has_xdist and sync and uv_sync():
         has_pytest, has_xdist = probe(VENV_PY) if VENV_PY.exists() else (False, False)
     if has_pytest:
         return [str(VENV_PY), "-m", "pytest"], has_xdist

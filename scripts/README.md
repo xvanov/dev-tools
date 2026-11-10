@@ -125,11 +125,7 @@ skipping it, and a tool that cannot run fails the gate.
 `scripts/hooks/pre-commit` runs the public-repo guard (`guard: N files clean`, ios-messages), then
 `scripts/pre-commit-tests.js`: changed-files mode for every tool that uses this runner plus
 software-factory, in parallel. A Node tool without `node_modules` is skipped with a note. The
-software-factory leg runs in `software-factory/.venv`; in a worktree whose venv is missing or lacks
-pytest/pytest-xdist (a factory story worktree, an agent's) it first runs `uv sync --all-extras`
-there (~10 s), runs serially if xdist is still missing, and blocks the commit, saying why, when
-there is no pytest at all. The factory gives its commits 15 minutes for this
-(`factory/chain/branch.py::COMMIT_TIMEOUT_S`). Install (or update) it into the shared `.git/hooks` with:
+software-factory leg runs in `software-factory/.venv` and never installs anything: a commit whose worktree has no pytest there (an agent's fresh worktree) skips that leg with a one-line note (`--no-sync`; CI runs the suite; `gate-changed.js` still syncs). A commit that changes only markdown/LICENSE skips the tests entirely (~1 s). Install (or update) it into the shared `.git/hooks` with:
 
 ```
 node scripts/install-hooks.js

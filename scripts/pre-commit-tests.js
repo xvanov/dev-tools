@@ -28,7 +28,13 @@ const changed = new Set([
   ...lines(execFileSync('git', ['diff', '--name-only', '--no-renames', 'HEAD', '--'], { cwd: top, encoding: 'utf8' })),
   ...lines(execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: top, encoding: 'utf8' })),
 ]);
-if (!changed.size) process.exit(0);
+// Docs-only commits (markdown, LICENSE) reach no test worth a hook run; CI runs everything.
+const isDoc = (f) => /\.md$/i.test(f) || f === 'LICENSE';
+for (const f of [...changed]) if (isDoc(f)) changed.delete(f);
+if (!changed.size) {
+  console.error('tests: docs-only change, nothing to run');
+  process.exit(0);
+}
 
 function run(label, cmd, args, cwd) {
   return new Promise((resolve) => {
@@ -63,7 +69,7 @@ for (const d of fs.readdirSync(top, { withFileTypes: true })) {
 const factoryTouched = [...changed].some((f) => f.startsWith('software-factory/') || f === 'scripts/changed-pytest.py');
 if (factoryTouched) {
   const py = process.platform === 'win32' ? ['python'] : ['python3', 'python'];
-  jobs.push(run('software-factory', py[0], [path.join(top, 'scripts', 'changed-pytest.py')], top));
+  jobs.push(run('software-factory', py[0], [path.join(top, 'scripts', 'changed-pytest.py'), '--no-sync'], top));
 }
 
 Promise.all(jobs).then((results) => {
