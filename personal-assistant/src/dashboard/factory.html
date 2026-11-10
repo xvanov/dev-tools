@@ -215,9 +215,10 @@
     <label class="wide">Ask <textarea name="ask" placeholder="What you want, in your own words — the builder sees only this"></textarea></label>
     <label>Kind <select name="kind"></select></label>
     <label>Runtime <select name="runtime"></select></label>
-    <label>Repo <input name="repo" placeholder="owner/name (optional for research/report)"></label>
+    <label>Repo <select name="repo"><option value="">loading repos…</option></select></label>
+    <label hidden data-repo-other>Other repo <input name="repoOther" placeholder="owner/name, e.g. innergy-dev/raven"></label>
     <label data-code>End state <select name="delivery"></select></label>
-    <label class="wide">Done when / questions (one per line) <textarea name="done" placeholder="optional"></textarea></label>
+    <label class="wide" title="Each line becomes one acceptance criterion: the builder works until every line is true, and the reviewer checks against them.">Done when — one check per line (optional) <textarea name="done" placeholder="e.g.&#10;README explains the --dry-run flag&#10;CI is green"></textarea></label>
     <div class="row"><button class="primary" type="submit">Start job</button><span class="meta" id="newhint"></span></div>
   </form>
 </details>

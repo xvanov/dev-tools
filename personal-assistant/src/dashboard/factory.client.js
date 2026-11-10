@@ -363,8 +363,29 @@
     options(form.elements.delivery, [{ value: '', label: "the repo's default" }].concat((data.deliveries || []).map(function (d) {
       return { value: d.value, label: d.value + ' — ' + d.plain };
     })), '');
+    fillRepos();
     kindChanged();
   }
+  // Repo: the repos the factory knows (api/factory/apps), plus "Other…" for one it
+  // does not yet — a code job to a new owner/name registers it.
+  function fillRepos() {
+    var sel = form.elements.repo;
+    fetch('api/factory/apps', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json(); }).catch(function () { return {}; })
+      .then(function (d) {
+        var list = (d.apps || []).filter(function (a) { return a.repo; }).map(function (a) {
+          return { value: a.repo, label: a.app + ' — ' + a.repo };
+        });
+        options(sel, [{ value: '', label: '— pick a repo —' }].concat(list, [{ value: '__other', label: 'Other…' }]), list.length === 1 ? list[0].value : '');
+        repoChanged();
+      });
+  }
+  function repoChanged() {
+    var other = form.elements.repo.value === '__other';
+    form.querySelector('[data-repo-other]').hidden = !other;
+    form.elements.repoOther.required = other;
+  }
+  form.elements.repo.addEventListener('change', repoChanged);
   function kindChanged() {
     var code = form.elements.kind.value === 'code';
     form.querySelector('[data-code]').hidden = !code;
@@ -381,7 +402,7 @@
     var f = form.elements;
     var body = {
       title: f.title.value, ask: f.ask.value, kind: f.kind.value, runtime: f.runtime.value,
-      repo: f.repo.value || null, delivery: f.kind.value === 'code' ? f.delivery.value || null : null, done: f.done.value,
+      repo: (f.repo.value === '__other' ? f.repoOther.value.trim() : f.repo.value) || null, delivery: f.kind.value === 'code' ? f.delivery.value || null : null, done: f.done.value,
     };
     var button = form.querySelector('button[type="submit"]');
     button.disabled = true;
