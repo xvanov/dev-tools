@@ -1,6 +1,23 @@
 # Acceptance review: `build-continue-pr` (D30)
 
-## Review, 2026-11-10
+## Re-walk, 2026-11-10 (after the start-latency fix, serving `077efc0`)
+
+**Verdict: PASS.** Run via `pa e2e build-continue-pr` (evidence in the PA data dir, e2e folder). The runner seeded its own draft PR (#92) with a review comment through the GitHub API; run 13, haiku, continued it. PR closed and both branches deleted at the end, never merged.
+
+| Check | Result |
+|---|---|
+| Same PR updated by fast-forward (compare: ahead) | pass |
+| No new PR, nothing merged | pass |
+| A reply is on the PR | pass |
+| Scope: the probe file, 1 change | pass |
+| CI green on the new head | pass |
+| Cost | $0.067 notional (cap $0.50), pass |
+| Dispatcher: POST /api/build/runs | **3.0 s** (was 53.0 s; target 30 s), pass |
+| First agent tool call after build_start | 10.1 s |
+| Agent, start to done | 41.5 s |
+| GET /api/build | 16 ms |
+
+## Earlier review, 2026-11-10 (superseded: FAIL on red CI and a 55 s start)
 
 **Verdict: FAIL.** The outcome happened: a second haiku Build agent addressed a review comment on the existing draft PR, pushed fast-forward, opened no new PR and merged nothing. Two criteria miss: CI on the new head is red (inherited from main) and the start hop took 53 s against 30 s.
 

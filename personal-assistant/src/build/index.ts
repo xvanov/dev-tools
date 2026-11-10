@@ -99,7 +99,9 @@ function renderPrompt(template: string, vars: Record<string, string>): string {
 
 /** Pure: Claude Code's project folder for a working directory (every non-alphanumeric becomes -). */
 function projectDirName(cwd: string): string {
-  return path.resolve(cwd).replace(/[^A-Za-z0-9]/g, '-');
+  // A Windows drive path stays as it is on any OS (path.resolve would prefix a POSIX cwd to it).
+  const full = /^[A-Za-z]:[\/]/.test(cwd) ? cwd : path.resolve(cwd);
+  return full.replace(/[^A-Za-z0-9]/g, '-');
 }
 
 /** Where Claude Code writes a session's transcript. */
@@ -321,8 +323,16 @@ async function setIdle(id: number | string, seconds: unknown): Promise<Row> {
 
 /** Removes an ended run's worktree (the branch stays; a PR branch lives on the remote). Junctions in it are
  *  unlinked first and a path too long for git is removed through the \? prefix. */
+/** The folder a run owns: its worktree, or the scratch folder under the worktrees root. */
+function ownedDir(r: Row): string {
+  if (r.worktree_path) return String(r.worktree_path);
+  const cwd = String(r.cwd || '');
+  const root = path.resolve(config.worktreesRoot).toLowerCase() + path.sep;
+  return cwd && path.resolve(cwd).toLowerCase().startsWith(root) && fs.existsSync(cwd) ? cwd : '';
+}
+
 async function removeWorktree(r: Row): Promise<boolean> {
-  const dir = String(r.worktree_path || '');
+  const dir = ownedDir(r);
   if (!dir) return false;
   const repoPath = String(r.repo_path || '');
   if (repoPath && fs.existsSync(dir)) await sh(repoPath, 'git', ['worktree', 'remove', '--force', '--force', dir]).catch(() => {});
@@ -345,7 +355,7 @@ async function sweepWorktrees(ids: Set<string>): Promise<number> {
   const rows: Row[] = await repo().list({ limit: 50 });
   let n = 0;
   for (const r of rows) {
-    if (LIVE.includes(String(r.state)) || !r.worktree_path) continue;
+    if (LIVE.includes(String(r.state)) || !ownedDir(r)) continue;
     const open = r.session_id && ids.has(String(r.session_id));
     const old = Date.now() - Date.parse(String(r.ended_at || 0)) > 15 * 60_000;
     if (open && !old) continue;

@@ -45,6 +45,26 @@ function firstActionMs(jsonl: string, t0: number): number | null {
   return null;
 }
 
+/** Pure. Phase times (ms from `t0`) in a transcript: first event, first tool call, first Edit/Write. */
+function phases(jsonl: string, t0: number): { first_event_ms: number | null; first_tool_ms: number | null; first_edit_ms: number | null } {
+  const out = { first_event_ms: null as number | null, first_tool_ms: null as number | null, first_edit_ms: null as number | null };
+  for (const line of String(jsonl || '').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      const t = Date.parse(e.timestamp);
+      if (!Number.isFinite(t)) continue;
+      const ms = Math.max(0, t - t0);
+      if (out.first_event_ms == null) out.first_event_ms = ms;
+      if (e.type !== 'assistant') continue;
+      const uses = (Array.isArray(e.message?.content) ? e.message.content : []).filter((c: Json) => c?.type === 'tool_use');
+      if (uses.length && out.first_tool_ms == null) out.first_tool_ms = ms;
+      if (uses.some((c: Json) => /^(Edit|Write|MultiEdit)$/.test(String(c.name))) && out.first_edit_ms == null) out.first_edit_ms = ms;
+    } catch { /* a torn line */ }
+  }
+  return out;
+}
+
 /** Pure. A PR number from a URL (`.../pull/90`), or null. */
 function prNumber(text: unknown): number | null {
   const m = /\/pull\/(\d+)/.exec(String(text || ''));
@@ -167,6 +187,8 @@ function make(id: 'build-pr' | 'build-continue-pr' | 'research') {
       try { jsonl = fs.readFileSync(row.transcript_path, 'utf8'); } catch { /* no transcript */ }
       const first = firstActionMs(jsonl, t0);
       checks.push(check('build', 'first agent action within 30 s of build_start', first != null && first <= 30_000, first == null ? 'no tool call in the transcript' : `${(first / 1000).toFixed(1)} s`));
+      const ph = phases(jsonl, t0);
+      notes.push(`phases from build_start (ms): ${JSON.stringify({ ...JSON.parse(JSON.stringify(start.timings || {})), ...ph })}`);
       notes.push(`first agent action ${first == null ? 'unknown' : `${(first / 1000).toFixed(1)} s`} after build_start; start timings ${JSON.stringify(start.timings || {})}`);
       if (jsonl) transcripts.push(deps.writeEvidence(folder, `transcripts/run-${runId}.jsonl`, jsonl));
       const result = String(row.result || '');
@@ -229,4 +251,4 @@ function make(id: 'build-pr' | 'build-continue-pr' | 'research') {
   };
 }
 
-module.exports = { make, firstActionMs, prNumber, RUNNERS: { 'build-pr': make('build-pr'), 'build-continue-pr': make('build-continue-pr'), research: make('research') } };
+module.exports = { make, firstActionMs, phases, prNumber, RUNNERS: { 'build-pr': make('build-pr'), 'build-continue-pr': make('build-continue-pr'), research: make('research') } };

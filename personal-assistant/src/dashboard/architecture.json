@@ -1297,7 +1297,7 @@
       "id": "build-agent",
       "layer": "factory",
       "name": "Build agent (one Claude Code agent per task)",
-      "role": "Do opens ONE interactive Claude Code session in termhub on the claude.ai subscription: the composed brief plus one editable agent prompt (src/build/agent-prompt.md), in a fresh git worktree on a new branch when the card names a repo. The agent decides the task's kind (draft PR, markdown report, other), uses subagents for long work, never merges or pushes the default branch, and finishes with `pa run done`.",
+      "role": "Do opens ONE interactive Claude Code session in termhub on the claude.ai subscription: the card's own words (no composing model call) plus one editable agent prompt, given as the command's opening prompt (src/build/agent-prompt.md), in a fresh git worktree on a new branch when the card names a repo. The agent decides the task's kind (draft PR, markdown report, other), uses subagents for long work, never merges or pushes the default branch, and finishes with `pa run done`.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -2356,7 +2356,7 @@
         },
         {
           "c": "dispatcher",
-          "t": "Build start (src/build/index.ts): a fresh git worktree on a new branch jarvis/<run>-<slug>, the composed brief plus the one agent prompt (src/build/agent-prompt.md), a build_run row. Nothing metered, no factory (D30)."
+          "t": "Build start (src/build/index.ts): a fresh git worktree on a new branch jarvis/<run>-<slug>, the card's own words plus the one agent prompt (src/build/agent-prompt.md) as claude's opening prompt, a build_run row; a fetch only when FETCH_HEAD is over 2 min old. The POST answers in about 3-5 s with a timings breakdown. An ended run's worktree is removed by the heartbeat (session gone, or 15 min after the end). Nothing metered, no factory (D30)."
         },
         {
           "c": "build-agent",
@@ -2405,7 +2405,7 @@
         ],
         "cost": {
           "max_usd": 0.5,
-          "basis": "build_run cost_usd: notional subscription dollars for one haiku run on a tiny docs change (a sonnet run on real work costs more; the run's own cap PA_BUILD_COST_CAP_USD is $5); the PA's compose call is outside it"
+          "basis": "build_run cost_usd: notional subscription dollars for one haiku run on a tiny docs change (a sonnet run on real work costs more; the run's own cap PA_BUILD_COST_CAP_USD is $5)"
         },
         "views": [
           "build"
@@ -2432,7 +2432,7 @@
           }
         ],
         "verdict": {
-          "result": "fail",
+          "result": "pass",
           "date": "2026-11-10",
           "report": "docs/native/acceptance/build-pr.md"
         }
@@ -2529,7 +2529,7 @@
           }
         ],
         "verdict": {
-          "result": "fail",
+          "result": "pass",
           "date": "2026-11-10",
           "report": "docs/native/acceptance/build-continue-pr.md"
         }

@@ -1,6 +1,24 @@
 # Acceptance review: `build-pr` (D30)
 
-## Review, 2026-11-10
+## Re-walk, 2026-11-10 (after the start-latency fix, serving `077efc0`)
+
+**Verdict: PASS.** Run via `pa e2e build-pr` (the new Build-aware runner; evidence in the PA data dir, e2e folder). Run 12, haiku, draft PR xvanov/dev-tools#91 (closed, branch deleted, not merged).
+
+| Check | Result |
+|---|---|
+| PR draft, open, not merged | pass |
+| Scope: keep-awake/README.md, 1 change | pass |
+| CI green on the PR head (main is green since 877aa4b) | pass |
+| Run done, result is the PR URL | pass |
+| Cost | $0.062 notional (cap $0.50), pass |
+| Dispatcher: POST /api/build/runs | **4.7 s** (was 55.1 s; target 30 s), pass |
+| First agent tool call after build_start | 12.0 s |
+| Agent, start to done | 39 s |
+| GET /api/build | 27 ms |
+
+Start breakdown now: fetch 1.4 s, worktree add 2.9 s, session spawn 0.1 s, total 4.4 s. First transcript event about 8.8 s after build_start (Claude Code boot), first tool call about 3 s later, first Edit about 4 s after that. What was slow before: the compose model call and repo hint scan, then screen polling plus a fixed 6 s settle before the opening prompt; those are gone.
+
+## Earlier review, 2026-11-10 (superseded: FAIL on red CI and a 55 s start)
 
 **Verdict: FAIL.** The outcome happened: one haiku Build agent opened a draft PR with the one-line change and ended the run `done` with the PR URL. Two criteria miss. CI on the PR head is red (inherited from main, see below), and the start hop took 55 s against a 30 s target.
 
