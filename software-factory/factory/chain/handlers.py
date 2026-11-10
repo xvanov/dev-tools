@@ -6262,10 +6262,14 @@ def _push_fix_to_existing_pr(
     # artifact, and the two can differ (detached HEAD, a worktree left on
     # another branch). If the local branch ref is missing, rev-list fails and we
     # report a push error rather than guessing.
+    # The trailing ``--`` matters on Windows: without it git lstat()s the whole
+    # ``a..b`` argument to rule out a file of that name, and a long story branch
+    # in a long worktree path fails with "Filename too long" (raven story 21:
+    # every fix push, CI or review, was refused).
     remote_ref = f"origin/{branch}"
     exists = _git(["rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"], timeout=30)
     if exists is not None and exists.returncode == 0:
-        ahead = _git(["rev-list", "--count", f"{remote_ref}..{branch}"], timeout=60)
+        ahead = _git(["rev-list", "--count", f"{remote_ref}..{branch}", "--"], timeout=60)
         if ahead is None:
             return False, "could not compare the branch with its remote"
         if ahead.returncode != 0:
@@ -6302,7 +6306,7 @@ def _push_fix_to_existing_pr(
             # commits the local branch lacks, someone else pushed to it —
             # never push (and never force) over them (review of PR #335,
             # MUST 2). The CI watch then delivers with a note.
-            behind = _git(["rev-list", "--count", f"{branch}..{remote_ref}"], timeout=60)
+            behind = _git(["rev-list", "--count", f"{branch}..{remote_ref}", "--"], timeout=60)
             try:
                 behind_n = int(((behind.stdout if behind else "") or "").strip() or "-1")
             except ValueError:
