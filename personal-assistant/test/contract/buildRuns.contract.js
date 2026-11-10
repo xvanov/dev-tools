@@ -87,6 +87,13 @@ module.exports = {
     assert.deepStrictEqual(await repos.buildRuns.msgsFor([]), []);
   },
 
+  'forCards: the runs of several cards, oldest first; none gives none': async ({ repos, assert }) => {
+    const x = await repos.buildRuns.insert({ ...mk('c1'), commitmentId: null });
+    assert.deepStrictEqual(await repos.buildRuns.forCards([]), []);
+    assert.deepStrictEqual(await repos.buildRuns.forCards([999999]), []);
+    assert.ok(x.id);
+  },
+
   'openAsks: unanswered asks only': async ({ repos, assert }) => {
     const r = await repos.buildRuns.insert(mk('m4'));
     const ask = await repos.buildRuns.addMsg({ runId: r.id, dir: 'agent', kind: 'ask', body: 'q' });

@@ -14,10 +14,10 @@ type Row = import('./types.ts').Row;
 const COLUMNS = [
   'commitment_id', 'task', 'model', 'repo_path', 'worktree_path', 'branch', 'cwd', 'machine', 'session_id',
   'claude_session', 'transcript_path', 'state', 'result', 'error', 'cost_cap_usd', 'wall_cap_min', 'cost_usd',
-  'tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'track', 'ended_at',
+  'tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'track', 'ended_at', 'last_activity_at', 'activity', 'idle_after_s',
 ];
 /** States where the agent is still working or waiting on Jarvis. */
-const LIVE = ['starting', 'running', 'waiting'];
+const LIVE = ['starting', 'running', 'waiting', 'idle'];
 
 const iso = (): string => new Date().toISOString();
 
@@ -26,9 +26,9 @@ function create(db: Db) {
     /** A new run, state `starting`: the row. */
     async insert(v: Row): Promise<Row> {
       const r = await db.query(
-        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, started_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$8) returning *`,
-        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso()]
+        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, idle_after_s, started_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$9,$8,$8) returning *`,
+        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso(), v.idleAfterS ?? 240]
       );
       return r.rows[0] as Row;
     },
@@ -41,20 +41,20 @@ function create(db: Db) {
     /** Newest first; `live` keeps only runs still working or waiting. */
     async list({ live = false, limit = 20, offset = 0 }: { live?: boolean; limit?: number; offset?: number } = {}): Promise<Row[]> {
       return db.rows(
-        `select * from build_run ${live ? `where state in ('starting','running','waiting')` : ''} order by id desc limit $1 offset $2`,
+        `select * from build_run ${live ? `where state in ('starting','running','waiting','idle')` : ''} order by id desc limit $1 offset $2`,
         [limit, offset]
       );
     },
 
     /** How many runs there are (live ones only when `live`). */
     async count({ live = false }: { live?: boolean } = {}): Promise<number> {
-      const r = await db.one(`select count(*) as n from build_run ${live ? `where state in ('starting','running','waiting')` : ''}`);
+      const r = await db.one(`select count(*) as n from build_run ${live ? `where state in ('starting','running','waiting','idle')` : ''}`);
       return Number(r?.n || 0);
     },
 
     /** The live run of a card, or null. */
     async liveForCommitment(commitmentId: number | string): Promise<Row | null> {
-      return db.one(`select * from build_run where commitment_id = $1 and state in ('starting','running','waiting') order by id desc limit 1`, [commitmentId]);
+      return db.one(`select * from build_run where commitment_id = $1 and state in ('starting','running','waiting','idle') order by id desc limit 1`, [commitmentId]);
     },
 
     /** Sets the named columns (unknown names are refused) and the update time. */
@@ -90,6 +90,13 @@ function create(db: Db) {
       if (!runIds.length) return [];
       const ph = runIds.map((_, i) => `$${i + 1}`).join(',');
       return db.rows(`select * from build_msg where run_id in (${ph}) order by id`, runIds);
+    },
+
+    /** The runs of several cards (commitments), oldest first. */
+    async forCards(ids: Array<number | string>): Promise<Row[]> {
+      if (!ids.length) return [];
+      const ph = ids.map((_, i) => `$${i + 1}`).join(',');
+      return db.rows(`select * from build_run where commitment_id in (${ph}) order by id`, ids);
     },
 
     /** Asks nobody has answered yet, oldest first. */

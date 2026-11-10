@@ -26,7 +26,7 @@ const fresh = () => ({
   assert.strictEqual(M.summary(null), 'build settings…');
   assert.strictEqual(M.summary({ settings: { model: 'haiku', costCapUsd: 0.5, wallCapMin: 45 } }), 'haiku · $0.5 · 45 min');
   const rows = Object.fromEntries(M.rows(s).map((r) => [r.field, r]));
-  assert.deepStrictEqual(Object.keys(rows), ['model', 'costCapUsd', 'wallCapMin']);
+  assert.deepStrictEqual(Object.keys(rows), ['model', 'costCapUsd', 'wallCapMin', 'idleAfterS']);
   assert.deepStrictEqual(rows.model.options.map((o) => o.value), ['', 'haiku', 'sonnet', 'opus']);
   assert.strictEqual(rows.model.options[0].label, 'default (sonnet)');
   assert.strictEqual(rows.costCapUsd.badge, 'default');
@@ -82,14 +82,14 @@ async function main() {
     const X = { 'x-pa': '1' };
 
     const first = json(await call('GET', url));
-    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { model: 'sonnet', costCapUsd: 5, wallCapMin: 120 }, {}]);
+    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { model: 'sonnet', costCapUsd: 5, wallCapMin: 120, idleAfterS: 240 }, {}]);
     assert.deepStrictEqual(first.options.models, ['haiku', 'sonnet', 'opus']);
 
     const set = json(await call('POST', url, { headers: X, body: M.patchFor(first, 'model', 'haiku') }));
     assert.deepStrictEqual([set.settings.model, set.overrides], ['haiku', { model: 'haiku' }]);
     json(await call('POST', url, { headers: X, body: { costCapUsd: 1.5, wallCapMin: 30 } }));
     const all = json(await call('GET', url));
-    assert.deepStrictEqual(all.settings, { model: 'haiku', costCapUsd: 1.5, wallCapMin: 30 }, 'stored: the next open shows the same');
+    assert.deepStrictEqual(all.settings, { model: 'haiku', costCapUsd: 1.5, wallCapMin: 30, idleAfterS: 240 }, 'stored: the next open shows the same');
     assert.strictEqual(M.summary(all), 'haiku · $1.5 · 30 min');
     const reset = json(await call('POST', url, { headers: X, body: M.patchFor(all, 'model', '') }));
     assert.deepStrictEqual([reset.settings.model, reset.overrides], ['sonnet', { costCapUsd: 1.5, wallCapMin: 30 }]);

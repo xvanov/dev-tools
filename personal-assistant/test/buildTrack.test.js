@@ -115,7 +115,8 @@ async function main() {
     // The tick after the end reads once more, marks the view final and keeps the raw logs.
     assert.deepStrictEqual(await T.tick(), { updated: 1, stopped: 0 });
     assert.strictEqual(JSON.parse((await repo.buildRuns.byId(run.id)).track).final, true);
-    const kept = path.join(dir, 'data', 'build-logs', `run-${run.id}`);
+    const kept = path.join(dir, 'data', 'build-runs', `run-${run.id}`);
+    assert.ok(fs.existsSync(path.join(kept, 'summary.json')) && fs.existsSync(path.join(kept, 'messages.json')));
     assert.ok(fs.existsSync(path.join(kept, `${session}.jsonl`)));
     assert.ok(fs.existsSync(path.join(kept, session, 'subagents', 'agent-abc123.jsonl')));
     assert.deepStrictEqual(await T.tick(), { updated: 0, stopped: 0 }, 'a final view is left alone');

@@ -441,6 +441,9 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   // Build runs (src/build, D30): a run whose session has gone ended without
   // `pa run done`; the transcripts of the live ones read for cost, tool calls
   // and subagents, and a run over its cost or time cap stopped.
+  every(10, 'build-heartbeat', async () => {
+    await require('./build/heartbeat.ts').tick();
+  });
   every(15, 'build-runs', async () => {
     await require('./build/index.ts').reconcile();
     await require('./build/track.ts').tick();

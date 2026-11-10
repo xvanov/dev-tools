@@ -14,14 +14,14 @@
   "rules": [
     {
       "id": "chat-actions-ask",
-      "tools": ["factory_start", "factory_continue", "factory_resume", "factory_cancel", "factory_approve", "session_start", "build_reply", "build_send", "build_stop"],
+      "tools": ["factory_start", "factory_continue", "factory_resume", "factory_cancel", "factory_approve", "session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop"],
       "actions": ["call"],
       "decision": "ask",
       "reason": "the chat's action tools prompt the user on every call (Claude Code asks; AGENT.md, The PA chat acts only behind permission prompts)"
     },
     {
       "id": "approve-chat-actions",
-      "tools": ["factory_start", "factory_continue", "factory_resume", "factory_cancel", "factory_approve", "session_start", "build_reply", "build_send", "build_stop"],
+      "tools": ["factory_start", "factory_continue", "factory_resume", "factory_cancel", "factory_approve", "session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop"],
       "actions": ["approve"],
       "channels": ["dashboard", "voice", "termhub", "cli", "chat", "e2e"],
       "decision": "allow",

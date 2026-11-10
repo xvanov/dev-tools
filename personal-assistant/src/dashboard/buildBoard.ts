@@ -81,7 +81,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
   try {
     if (url.pathname === '/api/build/runs') {
       if (!String(body.task || '').trim()) return send(res, 400, { error: 'say what the agent should do' }), true;
-      const run = await B.start({ task: String(body.task).trim(), model: body.model || null, repoPath: body.repo ? String(body.repo).trim() : null, costCapUsd: body.costCapUsd || null, wallCapMin: body.wallCapMin || null });
+      const run = await B.start({ task: String(body.task).trim(), model: body.model || null, repoPath: body.repo ? String(body.repo).trim() : null, costCapUsd: body.costCapUsd || null, wallCapMin: body.wallCapMin || null, idleAfterS: body.idleAfterS || null });
       send(res, 200, { id: run.id, model: run.model, state: run.state, url: run.url, branch: run.branch });
       return true;
     }

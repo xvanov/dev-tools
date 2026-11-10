@@ -13,7 +13,7 @@
 // notional subscription cost at API list prices, tool calls (name, short args,
 // ok/err, time) and a state; `tick` stores the summary on the run row (`track`
 // JSON, replaced whole), enforces the cost and wall-clock caps, and on the end
-// of a run copies the raw logs to <data>/build-logs/run-<id>/ for later analysis.
+// of a run copies the raw logs to <data>/build-runs/run-<id>/ (with messages.json and summary.json) for later analysis.
 //
 // Pure parts: parseAgent, priceOf, costOf, summarize. The rest reads files.
 //
@@ -137,6 +137,13 @@ function parseAgent(text: string, fallbackModel?: string | null): Json {
  * {id, kind, type, description, model, state, tokens, cost_usd, started_at,
  * ended_at, calls (the last MAX_CALLS), call_count}.
  */
+/** Pure: tool calls counted by tool name. */
+function byName(calls: Json[]): Json {
+  const o: Json = {};
+  for (const c of calls) o[c.name] = (o[c.name] || 0) + 1;
+  return o;
+}
+
 function summarize(agents: Array<{ id: string; kind: 'main' | 'subagent'; type?: string | null; description?: string | null; finished?: boolean; parent_call?: string | null; parsed: Json }>, { runLive, endedAt }: { runLive: boolean; endedAt?: string | null }): Json {
   const out = agents.map((a) => {
     const p = a.parsed;
@@ -145,7 +152,7 @@ function summarize(agents: Array<{ id: string; kind: 'main' | 'subagent'; type?:
       id: a.id, kind: a.kind, type: a.type || null, description: a.description || null, parent_call: a.parent_call || null,
       model: p.model, state: done ? 'done' : 'running', turns: p.turns, tokens: p.tokens, cost_usd: p.cost_usd,
       started_at: p.started_at, ended_at: done ? p.last_at || endedAt || null : null,
-      call_count: p.calls.length, errors: p.calls.filter((c: Json) => c.ok === false).length, calls: p.calls.slice(-MAX_CALLS),
+      call_count: p.calls.length, by_name: byName(p.calls), errors: p.calls.filter((c: Json) => c.ok === false).length, calls: p.calls.slice(-MAX_CALLS),
     };
   });
   const sum = (f: (a: Json) => number) => out.reduce((t, a) => t + f(a), 0);
@@ -206,25 +213,73 @@ function readRun(run: Row): Json | null {
       parent_call: meta.toolUseId || null, parsed: parseFile(path.join(subDir, f), fallback),
     });
   }
-  const live = ['starting', 'running', 'waiting'].includes(String(run.state));
+  const live = ['starting', 'running', 'waiting', 'idle'].includes(String(run.state));
   return { ...summarize(agents, { runLive: live, endedAt: run.ended_at ? String(run.ended_at) : null }), transcript: main };
 }
 
-/** Copies the raw transcripts of an ended run to <data>/build-logs/run-<id>/. */
-function archive(run: Row): string | null {
+/** Newest write (ms) among a run's transcript and its subagents', or null before there is one. */
+function activityMs(run: Row): number | null {
   const main = findTranscript(run);
   if (!main) return null;
-  const dest = path.join(config.dataDir, 'build-logs', `run-${run.id}`);
+  let t = 0;
+  const stat = (f: string) => { try { t = Math.max(t, fs.statSync(f).mtimeMs); } catch { /* gone */ } };
+  stat(main);
+  const subDir = path.join(path.dirname(main), path.basename(main, '.jsonl'), 'subagents');
+  try { for (const f of fs.readdirSync(subDir)) stat(path.join(subDir, f)); } catch { /* none */ }
+  return t || null;
+}
+
+/**
+ * Keeps an ended run: its raw transcripts (main + subagents), its build_msg rows
+ * and a summary.json under <data>/build-runs/run-<id>/. Claude Code prunes its
+ * own transcripts (cleanupPeriodDays); this copy is the durable one. Idempotent.
+ */
+async function archive(run: Row, view: Json | null): Promise<string | null> {
+  const dest = path.join(config.dataDir, 'build-runs', `run-${run.id}`);
   try {
     fs.mkdirSync(dest, { recursive: true });
-    fs.copyFileSync(main, path.join(dest, path.basename(main)));
-    const sub = path.join(path.dirname(main), path.basename(main, '.jsonl'));
-    if (fs.existsSync(sub)) fs.cpSync(sub, path.join(dest, path.basename(sub)), { recursive: true });
+    const main = findTranscript(run);
+    if (main) {
+      fs.copyFileSync(main, path.join(dest, path.basename(main)));
+      const sub = path.join(path.dirname(main), path.basename(main, '.jsonl'));
+      if (fs.existsSync(sub)) fs.cpSync(sub, path.join(dest, path.basename(sub)), { recursive: true });
+    }
+    const msgs: Row[] = await repo().msgs(run.id);
+    fs.writeFileSync(path.join(dest, 'messages.json'), JSON.stringify(msgs, null, 2));
+    const agents = (view?.agents as Json[]) || [];
+    const by: Json = {};
+    for (const a of agents) for (const [k, v] of Object.entries(a.by_name || {})) by[k] = (by[k] || 0) + Number(v);
+    const ended = run.ended_at ? Date.parse(String(run.ended_at)) : Date.now();
+    const summary = {
+      run: Number(run.id), card: run.commitment_id || null, task: run.task, model: run.model, repo: run.repo_path || null, branch: run.branch || null,
+      state: run.state, result: run.result || null, error: run.error || null, started_at: run.started_at, ended_at: run.ended_at || null,
+      elapsed_s: Math.max(0, Math.round((ended - Date.parse(String(run.started_at))) / 1000)),
+      tokens: { in: Number(run.tokens_in || 0), out: Number(run.tokens_out || 0), cache_read: Number(run.tokens_cache_read || 0), cache_write: Number(run.tokens_cache_write || 0) },
+      cost_usd: Number(view?.totals?.cost_usd ?? run.cost_usd ?? 0), agents: agents.length,
+      tool_calls: by, tool_calls_total: Object.values(by).reduce((t: number, v) => t + Number(v), 0),
+      errors: agents.reduce((t, a) => t + Number(a.errors || 0), 0), messages: msgs.length, archived_at: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(dest, 'summary.json'), JSON.stringify(summary, null, 2));
     return dest;
   } catch (err) {
-    log.warn('could not archive the transcripts', { run: run.id, message: (err as Error).message });
+    log.warn('could not archive the run', { run: run.id, message: (err as Error).message });
     return null;
   }
+}
+
+/** Every archived run's summary.json (ended since an ISO date, if given), by run id. */
+function exportSummaries(since: string | null = null): Json[] {
+  const root = path.join(config.dataDir, 'build-runs');
+  const out: Json[] = [];
+  let dirs: string[] = [];
+  try { dirs = fs.readdirSync(root); } catch { return out; }
+  for (const d of dirs) {
+    const s = readJson(path.join(root, d, 'summary.json'));
+    if (!s.run) continue;
+    if (since && String(s.ended_at || s.started_at) < since) continue;
+    out.push(s);
+  }
+  return out.sort((a, b) => a.run - b.run);
 }
 
 /** Pure: why a live run must stop now (cost or wall-clock cap), or null. */
@@ -249,12 +304,11 @@ async function tick(now = Date.now()): Promise<{ updated: number; stopped: numbe
   let stopped = 0;
   for (const run of runs) {
     const live = B.LIVE.includes(String(run.state));
-    let prev: Json | null = null;
-    try { prev = run.track ? JSON.parse(String(run.track)) : null; } catch { prev = null; }
-    if (!live && prev?.final) continue;
-    if (!live && !run.claude_session) continue;
+    if (!live && !run.claude_session && !run.ended_at) continue;
+    if (!live && fs.existsSync(path.join(config.dataDir, 'build-runs', `run-${run.id}`, 'summary.json'))) continue;
     const view = readRun(run);
     if (!view) {
+      if (!live) { await archive(run, null); continue; }
       if (live) {
         const why = overCap(run, null, now);
         if (why) { await B.stop(run.id, why); stopped++; }
@@ -267,7 +321,7 @@ async function tick(now = Date.now()): Promise<{ updated: number; stopped: numbe
       cost_usd: t.cost_usd, tokens_in: t.in, tokens_out: t.out, tokens_cache_read: t.cache_read, tokens_cache_write: t.cache_write, track: JSON.stringify(track),
     });
     updated++;
-    if (!live) { archive(run); continue; }
+    if (!live) { await archive(run, view); continue; }
     const why = overCap(run, t, now);
     if (why) {
       log.warn('stopping a run over its cap', { run: run.id, why });
@@ -278,4 +332,4 @@ async function tick(now = Date.now()): Promise<{ updated: number; stopped: numbe
   return { updated, stopped };
 }
 
-module.exports = { parseAgent, priceOf, costOf, summarize, shortArgs, findTranscript, readRun, archive, overCap, tick, PRICES };
+module.exports = { parseAgent, priceOf, costOf, summarize, shortArgs, findTranscript, readRun, archive, activityMs, exportSummaries, overCap, tick, PRICES };

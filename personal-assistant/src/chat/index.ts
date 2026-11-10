@@ -101,10 +101,11 @@ Prefer these over \`pa\` commands, files or the shell — they answer in one cal
 - \`factory_jobs\`, \`factory_job <job>\` — factory jobs: state, why, PRs, CI, cost, subscription-equivalent,
   report excerpt, follow link. \`sessions\` — live termhub sessions and the run each belongs to.
 - \`build_runs\`, \`build_run <run>\` — Build agents (Do starts one Claude Code agent per task): state, cost, steps and the
-  notes/questions they sent. \`needs_you\` lists agents blocked on a question: tell the user, and answer with \`build_reply\`.
+  notes/questions they sent. \`needs_you\` lists agents blocked on a question (answer with \`build_reply\`) and idle ones, silent past their idle_after_s, with last tool call, last output and how long (look with \`build_run\`, nudge with \`build_send\`, lengthen with \`build_set_idle\`, or \`build_stop\`); a dead session fails the run at once. Tell the user.
 
 Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
 
+- \`build_start {card?, task?, repo?, model?, idle_after_s?}\` starts a Build agent (one Claude Code agent; prefer it to \`factory_start\` for "do this task"); \`build_set_idle <run> <seconds>\` changes its silence limit.
 - \`build_reply <run> <text>\` answers a Build agent's question; \`build_send <run> <text>\` types at its session;
   \`build_stop <run>\` kills it.
 

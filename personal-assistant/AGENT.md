@@ -571,8 +571,23 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The factory path
   30 min, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
 - Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),
   `pa run send <id> "<text>"` (typed into the session). Chat tools: `build_runs`, `build_run`, `build_reply`,
-  `build_send`, `build_stop`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
-- A run whose session vanishes without `pa run done` is failed (worker pass `build-runs`).
+  `build_send`, `build_stop`, `build_start`, `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
+- A run whose session vanishes without `pa run done` is failed at once, with an urgent notice (heartbeat).
+- **Heartbeat** (`src/build/heartbeat.ts`, worker pass `build-heartbeat`, every 10 s): stat calls on the
+  transcript and subagent transcripts, one sessiond list call (is the session alive, is the PTY busy), the
+  newest `build_msg`; no transcript parsing. Silent past the run's own `idle_after_s` (default 240,
+  `PA_BUILD_IDLE_AFTER_S`; `build_start idle_after_s`, the card menu, `build_set_idle`,
+  `pa run idle <id> <s>`) while `running` makes it `idle`: an urgent notice, and `build_run.activity`
+  (last tool call, last output line, idle duration) in `build_runs.needs_you` and on the board. Any sign
+  of life puts it back to `running`. A `waiting` run (open `pa run ask`) is never idle.
+- **Kept runs** (`src/build/track.ts archive`, when a run ends, stops or fails): Claude Code prunes
+  `~/.claude/projects` (`cleanupPeriodDays`), so `<dataDir>/build-runs/run-<id>/` holds a copy:
+  `<session>.jsonl`, `<session>/subagents/`, `messages.json` (the build_msg rows) and `summary.json`
+  (run, card, task, model, repo, branch, state, result, error, started/ended, elapsed_s, tokens, cost_usd,
+  agents, tool_calls by name, errors). `pa run export [--since <date>]` prints every summary.json as JSONL.
+- The Plan card of a task with a Build run shows its state chip, start to end and elapsed, cost, and
+  links to the board card and the termhub session; several runs add the count, the span and the total
+  (`src/dashboard/cards.ts buildSummary`).
 
 ## Conventions
 

@@ -18,12 +18,13 @@
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 type Row = import('../repo/types.ts').Row;
+type Json = import('../types.ts').Json;
 
 const { logger } = require('../log.ts');
 const log = logger('build');
 
 const repo = () => require('../repo').buildRuns;
-const LIVE = ['starting', 'running', 'waiting'];
+const LIVE = ['starting', 'running', 'waiting', 'idle'];
 const ASK_TIMEOUT_MS = 30 * 60_000;
 const MAX = 4000;
 
@@ -115,7 +116,14 @@ async function needsYou(): Promise<Row[]> {
   for (const a of asks) {
     const run: Row | null = await repo().byId(a.run_id);
     if (!run || !LIVE.includes(String(run.state))) continue;
-    out.push({ id: a.id, run: run.id, task: run.task, question: a.body, asked_at: a.created_at });
+    out.push({ id: a.id, run: run.id, task: run.task, kind: 'ask', question: a.body, asked_at: a.created_at });
+  }
+  // An idle agent needs you as much as one with a question: look in, nudge it or stop it.
+  for (const r of await repo().list({ live: true, limit: 50 })) {
+    if (r.state !== 'idle') continue;
+    let a: Json = {};
+    try { a = JSON.parse(String(r.activity)); } catch { /* none */ }
+    out.push({ id: null, run: r.id, task: r.task, kind: 'idle', question: `Idle ${Math.round(Number(a.idle_s || 0) / 60)} min. Last tool call: ${a.last_tool || 'none'}. Last output: ${a.last_line || '(blank)'}`, ...a, asked_at: a.since || r.updated_at });
   }
   return out;
 }

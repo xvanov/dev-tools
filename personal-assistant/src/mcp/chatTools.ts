@@ -15,7 +15,7 @@
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
 //   actions  factory_start, factory_continue, factory_resume, factory_cancel,
-//            factory_approve, session_start, build_reply, build_send, build_stop
+//            factory_approve, session_start, build_start, build_set_idle, build_reply, build_send, build_stop
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.ts start,
@@ -44,7 +44,7 @@ type Json = Record<string, any>;
 const repository = require('../repo');
 
 const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions', 'build_runs', 'build_run'];
-const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_reply', 'build_send', 'build_stop'];
+const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop'];
 
 // The user's rule: a factory job runs on Claude Code (their subscription)
 // unless they ask for the API ("with DeepSeek", "use the API", a model id).
@@ -130,9 +130,30 @@ const READ_TOOLS = [
     },
   },
   {
+    name: 'build_start',
+    description:
+      "Start a Build agent (one Claude Code agent per task) — the user approves each call. From a Plan card (`card`: its summary and context become the brief and the card moves to dispatched) and/or the user's words (`task`). The agent works in a fresh worktree when the card or `repo` names a repo, may open a draft PR, never merges. `model`: haiku (docs, reports), sonnet (default), opus (hard). Returns the run; follow it with build_runs / build_run.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card: { type: 'string', maxLength: 20, description: 'A Plan card id (commitment).' },
+        task: { type: 'string', maxLength: 4000, description: "What to do, in the user's words; needed without a card." },
+        repo: { type: 'string', maxLength: 300, description: "A known checkout; defaults to the card's repo." },
+        model: { type: 'string', enum: ['haiku', 'sonnet', 'opus'] },
+        idle_after_s: { type: 'integer', minimum: 30, maximum: 21600, description: 'Seconds of silence (no transcript, terminal or message activity) before the run counts as idle and you are told. Default 240; quick tasks 120; long builds or research 900+.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'build_set_idle',
+    description: "Change how long a Build agent may be silent before it is flagged idle (the user approves each call). Use it after build_run shows a long step is fine, or to tighten a quick task. A run waiting on its own question is never idle.",
+    inputSchema: { type: 'object', properties: { run: { type: 'integer' }, seconds: { type: 'integer', minimum: 30, maximum: 21600 } }, required: ['run', 'seconds'], additionalProperties: false },
+  },
+  {
     name: 'build_runs',
     description:
-      'Build agents (one Claude Code agent per task, started by Do): the live ones and the recent ones, each with state (running, waiting = it asked a question, done, failed, stopped), model, notional cost, branch, result, and `needs_you`: the open questions agents are blocked on (answer one with build_reply). Call this for "what are the agents doing", "is anything waiting on me".',
+      'Build agents (one Claude Code agent per task, started by Do): the live ones and the recent ones, each with state (running, waiting = it asked a question, done, failed, stopped), model, notional cost, branch, result, and `needs_you`: the open questions agents are blocked on (answer one with build_reply) and idle agents (state idle: last tool call, last output, how long; decide: build_run to look, build_send to nudge, build_set_idle if the wait is fine, build_stop). Call this for "what are the agents doing", "is anything waiting on me".',
     inputSchema: {
       type: 'object',
       properties: { all: { type: 'boolean', default: false, description: 'Include ended runs (the last 15).' } },
@@ -753,10 +774,14 @@ async function sessionStartTool(args: Json) {
   return startOrCard(o);
 }
 
+function parseJson(v: unknown): Json | null {
+  try { return v ? JSON.parse(String(v)) : null; } catch { return null; }
+}
+
 function runView(r: Row): Json {
   return {
     id: r.id, state: r.state, task: String(r.task).slice(0, 160), model: r.model, cost_usd: Number(r.cost_usd || 0), branch: r.branch || null,
-    result: r.result || null, error: r.error || null, started_at: r.started_at, ended_at: r.ended_at || null, card: r.commitment_id || null,
+    result: r.result || null, error: r.error || null, idle_after_s: Number(r.idle_after_s || 0), activity: parseJson(r.activity), last_activity_at: r.last_activity_at || null, started_at: r.started_at, ended_at: r.ended_at || null, card: r.commitment_id || null,
   };
 }
 
@@ -806,6 +831,16 @@ async function handle(name: string, args: Json = {}) {
       return { job: r.jobId, approved: true, output: r.output || null };
     }
     case 'session_start': return sessionStartTool(args);
+    case 'build_start': {
+      const card = args.card != null ? parseCardId(args.card) : null;
+      if (card?.proposal) throw new Error(`p${card.proposal} is an offer, not a card`);
+      const r = await require('../build/index.ts').start({ commitmentId: card ? card.commitment : null, task: args.task ? String(args.task) : null, repoPath: args.repo ? String(args.repo).trim() : null, model: args.model || null, idleAfterS: args.idle_after_s || null });
+      return { ...runView(r), url: r.url || null };
+    }
+    case 'build_set_idle': {
+      const r = await require('../build/index.ts').setIdle(Number(args.run), args.seconds);
+      return { run: r.id, idle_after_s: r.idle_after_s };
+    }
     case 'build_runs': return buildRunsTool(args);
     case 'build_run': return buildRunTool(args as { run?: number });
     case 'build_reply': {

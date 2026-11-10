@@ -12,6 +12,8 @@ const HELP = `
     pa run list [--all]                 live runs (--all: recent ones too)
     pa run status <id>                  one run: state, cost, steps, messages
     pa run stop <id>                    kill its session
+    pa run idle <id> <seconds>          how long it may be silent before it is flagged idle
+    pa run export [--since <date>]      JSONL summary of every ended run (tokens, cost, tool calls, result)
     pa run reply <id> "<answer>" [--ask <n>]   answer the run's open question
     pa run send <id> "<text>"           type text into its live session
     Inside an agent (the run id is $JARVIS_RUN_ID):
@@ -61,6 +63,15 @@ function make(out: (s: string) => void, fail: (s: string) => void) {
         if (r.url) out(`  open: ${r.url}`);
         if (r.branch) out(`  branch: ${r.branch}`);
         if (r.error) out(`  note: ${r.error}`);
+        return;
+      }
+      if (sub === 'idle') {
+        const r = await B().setIdle(runId(args, flags).id, args[2]);
+        out(`run #${r.id} idle after ${r.idle_after_s} s`);
+        return;
+      }
+      if (sub === 'export') {
+        for (const s of require('../build/track.ts').exportSummaries(str(flags.since))) out(JSON.stringify(s));
         return;
       }
       if (sub === 'stop') {

@@ -24,7 +24,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var LIVE = ['starting', 'running', 'waiting'];
+  var LIVE = ['starting', 'running', 'waiting', 'idle'];
   var PAGE = 10;
 
   // ---- the pure half ------------------------------------------------------------
@@ -295,8 +295,8 @@
     var needs = d.needs_you || [];
     board.replaceChildren(
       needs.length ? el.apply(null, ['section', { class: 'needs_you' }, el('h2', {}, 'Needs you', el('span', { class: 'n', text: String(needs.length) }))].concat(needs.map(function (n) {
-        return el('div', { class: 'job' }, el('div', { class: 't', text: '#' + n.run + ' ' + n.task }), el('div', { class: 'why', text: n.question }),
-          el('a', { class: 'btn', href: '#run-' + n.run, text: 'Answer on its card' }));
+        return el('div', { class: 'job' }, el('div', { class: 't', text: '#' + n.run + (n.kind === 'idle' ? ' (idle) ' : ' ') + n.task }), el('div', { class: 'why', text: n.question }),
+          el('a', { class: 'btn', href: '#run-' + n.run, text: n.kind === 'idle' ? 'Look at its card' : 'Answer on its card' }));
       }))) : null,
       el.apply(null, ['section', { class: 'runsec' }, el('h2', {}, 'Agents', el('span', { class: 'n', text: String(d.total) }))].concat(
         runs.length ? runs.map(function (r) { return card(r, d.now); }) : [el('div', { class: 'empty', text: 'No agent runs yet. Do on a Plan card starts one.' })])),

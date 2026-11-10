@@ -22,8 +22,8 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DispatchMenu = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const FIELDS = ['model', 'costCapUsd', 'wallCapMin'];
-  const LABEL = { model: 'Model', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)' };
+  const FIELDS = ['model', 'costCapUsd', 'wallCapMin', 'idleAfterS'];
+  const LABEL = { model: 'Model', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)' };
   const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;

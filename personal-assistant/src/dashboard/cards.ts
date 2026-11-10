@@ -18,7 +18,7 @@ type Session = Row & { role?: string };
 /** What forCommitments() knows about one commitment. */
 type Info = {
   links: Link[]; sessions: Session[]; context: unknown; context_at: unknown; who: unknown;
-  project: unknown; source: unknown; occurred_at: unknown; item: Row; chain: unknown[];
+  project: unknown; source: unknown; occurred_at: unknown; item: Row; chain: unknown[]; build?: unknown;
 };
 /** The dashboard state enrich() adds to (server.js's /api/state). */
 type State = { commitments?: Row[]; selfNotes?: { items?: Row[] }[]; needsYou?: Row[]; looksDone?: Row[] };
@@ -63,6 +63,7 @@ async function forCommitments(ids: unknown[], { evidenceIds = [] }: { evidenceId
   ]);
   const h = hubs();
   const chains = await chainsFor(want).catch(() => new Map());
+  const builds = await buildsFor(want).catch(() => new Map());
   for (const d of found) {
     const text = [d.summary, d.detail, d.body, d.later].filter(Boolean).join('\n');
     const built = L.cardLinks({
@@ -83,10 +84,48 @@ async function forCommitments(ids: unknown[], { evidenceIds = [] }: { evidenceId
       occurred_at: d.occurred_at,
       item: itemOf(d),
       chain: chains.get(String(d.id)) || [],
+      build: builds.get(String(d.id)) || null,
     });
   }
   const evidence = new Map<string, Row>(ev.map((e: Row) => [String(e.evidence_id), e]));
   return { byId: out, evidence, hubs: h };
+}
+
+/**
+ * Pure: a card's Build runs as the Plan view shows them: the newest run's state,
+ * times, notional cost and links (its board card, its termhub session), and, for
+ * a task with several runs, the aggregate: how many, the span from the first start
+ * to the last end (or now, while one lives), and the summed cost.
+ */
+function buildSummary(runs: Row[], now = Date.now(), url: string | null = null): Row | null {
+  if (!runs.length) return null;
+  const last = runs[runs.length - 1];
+  const live = runs.some((r) => ['starting', 'running', 'waiting', 'idle'].includes(String(r.state)));
+  const first = Date.parse(String(runs[0].started_at));
+  const end = live ? now : Math.max(...runs.map((r) => Date.parse(String(r.ended_at || r.started_at))));
+  const act = (() => { try { return last.activity ? JSON.parse(String(last.activity)) : null; } catch { return null; } })();
+  return {
+    run: Number(last.id), state: last.state, model: last.model, started_at: last.started_at, ended_at: last.ended_at || null,
+    elapsed_s: Math.max(0, Math.round(((last.ended_at ? Date.parse(String(last.ended_at)) : now) - Date.parse(String(last.started_at))) / 1000)),
+    cost_usd: Number(last.cost_usd || 0), result: last.result || null, error: last.error || null, idle: last.state === 'idle' ? act : null,
+    board: `factory#run-${last.id}`, session_url: url,
+    runs: runs.length, span_s: Math.max(0, Math.round((end - first) / 1000)), total_cost_usd: runs.reduce((t, r) => t + Number(r.cost_usd || 0), 0),
+  };
+}
+
+/** Each commitment's Build runs, summarised (buildSummary), keyed by id. */
+async function buildsFor(ids: unknown[]): Promise<Map<string, Row>> {
+  const out = new Map<string, Row>();
+  const rows: Row[] = await repo.buildRuns.forCards(ids);
+  const by = new Map<string, Row[]>();
+  for (const r of rows) by.set(String(r.commitment_id), [...(by.get(String(r.commitment_id)) || []), r]);
+  for (const [id, runs] of by) {
+    const last = runs[runs.length - 1];
+    const url = last.session_id && !['done', 'failed', 'stopped'].includes(String(last.state))
+      ? await require('../dispatch/termhub.ts').sessionUrl(last.session_id).catch(() => null) : null;
+    out.set(id, buildSummary(runs, Date.now(), url) as Row);
+  }
+  return out;
 }
 
 /**
@@ -124,6 +163,7 @@ function attach(card: Row, info: Info | null | undefined) {
   if (!info) return card;
   card.links = info.links;
   card.chain = info.chain || [];
+  card.build = info.build || null;
   card.sessions = info.sessions;
   card.context = info.context;
   card.context_at = info.context_at;
@@ -234,4 +274,4 @@ function dedupe(links: Link[]) {
   });
 }
 
-module.exports = { enrich, forCommitments, chainsFor, hubs, openSession };
+module.exports = { enrich, forCommitments, buildSummary, chainsFor, hubs, openSession };

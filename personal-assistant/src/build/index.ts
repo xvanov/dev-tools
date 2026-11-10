@@ -30,12 +30,13 @@ const repo = () => require('../repo').buildRuns;
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const DEFAULT_MODEL = 'sonnet';
-const LIVE = ['starting', 'running', 'waiting'];
+const LIVE = ['starting', 'running', 'waiting', 'idle'];
 const num = (v: unknown, d: number): number => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
 const DEFAULTS = () => ({
   model: DEFAULT_MODEL,
   costCapUsd: num(process.env.PA_BUILD_COST_CAP_USD, 5),
   wallCapMin: num(process.env.PA_BUILD_WALL_CAP_MIN, 120),
+  idleAfterS: num(process.env.PA_BUILD_IDLE_AFTER_S, 240),
 });
 
 const sh = (cwd: string, cmd: string, args: string[]): Promise<string> =>
@@ -67,7 +68,7 @@ async function forCard(commitmentId: number | string): Promise<Json> {
   const d = DEFAULTS();
   return {
     card: Number(commitmentId),
-    settings: { model: o.model || d.model, costCapUsd: o.costCapUsd || d.costCapUsd, wallCapMin: o.wallCapMin || d.wallCapMin },
+    settings: { model: o.model || d.model, costCapUsd: o.costCapUsd || d.costCapUsd, wallCapMin: o.wallCapMin || d.wallCapMin, idleAfterS: o.idleAfterS || d.idleAfterS },
     overrides: o,
     options: { models: MODELS, defaults: d },
   };
@@ -81,7 +82,7 @@ async function setForCard(commitmentId: number | string, patch: Json): Promise<J
     if (patch.model == null || patch.model === '') delete merged.model;
     else merged.model = checkModel(patch.model);
   }
-  for (const k of ['costCapUsd', 'wallCapMin']) {
+  for (const k of ['costCapUsd', 'wallCapMin', 'idleAfterS']) {
     if (!(k in patch)) continue;
     if (patch[k] == null || patch[k] === '') delete merged[k];
     else if (!(Number(patch[k]) > 0)) throw Object.assign(new Error(`${k} must be a positive number`), { status: 400 });
@@ -123,7 +124,7 @@ async function briefContext(target: Json, task: string): Promise<string> {
 }
 
 /** Starts a run. What it made is undone when the session does not open. */
-async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null }): Promise<Row> {
+async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null }): Promise<Row> {
   const dispatch = require('../dispatch');
   const commitmentId = o.commitmentId || null;
   const card = await stored(commitmentId);
@@ -131,6 +132,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const model = checkModel(o.model || card.model || d.model);
   const costCapUsd = num(o.costCapUsd ?? card.costCapUsd, d.costCapUsd);
   const wallCapMin = num(o.wallCapMin ?? card.wallCapMin, d.wallCapMin);
+  const idleAfterS = Math.min(21600, Math.max(30, num(o.idleAfterS ?? card.idleAfterS, d.idleAfterS)));
   if (commitmentId) {
     const live = await repo().liveForCommitment(commitmentId);
     if (live) throw new Error(`#${commitmentId} already has run #${live.id} (${live.state}) — open it, or stop it first`);
@@ -141,7 +143,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const wanted: string | null = target.repoPath || null;
   const isRepo = Boolean(wanted && fs.existsSync(path.join(wanted, '.git')));
 
-  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin });
+  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS });
   const cwd = path.join(config.worktreesRoot, `build-${run.id}`);
   let branch: string | null = null;
   let sessionId: string | null = null;
@@ -242,13 +244,54 @@ async function stop(id: number | string, reason = 'stopped by you'): Promise<Row
   return withUrl(await repo().byId(id));
 }
 
+/** The same urgent notice `pa run ask` raises, for a run that cannot go on without you. */
+async function alarm(run: Row, title: string, why: string, key: string): Promise<void> {
+  const N = require('../notify/notify.ts');
+  await N.notify({
+    kind: 'info', priority: 'urgent', title, body: `${String(run.task).slice(0, 100)}
+
+${why}
+
+Look: pa run status ${run.id}; nudge: pa run send ${run.id} "…"; stop: pa run stop ${run.id} (or ask Jarvis)`,
+    url: N.dashboardUrl('') + 'factory', dedupeKey: key,
+  }).catch((err: Error) => log.warn('could not raise the notice', { run: run.id, message: err.message }));
+}
+
+/** The heartbeat found a running agent silent past its threshold: `idle`, what Jarvis needs to decide (JSON in `activity`), and the notice. It goes back to running by itself when life returns. */
+async function markIdle(id: number | string, info: { since: string; idle_s: number; last_tool: string | null; last_line: string | null }): Promise<void> {
+  const r = await repo().byId(id);
+  if (!r || r.state !== 'running') return;
+  await repo().update(id, { state: 'idle', activity: JSON.stringify({ state: 'idle', ...info }) });
+  log.warn('build run idle', { run: id, idle_s: info.idle_s });
+  const mins = Math.round(info.idle_s / 60);
+  await alarm(r, `Build agent #${id} has gone quiet`,
+    `Idle for ${mins >= 1 ? `${mins} min` : `${info.idle_s} s`} (limit ${r.idle_after_s} s).
+Last tool call: ${info.last_tool || 'none yet'}
+Last output: ${info.last_line || '(blank)'}`, `build-idle:${id}:${info.since}`);
+}
+
+async function unidle(id: number | string): Promise<void> {
+  const r = await repo().byId(id);
+  if (r && r.state === 'idle') await repo().update(id, { state: 'running' });
+}
+
+/** Change how long a silence makes the run idle (seconds, 30 to 6 h). */
+async function setIdle(id: number | string, seconds: unknown): Promise<Row> {
+  const n = Math.round(Number(seconds));
+  if (!(n >= 30 && n <= 21600)) throw Object.assign(new Error('idle_after_s must be 30 to 21600'), { status: 400 });
+  const r = await repo().byId(id);
+  if (!r) throw Object.assign(new Error(`no run #${id}`), { status: 404 });
+  await repo().update(id, { idle_after_s: n });
+  return repo().byId(id);
+}
+
 /** A live run whose termhub session has gone ended without `pa run done`: failed. */
-async function reconcile(): Promise<{ failed: number }> {
+async function reconcile(known: Json[] | null = null): Promise<{ failed: number }> {
   const live: Row[] = await repo().list({ live: true, limit: 50 });
   if (!live.length) return { failed: 0 };
   let sessions: Json[];
   try {
-    sessions = await termhub.listSessions();
+    sessions = known || (await termhub.listSessions());
   } catch {
     return { failed: 0 };
   }
@@ -256,7 +299,9 @@ async function reconcile(): Promise<{ failed: number }> {
   let failed = 0;
   for (const r of live) {
     if (r.state === 'starting' || !r.session_id || ids.has(String(r.session_id))) continue;
-    await finish(r.id as number, 'failed', { error: 'the session ended without `pa run done`' });
+    const why = 'the session ended without `pa run done`';
+    await finish(r.id as number, 'failed', { error: why });
+    await alarm(r, `Build agent #${r.id} failed`, why, `build-fail:${r.id}`);
     failed++;
   }
   return { failed };
@@ -266,4 +311,4 @@ async function list(o: { live?: boolean; limit?: number; offset?: number } = {})
   return repo().list(o);
 }
 
-module.exports = { start, stop, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };
+module.exports = { start, stop, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };
