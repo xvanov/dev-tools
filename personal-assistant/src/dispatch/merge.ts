@@ -263,11 +263,6 @@ async function behindBy(slug: string, base: string, sha: string): Promise<number
   return Number.isFinite(Number(c?.behind_by)) ? Number(c?.behind_by) : null;
 }
 
-async function branchSha(slug: string, branch: string): Promise<string | null> {
-  const c = await ghJson([`repos/${slug}/commits/${encodeURIComponent(branch)}`]);
-  return c?.sha || null;
-}
-
 // Only the commit the gate passed is merged: a push after the checks ran is
 // refused by GitHub rather than merged unchecked.
 async function mergeAt(url: string, sha: string): Promise<void> {
@@ -276,5 +271,5 @@ async function mergeAt(url: string, sha: string): Promise<void> {
 
 module.exports = {
   mayMerge, summarize, slugOf, checks, ready, merge,
-  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, mergeRefusal, commitChecks, requiredChecks, prState, branchSha, behindBy, mergeAt,
+  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, mergeRefusal, commitChecks, requiredChecks, prState, behindBy, mergeAt,
 };

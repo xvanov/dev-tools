@@ -129,10 +129,6 @@ function joinFor(fam: Family, root: string, ...parts: string[]): string {
   return [fam === 'posix' && base === '' ? '' : base, ...parts].join(sep) || sep;
 }
 
-function joinWin(root: string, ...parts: string[]): string {
-  return joinFor('windows', root, ...parts);
-}
-
 function machineFamily(machine: Pick<Machine, 'os' | 'reposRoot'>): Family {
   return family(declaredOs(machine) || 'windows');
 }
@@ -678,7 +674,6 @@ module.exports = {
   declaredOs,
   platformOs,
   joinFor,
-  joinWin,
   psq,
   shq,
 };
