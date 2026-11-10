@@ -645,8 +645,9 @@ that branch), `invalid_delivery` (`push_to_main` with a pickup).
 halted or paused) and nothing about it (no story row, direction audit entry, or agent run start
 or end) changed for 3 h. `FACTORY_JOB_STALL_S` overrides it (60 s minimum). 3 h is longer than
 any bounded step (a 5400 s dev conversation, the 2 h CI watch), so a healthy job never reads
-stalled. Research/report jobs always report `stalled: false` (a dead worker is already reaped to
-`failed`).
+stalled. Research/report jobs always report `stalled: false` (a dead worker is already reaped: re-queued
+up to `MAX_AUTO_RESUMES` (2) times, `resumes` in job.yaml, then `failed`; serve restart / crash
+resumes the job instead of failing it).
 
 ### New command: `factory job resume <job_id> --json [--no-github]`
 

@@ -209,7 +209,21 @@ def test_dispatch_starts_up_to_the_cap_and_reaps_dead_workers(
     monkeypatch.setattr(tasks, "pid_alive", lambda pid: False)
     out = tasks.dispatch_tasks(root)
     assert sorted(out["reaped"]) == sorted(ids[:2]) and out["started"] == [ids[2]]
+    # Run resume: a dead worker re-queues the job (bounded), it does not fail it.
     st = job_status(root, ids[0])
+    assert st["state"] == "queued" and "resuming" in st["why"]
+    assert tasks.read_meta(tasks.find_task(root, ids[0]).dir_path)["resumes"] == 1
+
+
+def test_worker_death_fails_the_job_once_resumes_are_spent(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tasks, "spawn_worker", lambda r, ref: 4242)
+    monkeypatch.setattr(tasks, "pid_alive", lambda pid: False)
+    jid = _research()["job_id"]
+    for _ in range(2 * tasks.MAX_AUTO_RESUMES + 2):  # start, reap/re-queue, ...
+        tasks.dispatch_tasks(root)
+    st = job_status(root, jid)
     assert st["state"] == "failed" and "worker" in st["why"]
 
 

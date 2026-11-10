@@ -86,6 +86,9 @@ REPORT_NAME = "FACTORY_REPORT.md"
 TASK_WALL_CLOCK_S = 5400
 TASK_MAX_GATE_ROUNDS = 2
 DEFAULT_MAX_WORKERS = 2
+#: A worker that dies mid-run (serve restart, crash, reboot) is re-queued this
+#: many times before the job is failed; each retry keeps the scratch workspace.
+MAX_AUTO_RESUMES = 2
 
 #: job.yaml ``state`` values.
 QUEUED, STARTING, RUNNING, DONE, FAILED, CANCELLED = (
@@ -623,6 +626,12 @@ def run_task(root: Path, job_id: str) -> dict[str, Any]:
             ),
             final_answer=final_answer,
         )
+        if int(meta.get("resumes") or 0) > 0:
+            brief += (
+                "\n\n## Resumed run\n\nA previous run of this job was interrupted. "
+                "Check the workspace for partial work (including a partial "
+                f"`{REPORT_NAME}`) and continue from it instead of starting over.\n"
+            )
         brief_path = d / "brief.md"
         brief_path.write_text(brief, encoding="utf-8")
         runner = claude_runner if meta.get("runtime") == RUNTIME_CLAUDE else api_runner
@@ -745,6 +754,19 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 live += 1  # claimed, worker not up yet
                 continue
             reaped.append(ref.job_id)
+            resumes = int(ref.meta.get("resumes") or 0)
+            if not ref.meta.get("cancel") and resumes < MAX_AUTO_RESUMES:
+                # Run resume: the worker died (serve restart, crash), the job did
+                # not fail. Back in the queue; dispatch starts it again below.
+                if not dry_run:
+                    update_meta(
+                        ref.dir_path,
+                        state=QUEUED,
+                        worker_pid=None,
+                        resumes=resumes + 1,
+                        why=f"worker exited mid-run; resuming (attempt {resumes + 2})",
+                    )
+                continue
             if not dry_run:
                 update_meta(
                     ref.dir_path,
