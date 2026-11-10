@@ -11,9 +11,11 @@
  * holds the navigation only.
  *
  * The page itself shows only its one thing. A small » toggle in the top-left corner
- * opens the panel: closed by default, remembered per destination (localStorage
- * jarvis.settings.<id>) on wide screens; on a phone the panel slides over the page and
- * always starts closed. State: <html data-settings="open|closed">; each change fires
+ * opens the panel: closed by default, remembered once for every destination
+ * (localStorage jarvis.settings) on wide screens, so moving between pages keeps it as
+ * you left it; every open page follows a change at once (the storage event reaches the
+ * other destinations' iframes). On a phone the panel slides over the page and always
+ * starts closed. State: <html data-settings="open|closed">; each change fires
  * `jarvis:settings` ({detail: {open}}) on window (termhub drives its drawer from it).
  *
  * Switching is instant. The page you loaded is the shell: every other destination
@@ -83,10 +85,17 @@
   }
   applyTheme(readTheme());
 
-  // ---- the settings panel: closed until opened; remembered per destination, wide only --
+  // ---- the settings panel: closed until opened; one remembered state for all pages, wide only --
   var NARROW = window.matchMedia ? matchMedia('(max-width: 760px)') : { matches: false };
-  var settingsKey = 'jarvis.settings.' + current;
-  function readSettings() { try { return localStorage.getItem(settingsKey) === '1'; } catch (e) { return false; } }
+  var settingsKey = 'jarvis.settings';
+  function readSettings() {
+    try {
+      var v = localStorage.getItem(settingsKey);
+      // Before it was one setting, each page kept its own (jarvis.settings.<id>).
+      if (v === null) v = localStorage.getItem(settingsKey + '.' + current);
+      return v === '1';
+    } catch (e) { return false; }
+  }
   var settingsOpen = !NARROW.matches && readSettings();
   root.setAttribute('data-settings', settingsOpen ? 'open' : 'closed');
 
@@ -405,6 +414,12 @@
     toggles.forEach(paintToggle);
     try { window.dispatchEvent(new CustomEvent('jarvis:settings', { detail: { open: open } })); } catch (e) { /* old browser */ }
   }
+
+  // Another page (an iframe of this shell, or the shell itself) changed it: follow.
+  window.addEventListener('storage', function (e) {
+    if (e.key !== settingsKey || NARROW.matches) return;
+    setSettings(e.newValue === '1', { persist: false });
+  });
 
   // ---- Update: one for the whole system ---------------------------------------------
   // The stack (Ask, Plan, Build, Run, Meter, Map) is one repo and one version, so the

@@ -708,51 +708,43 @@ function commitmentCard(c) {
     ? el('button', { title: 'They do not owe you this any more: close it as dismissed — nothing is chased. It moves to "Closed recently", where Reopen brings it back.' }, 'Not needed — close it')
     : el('button', { title: 'Not mine, not real, or no longer needed: close it as dismissed. It moves to "Closed recently", where Reopen brings it back.' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
-    // Opened now, while this is still the click: a tab opened after the
-    // request returns is a popup, and the browser blocks it.
-    const tab = window.open('about:blank', '_blank');
-    if (tab) tab.document.title = 'starting…';
+    // Do starts the job and stays on this page: no tab, no navigation. The
+    // run shows on the card (Context → "follow job") and on Build; opening
+    // its termhub session is an explicit click there, never a side effect.
     dispatchMenu.close(false);
     toast('sending it on its way…');
-    try {
-      // Do sends nothing of its own: the card's dispatch settings decide.
-      // The level they resolve to (a repo default included) is shown and
-      // confirmed here when nothing human follows it; the server checks the
-      // page sent back exactly that level. A research/report/plan job has none.
-      const pre = await getJson(`api/commitments/${c.id}/delivery`);
-      let confirmedLevel = null;
-      if (pre.unattended) {
-        if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}
+    // Do sends nothing of its own: the card's dispatch settings decide.
+    // The level they resolve to (a repo default included) is shown and
+    // confirmed here when nothing human follows it; the server checks the
+    // page sent back exactly that level. A research/report/plan job has none.
+    const pre = await getJson(`api/commitments/${c.id}/delivery`);
+    let confirmedLevel = null;
+    if (pre.unattended) {
+      if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}
 
 No human step after this. Start it?`)) throw new Error('not started');
-        confirmedLevel = pre.delivery;
-      }
-      const send = (register) => post(`api/commitments/${c.id}/dispatch`, { confirmedLevel, ...(register ? { register: true } : {}) });
-      // With PA_PASSKEYS=on a merge or push to main may need a passkey tap
-      // first (src/auth/stepup.ts): tap, then send again.
-      const sendStepped = (register) => send(register).catch(async (err) => {
-        if (!err.data?.needsStepUp || !window.paAuth) throw err;
-        await window.paAuth.stepUp(err.data.approvalId);
-        return send(register);
-      });
-      // A repo the factory does not know yet is a setup step on you, with
-      // its fix (src/dispatch/route.ts): one click registers it and sends.
-      const r = await sendStepped(false).catch((err) => {
-        const fix = err.data?.fix;
-        if (fix?.action !== 'register') throw err;
-        if (!window.confirm(`${fix.slug} is not registered with the software factory.
+      confirmedLevel = pre.delivery;
+    }
+    const send = (register) => post(`api/commitments/${c.id}/dispatch`, { confirmedLevel, ...(register ? { register: true } : {}) });
+    // With PA_PASSKEYS=on a merge or push to main may need a passkey tap
+    // first (src/auth/stepup.ts): tap, then send again.
+    const sendStepped = (register) => send(register).catch(async (err) => {
+      if (!err.data?.needsStepUp || !window.paAuth) throw err;
+      await window.paAuth.stepUp(err.data.approvalId);
+      return send(register);
+    });
+    // A repo the factory does not know yet is a setup step on you, with
+    // its fix (src/dispatch/route.ts): one click registers it and sends.
+    const r = await sendStepped(false).catch((err) => {
+      const fix = err.data?.fix;
+      if (fix?.action !== 'register') throw err;
+      if (!window.confirm(`${fix.slug} is not registered with the software factory.
 
 Register it now (${fix.command}) and send this?`)) throw err;
-        return sendStepped(true);
-      });
-      toast(`run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
-      if (tab && r.url) tab.location.href = r.url;
-      else if (tab) tab.close();
-      openContext.set(c.id, null);
-    } catch (err) {
-      if (tab) tab.close();
-      throw err;
-    }
+      return sendStepped(true);
+    });
+    toast(`run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
+    openContext.set(c.id, null);
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {
     await post(`api/commitments/${c.id}/status`, { status: 'done' });
