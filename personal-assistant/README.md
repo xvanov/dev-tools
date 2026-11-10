@@ -596,6 +596,8 @@ pa dashboard                    serve the web page without the worker
 
 pa do 42 --mode mr              dispatch to a Claude Code session in its own worktree
 pa runs                         what's in flight
+pa run idle <id> <seconds>      how long a run may be silent before it is flagged idle
+pa run export [--since <date>]  JSONL summary of every ended run (tokens, cost, tool calls, result)
 pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed
