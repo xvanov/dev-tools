@@ -278,6 +278,9 @@ was retired 2026-08-07 along with the four LLM tiers.
 - **Never `git add -A`** here (runtime churn). Deploy surgically.
 - `factory/manager/**` and `bench/**` are **forbidden to self-edit** — operator
   PR only. Every self-edit auto-merge surface stays staging-gated.
+- **The dev is fenced out of the files that judge it** (`factory/chain/fence.py`): before the
+  dev's work is committed, edits to `apps/*/config.yaml`, CI workflows, `factory_settings.yaml`
+  are reverted to base and a `dev_fence_reverted` story event is logged. App `factory` is exempt.
 - **Nothing loops more than 3 times.** If you add a loop, cap it, and keep any
   early-escalation guard strictly below the hard cap or it becomes unreachable.
 - **Reviewer independence**: `reviewer` must not share a model with any `dev`

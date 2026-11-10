@@ -2661,6 +2661,31 @@ def _dry_run_dev(story: StoryRecord) -> tuple[bool, dict[str, Any]]:
     }
 
 
+def _fence_dev_edits(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path, repo: Path
+) -> None:
+    """Revert the dev's edits to the files that judge it (``chain/fence.py``)."""
+    try:
+        from factory.chain import fence
+
+        base = f"origin/{app_config.default_branch or 'main'}"
+        reverted = fence.enforce(repo, base, app=app_config.name)
+        if reverted:
+            log_story_event(
+                story.id,
+                "dev_fence_reverted",
+                {
+                    "paths": reverted[:20],
+                    "note": "dev edited config/gate/CI files that judge it; reverted to base "
+                    "before commit and gates",
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug or "",
+            )
+    except Exception:  # noqa: BLE001 - fence is best-effort here; merge gates still run
+        pass
+
+
 def _commit_green_dev_work(
     story: StoryRecord,
     app_config: AppConfig,
@@ -2684,6 +2709,7 @@ def _commit_green_dev_work(
         # ``_writing_worktree`` would first merge origin/<base> into it.
         if repo is None:
             repo = _writing_worktree(app_config, software_factory_root, story)
+        _fence_dev_edits(story, app_config, software_factory_root, repo)
         _git(repo, "add", "-A")
         if _git(repo, "status", "--porcelain").stdout.strip():
             _git(repo, "commit", "-m", f"dev: implement story {story.id} ({story.slug})")
