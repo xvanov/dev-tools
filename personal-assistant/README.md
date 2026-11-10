@@ -815,7 +815,12 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
    it replaced, and **Undo** (dashboard) or `pa meeting undo` takes any one item back.
 4. **Once.** The generic distiller skips meeting and call recordings (the debrief owns them). A
    meeting that keeps going after its debrief is debriefed again once it has grown by a page of
-   speech; the second pass sees the first one's to-dos as open commitments.
+   speech, and one re-matched to another calendar event (the wrong overlapping event first, the
+   right one after) is debriefed again at once. The second pass sees the first one's to-dos as open
+   commitments, and **it replaces the first**: the older debrief stops showing (lists, CLI,
+   dashboard); what it applied stays where the new one restates it (adopted, still undoable) and is
+   undone everywhere else. Transcript and audio are never touched. `pa meeting supersede <old>
+   <new>` does the same by hand for two debriefs of one meeting.
 5. **Nobody else in it: discarded.** The model also says whether anyone but you takes part
    (`others_present`). When nobody does — dictation, talking with the assistant, a video playing —
    nothing is applied and the recording is discarded: its transcript item, audio and any earlier
@@ -825,6 +830,7 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
 pa meeting debrief [episode-id|last] [--dry-run] [--notify]
 pa meeting debriefs [--days 7]
 pa meeting undo <debrief-id> <n>
+pa meeting supersede <old> <new>   the newer debrief of one meeting replaces the older (nothing deleted but unrestated items, undone)
 pa meeting solo [--days 30]          debriefs whose title says you were alone (read-only)
 pa meeting solo --apply              remove those: undo what they applied, delete debrief, transcript, audio
 pa meeting discard <debrief-id>...   the same for debriefs you name

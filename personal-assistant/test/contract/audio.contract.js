@@ -69,6 +69,11 @@ module.exports = {
     assert.ok(ids.includes(failing.id), 'a failed debrief with fewer than 3 attempts is retried');
     await t.db.query('update meeting_debrief set attempts = 3 where episode_id = $1', [failing.id]);
     assert.ok(!(await repos.audio.awaitingDebrief(now)).map((e) => Number(e.id)).includes(failing.id), 'three failures stop');
+    // Matched to another calendar event since it was debriefed: debriefed again. A superseded debrief does not count.
+    await t.db.query('update meeting_debrief set event_external_id = $2 where episode_id = $1', [done.id, 'some-other-event']);
+    assert.ok((await repos.audio.awaitingDebrief(now)).map((e) => Number(e.id)).includes(done.id), 're-matched to another event');
+    await t.db.query('update meeting_debrief set event_external_id = $2 where episode_id = $1', [done.id, done.eventId]);
+    assert.ok(!(await repos.audio.awaitingDebrief(now)).map((e) => Number(e.id)).includes(done.id), 'same event again');
     const sorted = (await repos.audio.awaitingDebrief(now)).map((e) => new Date(e.ended_at).getTime());
     assert.deepStrictEqual(sorted, [...sorted].sort((a, b) => a - b), 'oldest end first');
   },

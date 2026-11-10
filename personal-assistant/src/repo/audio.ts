@@ -63,7 +63,7 @@ function create(db: Db) {
         `${EPISODE_SQL}
       where ${OWNED} and e.ended_at > $1::timestamptz - interval '48 hours'
         and not exists (select 1 from meeting_debrief d where d.episode_id = e.id and d.content_hash = si.content_hash
-                          and (d.error is null or d.attempts >= 3))
+                          and ((d.error is null and d.superseded_by is null and d.event_external_id is not distinct from e.calendar_event_id) or d.attempts >= 3))
       order by e.ended_at`,
         [now]
       );

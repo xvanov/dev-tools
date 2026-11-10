@@ -8,6 +8,8 @@
 //                               meeting ends, debrief what is over
 //   debrief(target, opts)       one debrief, for an episode id or 'last'
 //   undo(debriefId, index)      take back one applied item
+//   supersede(old, new)         a newer debrief of the episode replaces an older one
+//                               (automatic when an episode is debriefed again)
 //   recent({days})              debriefs for the dashboard
 //   discard(episode)            remove a recording of you alone (see below)
 //   soloCandidates({days})      debriefs that look like you alone (`pa meeting solo`)
@@ -241,6 +243,10 @@ async function apply(ep: any, prepared: any) {
   const day = new Date(m.start).toISOString().slice(0, 10);
   const claimIds: any[] = [];
   const debrief = await repo.withTx(async (r: any) => {
+    // A rewrite of the same transcript is a new row, so what the old row applied
+    // stays on record for supersedeOlder to adopt or undo, not overwritten.
+    const same = (await r.meetings.debriefsForEpisode(ep.id)).find((d: any) => d.content_hash === ep.content_hash && !d.error && !d.superseded_by);
+    if (same) await r.meetings.retireHash(same.id);
     for (const it of plan.items) {
       if (it.type === 'todo' || it.type === 'owed_to_me') {
         it.commitmentId = await r.commitments.insertFromDebrief({
@@ -350,10 +356,88 @@ async function debrief(target: any, { dryRun = false, deliver: shouldDeliver = f
   }
   if (dryRun) return { episode: ep, meeting: prepared.meeting, plan: prepared.plan, debrief: null };
   let row = await apply(ep, prepared);
-  if (shouldDeliver) row = await deliver(row);
+  let sup: any = { ids: [], adopted: 0, undone: 0, notified: false };
+  try {
+    sup = await supersedeOlder(row);
+    if (sup.adopted) row = await repo.meetings.debriefById(row.id);
+  } catch (err: any) {
+    log.warn('older debriefs not superseded', { episode: ep.id, debrief: row.id, message: err.message });
+  }
+  // A re-debrief that only restates what you were already told is not news.
+  const fresh = (row.applied?.items || []).length - sup.adopted;
+  if (shouldDeliver && !(sup.notified && fresh === 0)) row = await deliver(row);
   const c = D.counts(row.applied.items);
-  log.info('debriefed', { episode: ep.id, debrief: row.id, ...c, skipped: prepared.plan.skipped.length, dropped: prepared.plan.dropped.length });
-  return { episode: ep, meeting: prepared.meeting, plan: prepared.plan, debrief: row };
+  log.info('debriefed', { episode: ep.id, debrief: row.id, ...c, skipped: prepared.plan.skipped.length, dropped: prepared.plan.dropped.length, superseded: sup.ids });
+  return { episode: ep, meeting: prepared.meeting, plan: prepared.plan, debrief: row, superseded: sup.ids };
+}
+
+// ----------------------------------------------------------- supersede ----
+
+// What a newer debrief's skipped list says it already found on your list: the
+// commitments it declined to repeat ("already on your list as #12") and the
+// updates it found already made ("C12 done: ..."). The older debrief that wrote
+// them keeps them: they are adopted by the newer one, not undone.
+function restated(skipped: any[]) {
+  const commitments = new Set<number>();
+  const updates = new Set<string>();
+  for (const s of skipped || []) {
+    const dup = /already on your list as #(\d+)/.exec(String(s.reason || ''));
+    if (dup) commitments.add(Number(dup[1]));
+    const u = s.type === 'update' ? /^(\S+) (\w+):/.exec(String(s.summary || '')) : null;
+    if (u) updates.add(`${u[1]} ${u[2]}`);
+  }
+  return { commitments, updates };
+}
+
+/**
+ * A newer debrief of an episode replaces the older ones: they stop showing in
+ * lists and the CLI, and what they applied is settled. An item the newer one
+ * restates (it skipped it as already on your list) is adopted into the newer
+ * debrief, so it stays and can still be undone from there; every other item is
+ * undone exactly as `pa meeting undo` would. Nothing is deleted but those
+ * items: the transcript and audio stay (unlike `discard`).
+ * @param {object} row the newer debrief
+ * @param {object[]} [olds] the debriefs to replace; by default every live,
+ *   non-failed one of the same episode
+ * @returns {Promise<{ids: number[], adopted: number, undone: number, notified: boolean}>}
+ */
+async function supersedeOlder(row: any, olds?: any[]) {
+  const list = olds || (await repo.meetings.debriefsForEpisode(row.episode_id)).filter((d: any) => d.id !== row.id && !d.superseded_by && !d.error);
+  if (!list.length) return { ids: [], adopted: 0, undone: 0, notified: false };
+  const { commitments, updates } = restated(row.applied?.skipped);
+  const keeps = (it: any) =>
+    ((it.type === 'todo' || it.type === 'owed_to_me') && it.commitmentId != null && commitments.has(Number(it.commitmentId))) ||
+    (it.type === 'update' && updates.has(`${it.ref} ${it.kind}`));
+  const adopted: any[] = [];
+  const doomed: Array<[number, number]> = [];
+  for (const d of list) {
+    (d.applied?.items || []).forEach((it: any, i: number) => {
+      if (it.undone_at) return;
+      if (keeps(it)) adopted.push({ ...it, adoptedFrom: d.id });
+      else doomed.push([d.id, i]);
+    });
+  }
+  if (adopted.length) {
+    const cur = await repo.meetings.debriefById(row.id);
+    await repo.meetings.setApplied(row.id, { ...cur.applied, items: [...(cur.applied?.items || []), ...adopted] });
+  }
+  for (const [id, i] of doomed) await undo(id, i);
+  const ids = list.map((d: any) => d.id);
+  await repo.meetings.supersede(ids, row.id);
+  log.info('older debriefs superseded', { by: row.id, ids, adopted: adopted.length, undone: doomed.length });
+  return { ids, adopted: adopted.length, undone: doomed.length, notified: list.some((d: any) => d.notification_id) };
+}
+
+/** `pa meeting supersede <old> <new>`: replace one debrief by a newer one of the same episode. */
+async function supersede(oldId: any, newId: any) {
+  const [old, row] = await Promise.all([repo.meetings.debriefById(oldId), repo.meetings.debriefById(newId)]);
+  if (!old) throw new Error(`no debrief #${oldId}`);
+  if (!row) throw new Error(`no debrief #${newId}`);
+  if (old.id === row.id) throw new Error('a debrief cannot supersede itself');
+  if (String(old.episode_id) !== String(row.episode_id)) throw new Error(`#${old.id} is episode ${old.episode_id}, #${row.id} is episode ${row.episode_id}: only debriefs of one meeting can supersede each other`);
+  if (row.error || row.superseded_by) throw new Error(`#${row.id} is ${row.error ? 'a failed debrief' : `itself superseded by #${row.superseded_by}`}`);
+  if (old.superseded_by) throw new Error(`#${old.id} is already superseded by #${old.superseded_by}`);
+  return supersedeOlder(row, [old]);
 }
 
 // ---------------------------------------------------------------- undo ----
@@ -494,7 +578,9 @@ async function due({ now = new Date(), coverage = undefined }: { now?: any; cove
   const out = [];
   for (const ep of list) {
     const prev = await lastDebrief(ep.id);
-    if (prev && String(ep.body_text || '').length < prev.transcript_chars + REGROW_CHARS) continue;
+    // Unless it was matched to another calendar event since: its title is wrong.
+    const rematched = !!prev && (prev.event_external_id || null) !== (ep.calendar_event_id || null);
+    if (prev && !rematched && String(ep.body_text || '').length < prev.transcript_chars + REGROW_CHARS) continue;
     const m = meetingOf(ep);
     const d = D.debriefDue({ endedAt: ep.ended_at, eventEnd: m.eventEnd, coverage: cov, paused, now });
     if (d.due) out.push({ ep, why: d.why });
@@ -539,4 +625,4 @@ async function pass({ now = new Date() }: { now?: any } = {}) {
   return { debriefed };
 }
 
-module.exports = { pass, debrief, due, undo, recent, get, view, rollIfUseful, loadEpisode, discard, soloCandidates, LOOKS_SOLO };
+module.exports = { pass, debrief, due, undo, supersede, supersedeOlder, recent, get, view, rollIfUseful, loadEpisode, discard, soloCandidates, LOOKS_SOLO };

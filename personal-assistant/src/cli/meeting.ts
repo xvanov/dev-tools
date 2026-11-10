@@ -27,6 +27,10 @@ const HELP = `pa meeting — pre-meeting briefs
                                       read-only
         [--apply]                     remove those: what they applied is undone, then the
                                       debrief, transcript and audio are deleted
+  pa meeting supersede <old> <new>    the newer debrief of the same meeting replaces the older
+                                      (it stops showing; what it applied is kept where the new one
+                                      restates it, else undone; transcript and audio stay).
+                                      Debriefing an episode again does this by itself.
   pa meeting discard <debrief-id>...  the same for debriefs you name
 `;
 
@@ -118,7 +122,7 @@ function make(out: any, fail: any) {
         });
         for (const s of r.plan.skipped) out(`  skipped: ${s.summary} — ${s.reason}`);
         if (r.plan.dropped.length) out(`  dropped ${r.plan.dropped.length} item(s) whose quote was missing, not in the transcript, or not yours`);
-        if (r.debrief) out(`debrief #${r.debrief.id}${r.debrief.notification_id ? ` · notified #${r.debrief.notification_id}` : ''}`);
+        if (r.debrief) out(`debrief #${r.debrief.id}${r.debrief.notification_id ? ` · notified #${r.debrief.notification_id}` : ''}${r.superseded?.length ? ` · supersedes ${r.superseded.map((i: any) => `#${i}`).join(', ')}` : ''}`);
         return;
       }
 
@@ -161,6 +165,13 @@ function make(out: any, fail: any) {
           out(r ? `episode ${d.episodeId}: removed (${r.undone} item(s) undone, ${r.files} file(s) deleted)` : `episode ${d.episodeId}: not found`);
         }
         return;
+      }
+
+      if (sub === 'supersede') {
+        const [a, b] = [Number(args[1]), Number(args[2])];
+        if (!Number.isInteger(a) || !Number.isInteger(b) || a <= 0 || b <= 0) return fail('usage: pa meeting supersede <old-debrief-id> <new-debrief-id>');
+        const r = await require('../meetings/debrief.ts').supersede(a, b);
+        return out(`#${a} superseded by #${b}: ${r.adopted} item(s) kept, ${r.undone} undone`);
       }
 
       if (sub === 'undo') {

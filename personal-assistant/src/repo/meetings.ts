@@ -162,7 +162,7 @@ function create(db: Db) {
      * @returns {Promise<DebriefRow|null>}
      */
     async lastDebrief(episodeId: number | string) {
-      return db.one(`select * from meeting_debrief where episode_id = $1 and error is null order by created_at desc limit 1`, [episodeId]);
+      return db.one(`select * from meeting_debrief where episode_id = $1 and error is null and superseded_by is null order by created_at desc limit 1`, [episodeId]);
     },
 
     /**
@@ -174,7 +174,7 @@ function create(db: Db) {
       return db.rows(
         `select distinct on (episode_id) *
            from meeting_debrief
-          where episode_id = any($1::bigint[])
+          where episode_id = any($1::bigint[]) and superseded_by is null
           order by episode_id, (error is null) desc, created_at desc`,
         [episodeIds]
       );
@@ -186,7 +186,7 @@ function create(db: Db) {
      */
     async recentDebriefs(days: number, limit: number) {
       return db.rows(
-        `select * from meeting_debrief where started_at > now() - ($1 || ' days')::interval and error is null
+        `select * from meeting_debrief where started_at > now() - ($1 || ' days')::interval and error is null and superseded_by is null
       order by started_at desc limit $2`,
         [String(days), limit]
       );
@@ -205,7 +205,7 @@ function create(db: Db) {
         `insert into meeting_debrief (episode_id, event_external_id, source_item_id, title, started_at, ended_at, content_hash,
                                     transcript_chars, applied, dropped, error, attempts, extracted_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,null,1,$11)
-       on conflict (episode_id, content_hash) do update set title = excluded.title, applied = excluded.applied, dropped = excluded.dropped,
+       on conflict (episode_id, content_hash) do update set title = excluded.title, event_external_id = excluded.event_external_id, superseded_by = null, applied = excluded.applied, dropped = excluded.dropped,
          error = null, attempts = meeting_debrief.attempts + 1, updated_at = now()
        returning *`,
         [v.episodeId, v.eventExternalId, v.sourceItemId, v.title, v.startedAt, v.endedAt, v.contentHash, v.transcriptChars,
@@ -252,6 +252,31 @@ function create(db: Db) {
               updated_at = now() where id = $1`,
         [id, ['items', String(index)], result]
       );
+    },
+
+    /**
+     * Marks debriefs replaced by a newer one of the same episode: they stop
+     * showing. Returns how many rows changed.
+     * @param {Array<number|string>} ids
+     * @param {number|string} byId  the newer debrief
+     */
+    async supersede(ids: Array<number | string>, byId: number | string) {
+      if (!ids.length) return 0;
+      const r = await db.query(`update meeting_debrief set superseded_by = $2, updated_at = now() where id = any($1::bigint[]) and id <> $2`, [ids.map(Number), byId]);
+      return r.rowCount;
+    },
+
+    /**
+     * Frees a debrief's (episode, transcript hash) key so a rewrite of the same
+     * transcript is a new row, not an overwrite of what the old one applied.
+     */
+    async retireHash(id: number | string) {
+      await db.query(`update meeting_debrief set content_hash = content_hash || '~' || id::text where id = $1`, [id]);
+    },
+
+    /** Replaces a debrief's `applied` (adopting items from the debrief it supersedes). */
+    async setApplied(id: number | string, applied: object) {
+      await db.query(`update meeting_debrief set applied = $2, updated_at = now() where id = $1`, [id, JSON.stringify(applied)]);
     },
 
     // --- for cli/index.js

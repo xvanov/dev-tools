@@ -344,6 +344,14 @@ owner is not the user, or whose ref was not in the prompt. Every write is record
 `meeting_debrief.applied` with the columns it replaced, and undo restores them (unless someone
 changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
 distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
+**One live debrief per episode:** a newer debrief supersedes the older ones (`supersedeOlder`,
+`meeting_debrief.superseded_by`, sql/044 and sql-sqlite/016): every list query filters
+`superseded_by is null`. Items the newer one restates (its `skipped` says "already on your list as
+#N" or the update is already made) are adopted into it; the rest are undone with `undo`. It never
+deletes transcript or audio — that is `discard`. A rewrite of the same transcript retires the old
+row's `content_hash` (`retireHash`) so the old row's `applied` is not overwritten. An episode
+re-matched to another calendar event is debriefed again (`awaitingDebrief` compares
+`event_external_id`). Do not add a debrief list that skips the `superseded_by` filter.
 
 **Only people create tasks.** A commitment comes from what a person said or did — Teams, mail,
 meetings, a person on GitHub or Jira asking the user — or from the user asking for one (`pa task add`,

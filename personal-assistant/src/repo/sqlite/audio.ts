@@ -44,13 +44,13 @@ function create(db: Db) {
       return db.one(`${EPISODE_SQL} where e.id = $1`, [id]);
     },
 
-    /** Owned episodes that ended in the last 48 hours of `now` with no debrief of their current transcript. */
+    /** Owned episodes that ended in the last 48 hours of `now` with no debrief of their current transcript and calendar event (a re-matched meeting is debriefed again). */
     async awaitingDebrief(now: Date | string | number) {
       return db.rows(
         `${EPISODE_SQL}
       where ${OWNED} and e.ended_at > $1
         and not exists (select 1 from meeting_debrief d where d.episode_id = e.id and d.content_hash = si.content_hash
-                          and (d.error is null or d.attempts >= 3))
+                          and ((d.error is null and d.superseded_by is null and d.event_external_id is e.calendar_event_id) or d.attempts >= 3))
       order by e.ended_at`,
         [sinceMs(48 * HOUR, now)]
       );

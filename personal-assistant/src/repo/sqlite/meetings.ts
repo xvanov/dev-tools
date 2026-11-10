@@ -92,15 +92,15 @@ function create(db: Db) {
     },
 
     async lastDebrief(episodeId: number | string) {
-      return db.one('select * from meeting_debrief where episode_id = $1 and error is null order by created_at desc, id desc limit 1', [episodeId]);
+      return db.one('select * from meeting_debrief where episode_id = $1 and error is null and superseded_by is null order by created_at desc, id desc limit 1', [episodeId]);
     },
 
     /** One debrief per episode (a good one before a failed one, then newest): pg's distinct on. */
     async bestForEpisodes(episodeIds: unknown[]) {
       return db.rows(
         `select d.* from meeting_debrief d
-          where d.episode_id in (select value from json_each($1))
-            and d.id = (select x.id from meeting_debrief x where x.episode_id = d.episode_id
+          where d.episode_id in (select value from json_each($1)) and d.superseded_by is null
+            and d.id = (select x.id from meeting_debrief x where x.episode_id = d.episode_id and x.superseded_by is null
                          order by (x.error is null) desc, x.created_at desc, x.id desc limit 1)
           order by d.episode_id`,
         [(episodeIds || []).map(Number)]
@@ -109,7 +109,7 @@ function create(db: Db) {
 
     /** Debriefs of the last `days` days that did not fail, newest first. */
     async recentDebriefs(days: number, limit: number) {
-      return db.rows('select * from meeting_debrief where started_at > $1 and error is null order by started_at desc limit $2', [
+      return db.rows('select * from meeting_debrief where started_at > $1 and error is null and superseded_by is null order by started_at desc limit $2', [
         sinceMs(Number(days) * DAY),
         limit,
       ]);
@@ -121,7 +121,7 @@ function create(db: Db) {
         `insert into meeting_debrief (episode_id, event_external_id, source_item_id, title, started_at, ended_at, content_hash,
                                     transcript_chars, applied, dropped, error, attempts, extracted_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,null,1,$11)
-       on conflict (episode_id, content_hash) do update set title = excluded.title, applied = excluded.applied, dropped = excluded.dropped,
+       on conflict (episode_id, content_hash) do update set title = excluded.title, event_external_id = excluded.event_external_id, superseded_by = null, applied = excluded.applied, dropped = excluded.dropped,
          error = null, attempts = meeting_debrief.attempts + 1, updated_at = ${NOW}
        returning *`,
         [v.episodeId, v.eventExternalId, v.sourceItemId, v.title, v.startedAt, v.endedAt, v.contentHash, v.transcriptChars,
@@ -156,6 +156,31 @@ function create(db: Db) {
               updated_at = ${NOW} where id = $1`,
         [id, at, result]
       );
+    },
+
+    /**
+     * Marks debriefs replaced by a newer one of the same episode: they stop
+     * showing. Returns how many rows changed.
+     * @param {Array<number|string>} ids
+     * @param {number|string} byId  the newer debrief
+     */
+    async supersede(ids: Array<number | string>, byId: number | string) {
+      if (!ids.length) return 0;
+      const r = await db.query(`update meeting_debrief set superseded_by = $2, updated_at = ${NOW} where id in (select value from json_each($1)) and id <> $2`, [ids.map(Number), byId]);
+      return r.rowCount;
+    },
+
+    /**
+     * Frees a debrief's (episode, transcript hash) key so a rewrite of the same
+     * transcript is a new row, not an overwrite of what the old one applied.
+     */
+    async retireHash(id: number | string) {
+      await db.query(`update meeting_debrief set content_hash = content_hash || '~' || cast(id as text) where id = $1`, [id]);
+    },
+
+    /** Replaces a debrief's `applied` (adopting items from the debrief it supersedes). */
+    async setApplied(id: number | string, applied: object) {
+      await db.query(`update meeting_debrief set applied = $2, updated_at = ${NOW} where id = $1`, [id, JSON.stringify(applied)]);
     },
 
     /** For `pa doctor`: briefs written and failed, the last delivered, and series learned from transcripts. */

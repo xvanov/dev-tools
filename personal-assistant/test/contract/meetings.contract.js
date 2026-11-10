@@ -258,4 +258,39 @@ module.exports = {
     assert.ok(after.last instanceof Date);
     assert.ok(db);
   },
+  'supersede: hides the older debriefs from every list, keeps the rows; a repeat write brings it back': async (t) => {
+    const { repos, assert } = t;
+    const e = await episode(t);
+    const old = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'a', title: 'Wrong title', startedAt: new Date().toISOString() }));
+    await new Promise((r) => setTimeout(r, 5));
+    const fresh = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'b', title: 'Right title', startedAt: new Date().toISOString() }));
+    assert.strictEqual(await repos.meetings.supersede([], fresh.id), 0);
+    assert.strictEqual(await repos.meetings.supersede([old.id, fresh.id], fresh.id), 1, 'never itself');
+    const old2 = await repos.meetings.debriefById(old.id);
+    assert.strictEqual(String(old2.superseded_by), String(fresh.id));
+    assert.deepStrictEqual((await repos.meetings.recentDebriefs(1, 100)).filter((d) => Number(d.episode_id) === e.id).map((d) => d.title), ['Right title']);
+    assert.deepStrictEqual((await repos.meetings.bestForEpisodes([e.id])).map((d) => d.title), ['Right title']);
+    assert.strictEqual((await repos.meetings.lastDebrief(e.id)).title, 'Right title');
+    assert.strictEqual((await repos.meetings.debriefsForEpisode(e.id)).length, 2, 'kept');
+    const back = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'a', title: 'Again' }));
+    assert.strictEqual(back.superseded_by, null, 'written again, so live again');
+  },
+
+  'retireHash: frees the (episode, transcript) key so the same transcript can be debriefed as a new row': async (t) => {
+    const { repos, assert } = t;
+    const e = await episode(t);
+    const first = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'same', title: 'First' }));
+    await repos.meetings.retireHash(first.id);
+    const second = await repos.meetings.upsertDebrief(debrief(e, { contentHash: 'same', title: 'Second' }));
+    assert.notStrictEqual(String(second.id), String(first.id));
+    assert.strictEqual((await repos.meetings.debriefById(first.id)).title, 'First', 'untouched');
+    assert.notStrictEqual((await repos.meetings.debriefById(first.id)).content_hash, 'same');
+  },
+
+  'setApplied: replaces the applied items': async (t) => {
+    const { repos, assert } = t;
+    const row = await repos.meetings.upsertDebrief(debrief(await episode(t)));
+    await repos.meetings.setApplied(row.id, { summary: 's2', items: [{ type: 'decision', text: 'z' }] });
+    assert.deepStrictEqual((await repos.meetings.debriefById(row.id)).applied, { summary: 's2', items: [{ type: 'decision', text: 'z' }] });
+  },
 };
