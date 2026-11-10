@@ -1,250 +1,88 @@
 'use strict';
 
-// A Plan card's dispatch settings, behind its ☰ button (plan 8.6.4, D28).
-// Every Do is a factory job, so what is left to choose is runtime, mode, end
-// state, job kind and app/repo, and (JOBS-API v1.9) whether the job is
-// reviewed and its caps (budget, wall clock, agent rounds): the card shows one read-only line of what Do
-// will send ("Claude · full · draft PR · code (auto)") and the ☰ opens a small
-// menu with one select per setting, each saying whether it is the default,
-// inferred or set on this card, with a reset. The settings are the server's
-// (src/dispatch/settings.ts): GET /api/commitments/<id>/dispatch-settings,
-// POST the same path {field: value | null} — Do sends nothing of its own, so
-// the start uses exactly what the menu shows.
+// A Plan card's build settings, behind its ☰ button (PLAN.md D30). Do starts
+// ONE Claude Code agent (src/build): what is left to choose is the model
+// (haiku, sonnet or opus; default sonnet) and, optionally, the run's caps — a
+// dollar cap and a wall-clock cap that stop the session. The card shows one
+// read-only line of what Do will start ("sonnet · $5 · 2 h"); the ☰ opens a
+// small menu, each setting saying whether it is the default or set on this
+// card, with a reset. The settings are the server's (src/build/index.ts):
+// GET /api/commitments/<id>/build-settings, POST the same path
+// {field: value | null}.
 //
 // Instant: each card's settings are fetched once in the background (two at a
-// time) and kept here across the board's re-renders; a change is applied to
-// the cached copy and drawn at once, then POSTed — a failure puts the old
-// value back and says why. Nothing here rebuilds the board.
+// time) and kept across the board's re-renders; a change is drawn at once,
+// then POSTed — a failure puts the old value back and says why.
 //
-// The pure half (labels, the summary line, the menu's rows, an optimistic
-// patch) is required by test/dispatchMenu.test.js; the browser gets
-// window.DispatchMenu. Text only — no HTML sinks.
+// The pure half (summary, rows, patchFor, optimistic) is required by
+// test/dispatchMenu.test.js; the browser gets window.DispatchMenu. Text only.
 
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DispatchMenu = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const FIELDS = ['runtime', 'mode', 'delivery', 'jobKind', 'app', 'review', 'budgetUsd', 'wallClockH', 'maxRounds'];
-  const RUNTIME = { claude_session: 'Claude', api: 'API' };
-  const RUNTIME_LONG = { claude_session: 'Claude session (subscription)', api: 'API models (metered)' };
-  const DELIVERY = { none: 'nothing pushed', branch: 'branch', draft_pr: 'draft PR', pr: 'PR', auto_merge: 'auto-merge', push_to_main: 'push to main' };
-  const MODE = {
-    plan: 'plan — read and write a plan, change nothing',
-    local: 'local — commit in its worktree, push blocked',
-    branch: 'branch — commit and push the branch',
-    mr: 'mr — push and open a draft PR',
-    full: 'full — push, draft PR, and draft a reply to the asker',
-  };
-  const KIND = { code: 'code', research: 'research — answer a question', report: 'report — write a document', plan: 'plan — a read-only plan' };
-  const SOURCE = {
-    given: 'this start', card: 'set on this card', default: 'default', inferred: 'inferred',
-    app_default: "the app's default", repo_default: "the repo's default", fallback: 'default',
-    kind: 'set by the kind', commitment: "the card's repo", repo: "the repo's app", none: 'none',
-  };
-  const LABEL = {
-    runtime: 'Runtime', mode: 'Mode', delivery: 'End state', jobKind: 'Job kind', app: 'Repo / app',
-    review: 'Review', budgetUsd: 'Budget', wallClockH: 'Wall clock', maxRounds: 'Agent rounds',
-  };
-  const REVIEW = {
-    auto: 'auto — only when nothing human gates the merge',
-    on: 'on — a separate reviewer reads the diff',
-    off: 'off — no review step',
-  };
-  const CAP_SHOW = {
-    budgetUsd: (v) => (Number(v) === 0 ? 'no cap' : `$${v}`),
-    wallClockH: (v) => (Number(v) === 0 ? 'no cap' : `${v} h`),
-    maxRounds: (v) => (Number(v) === 0 ? 'no cap' : `${v} rounds`),
-  };
-  const CAP_OPTIONS = { budgetUsd: 'budgetsUsd', wallClockH: 'wallClocksH', maxRounds: 'maxRounds' };
+  const FIELDS = ['model', 'costCapUsd', 'wallCapMin'];
+  const LABEL = { model: 'Model', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)' };
+  const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;
+  const hours = (min) => (min % 60 === 0 ? `${min / 60} h` : `${min} min`);
 
-  /** The one line a card shows: "Claude · full · draft PR · code (auto)". */
+  /** The one line a card shows: "sonnet · $5 · 2 h". */
   function summary(s) {
-    if (!s || !s.settings) return 'dispatch settings…';
+    if (!s || !s.settings) return 'build settings…';
     const v = s.settings;
-    const src = s.source || {};
-    const kind = `${v.jobKind || 'code'}${src.jobKind === 'inferred' ? ' (auto)' : ''}`;
-    return [
-      RUNTIME[v.runtime] || v.runtime,
-      v.mode,
-      v.jobKind && v.jobKind !== 'code' ? 'report' : DELIVERY[v.delivery] || v.delivery,
-      kind,
-    ].filter(Boolean).join(' · ');
+    return [v.model, `$${v.costCapUsd}`, hours(Number(v.wallCapMin))].join(' · ');
   }
 
-  /** Where a field's value came from, in words. */
-  function badge(s, field) {
-    if (field === 'app') {
-      if (has(s.overrides, 'app') || has(s.overrides, 'repo')) return SOURCE.card;
-      return s.settings.app ? SOURCE[s.source.app] || s.source.app : 'no factory app';
-    }
-    if (has(s.overrides, field)) return SOURCE.card;
-    if (field === 'jobKind' && s.settings.mode === 'plan' && s.settings.jobKind === 'plan') return 'plan mode';
-    return SOURCE[s.source[field]] || s.source[field] || 'default';
-  }
-
-  /**
-   * What each field's default is, kept while it is not overridden: once a
-   * field is set on the card the server answers only the override, and the
-   * menu still wants to say what "reset" goes back to.
-   */
-  function rememberDefaults(prev, s) {
-    const out = Object.assign({}, prev || {});
-    for (const f of FIELDS) {
-      const overridden = f === 'app' ? has(s.overrides, 'app') || has(s.overrides, 'repo') : has(s.overrides, f);
-      if (overridden) continue;
-      const why = f === 'jobKind' ? s.why.jobKind : f === 'delivery' ? s.why.delivery : f === 'review' ? s.why.review || null : null;
-      out[f] = { value: s.settings[f], source: s.source[f], why };
-      if (f === 'app') out.repo = { value: s.settings.repo, source: s.source.repo };
-    }
-    return out;
-  }
-
-  /**
-   * The menu's rows, pure: for each field its label, the select's options and
-   * value ('' = the default), where the value came from, and whether it is
-   * set on this card (so it can be reset).
-   */
-  function rows(s, defaults) {
-    const d = defaults || {};
-    const o = s.options || {};
-    const dflt = (f, show) => (d[f] && d[f].value != null ? `default: ${show(d[f].value)}` : 'default');
-    const out = [];
-    out.push({
-      field: 'runtime', label: LABEL.runtime, value: s.overrides.runtime || '',
-      options: [{ value: '', label: dflt('runtime', (v) => RUNTIME_LONG[v] || v) }, ...(o.runtimes || []).map((r) => ({ value: r, label: RUNTIME_LONG[r] || r }))],
+  /** The menu's rows, pure: label, value ('' = the default), options for a select, where it came from. */
+  function rows(s) {
+    const d = (s.options && s.options.defaults) || {};
+    return FIELDS.map((f) => {
+      const overridden = has(s.overrides, f);
+      return {
+        field: f,
+        label: LABEL[f],
+        value: overridden ? s.overrides[f] : '',
+        overridden,
+        badge: overridden ? 'set on this card' : 'default',
+        options: f === 'model'
+          ? [{ value: '', label: `default (${d.model || 'sonnet'})` }].concat(((s.options && s.options.models) || []).map((m) => ({ value: m, label: MODEL[m] || m })))
+          : null,
+        placeholder: d[f] != null ? String(d[f]) : '',
+      };
     });
-    out.push({
-      field: 'mode', label: LABEL.mode, value: s.overrides.mode || '',
-      options: [{ value: '', label: dflt('mode', (v) => v) }, ...(o.modes || []).map((m) => ({ value: m, label: MODE[m] || m }))],
-    });
-    // The kind's default is the ask's inference, with its reason.
-    const auto = d.jobKind && d.jobKind.value
-      ? (d.jobKind.source === 'inferred' ? `auto: ${d.jobKind.value} — ${d.jobKind.why}` : `default: ${d.jobKind.value} — ${d.jobKind.why}`)
-      : 'auto: decided from the ask';
-    out.push({
-      field: 'jobKind', label: LABEL.jobKind, value: s.overrides.jobKind || '',
-      options: [{ value: '', label: auto }, ...(o.jobKinds || []).map((k) => ({ value: k, label: KIND[k] || k }))],
-    });
-    // A research, report or plan job delivers a report: no end state to pick.
-    const report = s.settings.jobKind && s.settings.jobKind !== 'code';
-    out.push({
-      field: 'delivery', label: LABEL.delivery, value: report ? '' : s.overrides.delivery || '',
-      disabled: report, note: report ? s.why.delivery : null,
-      options: [
-        { value: '', label: report ? 'a report — no code' : d.delivery && d.delivery.value ? `default: ${DELIVERY[d.delivery.value] || d.delivery.value} — ${d.delivery.why}` : 'default' },
-        ...(o.deliveries || []).map((x) => ({ value: x.value, label: `${DELIVERY[x.value] || x.value} — ${x.plain}` })),
-      ],
-    });
-    const appName = (a) => (a.repo ? `${a.app} (${a.repo})` : a.app);
-    const dApp = d.app && d.app.value ? `default: ${d.app.value}${d.repo && d.repo.value ? ` (${d.repo.value})` : ''}` : d.repo && d.repo.value ? `default: ${d.repo.value} — no factory app` : 'default: the card\'s repo';
-    out.push({
-      field: 'app', label: LABEL.app, value: s.overrides.app || '',
-      options: [{ value: '', label: dApp }, ...(o.apps || []).map((a) => ({ value: a.app, label: appName(a) }))],
-    });
-    // JOBS-API v1.9. A report job has no review step.
-    if ((o.reviews || []).length) {
-      out.push({
-        field: 'review', label: LABEL.review, value: report ? '' : s.overrides.review || '',
-        disabled: report, note: report ? s.why.review || null : null,
-        options: [
-          { value: '', label: report ? 'no review step' : d.review && d.review.value ? `default: ${d.review.value} — ${d.review.why || ''}`.replace(/ — $/, '') : 'default' },
-          ...(o.reviews || []).map((r) => ({ value: r, label: REVIEW[r] || r })),
-        ],
-      });
-    }
-    for (const f of ['budgetUsd', 'wallClockH', 'maxRounds']) {
-      const picks = o[CAP_OPTIONS[f]];
-      if (!picks) continue;
-      out.push({
-        field: f, label: LABEL[f], value: s.overrides[f] != null ? String(s.overrides[f]) : '',
-        options: [
-          { value: '', label: dflt(f, CAP_SHOW[f]) },
-          ...picks.map((v) => ({ value: String(v), label: CAP_SHOW[f](v) })),
-        ],
-      });
-    }
-    for (const r of out) {
-      r.badge = badge(s, r.field);
-      r.overridden = r.field === 'app' ? has(s.overrides, 'app') || has(s.overrides, 'repo') : has(s.overrides, r.field);
-      // A stored value the options no longer list is still shown, not silently dropped.
-      if (r.value && !r.options.some((x) => x.value === r.value)) r.options.push({ value: r.value, label: r.value });
-    }
-    return out;
   }
 
-  /**
-   * The POST body for a select's new value ('' resets). Picking an app sets
-   * its repo with it; resetting the app clears both.
-   */
-  function patchFor(s, field, value) {
-    if (field !== 'app') return { [field]: value || null };
-    if (!value) return { app: null, repo: null };
-    const a = ((s.options && s.options.apps) || []).find((x) => x.app === value);
-    return { app: value, repo: a && a.repo ? a.repo : null };
+  /** The POST body for one change; '' clears it. */
+  function patchFor(_s, field, value) {
+    if (value === '' || value == null) return { [field]: null };
+    return { [field]: field === 'model' ? String(value) : Number(value) };
   }
 
-  /** The settings as they will be once `patch` is stored: drawn before the server answers. */
-  function optimistic(s, patch, defaults) {
-    const d = defaults || {};
-    const n = JSON.parse(JSON.stringify(s));
-    for (const [f, v] of Object.entries(patch)) {
-      if (v == null || v === '') {
-        delete n.overrides[f];
-        if (d[f]) {
-          n.settings[f] = d[f].value;
-          n.source[f] = d[f].source;
-          if (f === 'jobKind' && d[f].why) n.why.jobKind = d[f].why;
-        }
-      } else {
-        n.overrides[f] = v;
-        n.settings[f] = v;
-        n.source[f] = 'card';
-      }
+  /** The settings as they will look once `patch` is stored: drawn before the server answers. */
+  function optimistic(s, patch) {
+    const d = (s.options && s.options.defaults) || {};
+    const overrides = Object.assign({}, s.overrides);
+    const settings = Object.assign({}, s.settings);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null) { delete overrides[k]; settings[k] = d[k]; } else { overrides[k] = v; settings[k] = v; }
     }
-    if (n.settings.mode === 'plan' && !has(n.overrides, 'jobKind')) n.settings.jobKind = 'plan';
-    if (n.settings.jobKind && n.settings.jobKind !== 'code') {
-      n.settings.delivery = 'none';
-      n.source.delivery = 'kind';
-      // A report job has no review step (v1.9).
-      if ('review' in n.settings) {
-        n.settings.review = null;
-        n.source.review = 'kind';
-      }
-      return n;
-    }
-    if (n.settings.delivery === 'none' && !has(n.overrides, 'delivery') && d.delivery && d.delivery.value && d.delivery.value !== 'none') {
-      n.settings.delivery = d.delivery.value;
-      n.source.delivery = d.delivery.source;
-    }
-    if ('review' in n.settings && n.settings.review == null && !has(n.overrides, 'review') && d.review && d.review.value) {
-      n.settings.review = d.review.value;
-      n.source.review = d.review.source;
-    }
-    return n;
+    return Object.assign({}, s, { overrides, settings });
   }
 
-  // ---- The browser half --------------------------------------------------
-
-  /**
-   * One per page. `getJson(path)` and `post(path, body)` are the page's own
-   * (post sends X-PA and the page token); `setEditing(bool)` holds the board's
-   * refresh while a menu is open.
-   */
   function controller({ getJson, post, toast, setEditing }) {
-    const cache = new Map(); // id → { data, defaults, at, pending }
+    const cache = new Map(); // id → { data, at, pending, seq }
     const queue = [];
     let inflight = 0;
     let open = null; // { id, wrap, menu, button, render }
 
-    const url = (id) => `api/commitments/${id}/dispatch-settings`;
+    const url = (id) => `api/commitments/${id}/build-settings`;
 
     function store(id, data) {
       const e = cache.get(id) || {};
       e.data = data;
-      e.defaults = rememberDefaults(e.defaults, data);
       e.at = Date.now();
       e.error = null;
       cache.set(id, e);
@@ -255,7 +93,6 @@
     function load(id) {
       const e = cache.get(id) || {};
       if (e.pending) return e.pending;
-      // A change made while this was on its way wins: its own answer is newer.
       const seq = e.seq || 0;
       e.pending = getJson(url(id)).then((data) => ((e.seq || 0) === seq ? store(id, data) : e)).finally(() => { e.pending = null; });
       cache.set(id, e);
@@ -270,7 +107,6 @@
       }
     }
 
-    /** Fetch a card's settings in the background unless they are fresh. */
     function prefetch(id) {
       const e = cache.get(id);
       if (e && (e.pending || (e.data && Date.now() - e.at < 5 * 60_000))) return;
@@ -278,12 +114,11 @@
       setTimeout(pump, 0);
     }
 
-    // Every summary line on the page for this card (the board may have drawn it again).
     function paint(id) {
       const e = cache.get(id);
       for (const n of document.querySelectorAll(`[data-dispatch-summary="${id}"]`)) {
         n.textContent = summary(e && e.data);
-        n.title = e && e.data ? `What Do sends — ${e.data.why.jobKind}${e.data.settings.jobKind === 'code' ? `; end state: ${e.data.why.delivery}` : ''}` : '';
+        n.title = 'What Do starts: one Claude Code agent on this model, stopped at these caps';
       }
       if (open && open.id === id) open.render();
     }
@@ -321,14 +156,12 @@
       }
     }
 
-    // Store one change: drawn now, POSTed, the server's answer kept — or the
-    // old settings back and a toast. Only the newest answer is applied.
     async function change(id, field, value) {
       const e = cache.get(id);
       if (!e || !e.data) return;
       const before = e.data;
       const patch = patchFor(before, field, value);
-      e.data = optimistic(before, patch, e.defaults);
+      e.data = optimistic(before, patch);
       const seq = (e.seq = (e.seq || 0) + 1);
       paint(id);
       try {
@@ -345,39 +178,36 @@
 
     function renderMenu(id, menu) {
       const e = cache.get(id);
-      const focused = document.activeElement && menu.contains(document.activeElement) ? document.activeElement.getAttribute('data-focus') : null;
       menu.replaceChildren();
-      menu.append(h('div', { class: 'dmenu-head' }, h('strong', { text: `Do #${id} sends` }), h('span', { class: 'dmenu-hint', text: 'saved on this card' })));
+      menu.append(h('div', { class: 'dmenu-head' }, h('strong', { text: `Do #${id} starts` }), h('span', { class: 'dmenu-hint', text: 'saved on this card' })));
       if (!e || !e.data) {
         menu.append(h('div', { class: 'dmenu-hint', text: e && e.error ? `could not load: ${e.error}` : 'loading…' }));
         return;
       }
-      if (!e.data.factory) menu.append(h('div', { class: 'dmenu-warn', text: 'The software factory is not set up here (PA_FACTORY_PATH): Do cannot start anything.' }));
-      for (const r of rows(e.data, e.defaults)) {
-        const sel = h('select', { id: `dm-${id}-${r.field}`, 'data-focus': r.field, disabled: r.disabled || null });
-        for (const o of r.options) {
-          const opt = h('option', { value: o.value, text: o.label });
-          if (o.value === r.value) opt.selected = true;
-          sel.append(opt);
+      for (const r of rows(e.data)) {
+        const ctl = r.options
+          ? h('select', { id: `dm-${id}-${r.field}`, 'data-focus': r.field })
+          : h('input', { id: `dm-${id}-${r.field}`, 'data-focus': r.field, type: 'number', min: '1', step: 'any', placeholder: r.placeholder || null, value: r.overridden ? String(r.value) : null });
+        if (r.options) {
+          for (const o of r.options) {
+            const opt = h('option', { value: o.value, text: o.label });
+            if (o.value === r.value) opt.selected = true;
+            ctl.append(opt);
+          }
         }
-        sel.addEventListener('change', () => change(id, r.field, sel.value));
-        const reset = r.overridden
-          ? h('button', { type: 'button', class: 'dmenu-reset', 'data-focus': `${r.field}-reset`, title: `Back to the default ${r.label.toLowerCase()}`, text: 'reset' })
-          : null;
+        ctl.addEventListener('change', () => change(id, r.field, ctl.value));
+        const reset = r.overridden ? h('button', { type: 'button', class: 'dmenu-reset', title: 'Back to the default', text: 'reset' }) : null;
         reset?.addEventListener('click', () => change(id, r.field, ''));
         menu.append(h('div', { class: 'dmenu-row' },
-          h('label', { for: sel.id }, r.label, h('span', { class: r.overridden ? 'dmenu-src set' : 'dmenu-src', text: r.badge })),
-          h('div', { class: 'dmenu-ctl' }, sel, reset),
-          r.note ? h('div', { class: 'dmenu-hint', text: r.note }) : null));
+          h('label', { for: ctl.id }, r.label, h('span', { class: r.overridden ? 'dmenu-src set' : 'dmenu-src', text: r.badge })),
+          h('div', { class: 'dmenu-ctl' }, ctl, reset)));
       }
-      const again = focused && menu.querySelector(`[data-focus="${focused}"]`);
-      (again || (focused && focused.endsWith('-reset') && menu.querySelector(`[data-focus="${focused.slice(0, -6)}"]`)))?.focus();
     }
 
     function toggle(id, wrap, button) {
       if (open && open.id === id && open.wrap === wrap) return close(true);
       close(false);
-      const menu = h('div', { class: 'dmenu', role: 'dialog', 'aria-label': `Dispatch settings for #${id}`, id: `dmenu-${id}` });
+      const menu = h('div', { class: 'dmenu', role: 'dialog', 'aria-label': `Build settings for #${id}`, id: `dmenu-${id}` });
       open = { id, wrap, menu, button, render: () => renderMenu(id, menu) };
       wrap.append(menu);
       button.setAttribute('aria-expanded', 'true');
@@ -385,14 +215,11 @@
       document.addEventListener('pointerdown', outside, true);
       document.addEventListener('keydown', onKey, true);
       open.render();
-      // Kept on the screen at phone width: shifted left when it would run off the right edge.
       const r = menu.getBoundingClientRect();
       const over = r.right - (document.documentElement.clientWidth - 8);
       if (over > 0) menu.style.left = `${-Math.max(0, Math.min(over, r.left - 8))}px`;
-      menu.querySelector('select:not([disabled])')?.focus();
+      menu.querySelector('select, input')?.focus();
       const e = cache.get(id);
-      // Shown from the cache at once; checked against the server behind it
-      // when it is more than a few seconds old.
       if (e && e.data && Date.now() - e.at < 15_000) return;
       load(id).catch((err) => {
         const c = cache.get(id) || {};
@@ -409,7 +236,7 @@
       line.textContent = summary(e && e.data);
       const button = h('button', {
         type: 'button', class: 'dmenu-btn', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-controls': `dmenu-${id}`,
-        title: 'Dispatch settings: runtime, mode, end state, job kind, repo, review, caps', 'aria-label': `Dispatch settings for #${id}`, text: '☰',
+        title: 'Build settings: model and caps', 'aria-label': `Build settings for #${id}`, text: '☰',
       });
       const wrap = h('span', { class: 'dmenu-wrap' }, button);
       button.addEventListener('click', () => toggle(id, wrap, button));
@@ -420,5 +247,5 @@
     return { parts, prefetch, close, isOpen: () => Boolean(open), _cache: cache };
   }
 
-  return { FIELDS, LABEL, REVIEW, summary, badge, rememberDefaults, rows, patchFor, optimistic, controller };
+  return { FIELDS, LABEL, summary, rows, patchFor, optimistic, controller };
 });

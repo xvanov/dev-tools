@@ -25,7 +25,7 @@
       "id": "factory",
       "n": 3,
       "name": "Build (Factory)",
-      "summary": "software-factory: jobs (code, research, report, and the read-only plan: Claude Code in its plan permission mode) ticked by factory serve on each stack (every PA dispatch is one, D28), on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
+      "summary": "One Claude Code agent per task (build-agent, D30) in a termhub session on the subscription. The software-factory below it (jobs on two runtimes, ticked by factory serve) is frozen: still in the tree, no longer the dispatch target."
     },
     {
       "id": "sessions",
@@ -756,6 +756,7 @@
         "projects-sync",
         "embed",
         "runs",
+        "build-runs",
         "factory",
         "routines",
         "routine-suggest",
@@ -991,7 +992,7 @@
       "id": "dispatcher",
       "layer": "dashboard",
       "name": "Dispatcher",
-      "role": "Starts work: every dispatch is a software-factory job through the JOBS-API (decision D28): code, research, report or a read-only plan, on claude_session (credit pool) or api (metered). Resolves each card's dispatch settings and enforces delivery levels.",
+      "role": "Starts work: Do on a card (and pa do, the planner, accepted cards, the chat's start tools) opens ONE Claude Code agent through src/build (decision D30, replacing D28's factory route). The software factory stays in the tree, frozen, behind PA_BUILD=factory.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1001,8 +1002,8 @@
         "personal": "In-process on k-911-x17. The factory is this machine's factory serve. The chat uses the same SDK engine as the work stack"
       },
       "details": {
-        "Routes": "none to pick (D28): every dispatch (pa do, Do, the planner, accepted cards, the chat's factory_start and session_start) is a factory job; PA_DISPATCH_VIA, PA_ROUTE_CHOOSER, --via claude and --machine are gone (refused). Without PA_FACTORY_PATH nothing dispatches",
-        "Card dispatch settings": "src/dispatch/settings.ts. GET /api/commitments/:id/dispatch-settings answers {card, factory, settings: {runtime, mode, delivery, jobKind, app, repo, review, budgetUsd, wallClockH, maxRounds}, source: {each field: given|card|default|inferred|kind|app_default|repo_default|fallback|commitment|repo|none}, why: {jobKind, delivery, review}, overrides, options: {runtimes, modes, deliveries [{value, plain}], jobKinds, apps [{app, repo, deliveryDefault}], reviews, budgetsUsd, wallClocksH, maxRounds}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as dispatch.card.<id> and answers the GET shape. Defaults: runtime PA_FACTORY_RUNTIME (claude_session; a plan job is claude_session), mode PA_DISPATCH_MODE (full), delivery = your words for this start, else the factory app's delivery.default, else the repo's (pa delivery), else PA_DELIVERY_DEFAULT; research/report/plan deliver none. Review (JOBS-API v1.9): the factory app's review.default, else auto; none for a report job. Caps: the app's caps, else $30 / 4 h / 20 rounds; only values set for the start or on the card go to job submit (--review, --cap), the rest the factory resolves itself; --failover on goes with every job while PA_RUNTIME_FAILOVER is on. Job kind: plan mode → plan; else factoryCore.inferKind (deterministic: the planner's kind, then the ask's words). On the Plan board each Do card shows one read-only line of what Do sends (e.g. Claude · full · draft PR · code (auto)) and a ☰ button whose menu (dispatchMenu.client.js, /dispatchMenu.js) has a select per field with its source and a reset; it fetches each card's settings in the background (two at a time), keeps them across re-renders, POSTs a change at once (optimistic, reverted with a toast on error) and never rebuilds the board. Do itself sends no settings, only the confirmed level. /api/machines is gone (8.6.4)",
+        "Routes": "none to pick (D30): every dispatch is one Claude Code agent (build-agent). PA_BUILD=factory keeps the frozen factory path (src/dispatch/factory.ts) reachable; PA_DISPATCH_VIA, --via and --machine stay gone.",
+        "Card dispatch settings": "src/build/index.ts. GET /api/commitments/:id/build-settings answers {card, settings: {model, costCapUsd, wallCapMin}, overrides, options: {models: [haiku, sonnet, opus], defaults}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as build.card.<id>. Defaults: sonnet, PA_BUILD_COST_CAP_USD ($5), PA_BUILD_WALL_CAP_MIN (120). Job kind, runtime, end state, review and the factory caps are gone from this path (src/dispatch/settings.ts is the frozen factory's).",
         "Plan mode": "a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
         "Claude session (legacy)": "startSession: a Claude Code session in its own worktree via termhub POST /api/sessions. No production caller since D28; kept only while the land/drop/remote tests seed runs through it (docs/native/PLAN.md 8.6.3). If called it logs a warning and records an llm_spend row of unknown cost (purpose dispatch-session-unmetered)",
         "Unmetered starts": "the only agent session the PA still opens outside the factory is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
@@ -1185,7 +1186,9 @@
         "source_item",
         "sync_cursor",
         "trace_span",
-        "workflow_limit"
+        "workflow_limit",
+        "build_run",
+        "build_msg"
       ],
       "env": [
         {
@@ -1235,7 +1238,7 @@
         "Pass reads (sql-sqlite/008)": "statements run on the event loop, and a chunk or claim row carries its 6 KB vector, an item its body and raw JSON, so a scan that tests one column reads the whole store. The passes' reads therefore go through narrow indexes (stale and unembedded chunks, unembedded claims, review counts, the reconciler's window, member-listing items), select ids before wide columns, and test text length from the record header (atLeastChars). A run of statements gives the loop a turn every 50 ms outside transactions (src/db/sqlite.ts). On the work store: 0.2-0.9 s per read before, 0-170 ms after; a worker rehearsal's /healthz stayed under 0.6 s. The spend per local day (sql-sqlite/009) reads a covering index and calls pa_local_day once per UTC quarter hour, not per row: 100-130 ms -> 45-60 ms over a week's 60k calls. The reconciler's dirty read (sql-sqlite/011) seeks source_item by fetched_at since the oldest check, instead of each ask's 30-day window",
         "Keyword search": "FTS5 (porter and exact indexes), Postgres's English stop words; items ranked on narrow columns, text read for the top rows only, each index's best 2,000 chunks when no filter applies. 61 ms p50 on the work stack (Postgres 0.9 s)",
         "Cutover (3.5)": "docs/native/CUTOVER-SQLITE.md: rehearse (export + compare while running), stop writers, export, compare, PA_DB=sqlite in .env, start, verify (doctor, live feed, e2e, backup drill); the cutover's rollback was unsetting PA_DB while that Postgres still held the data. D24 retired those databases, so these stacks stay on the SQLite file. Done on both stacks 2026-11-08: personal (a near-empty store, seconds), then work (export 90 s, board reads identical, about 5 min down, restore drill PASS: 79 tables in 18 s)",
-        "Backups (3.5 prep)":"src/backupSqlite.ts, behind the same pa backup / pa backup restore --to / pa restore: VACUUM INTO snapshots on a read-only connection, on a worker thread like the bundle's encryption (consistent, compacted, still encrypted with PA_SQLITE_KEY): pa-latest.sqlite refreshed by the hourly backup pass when older than PA_SQLITE_SNAPSHOT_MINUTES (RPO), the nightly encrypted .pabak bundle with pa.sqlite and a manifest; the drill restores into a new scratch file and runs integrity_check, the FTS integrity checks, foreign_key_check, row counts and a search. Not Litestream: it cannot open a SQLCipher file and has no supported Windows build. Work stack size: 453 MB snapshot in 6 s, bundle 10 s, drill 10-12 s",
+        "Backups (3.5 prep)": "src/backupSqlite.ts, behind the same pa backup / pa backup restore --to / pa restore: VACUUM INTO snapshots on a read-only connection, on a worker thread like the bundle's encryption (consistent, compacted, still encrypted with PA_SQLITE_KEY): pa-latest.sqlite refreshed by the hourly backup pass when older than PA_SQLITE_SNAPSHOT_MINUTES (RPO), the nightly encrypted .pabak bundle with pa.sqlite and a manifest; the drill restores into a new scratch file and runs integrity_check, the FTS integrity checks, foreign_key_check, row counts and a search. Not Litestream: it cannot open a SQLCipher file and has no supported Windows build. Work stack size: 453 MB snapshot in 6 s, bundle 10 s, drill 10-12 s",
         "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.ts): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
         "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.ts: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
       },
@@ -1265,6 +1268,43 @@
         "personal-assistant/src/db/shadow.ts",
         "personal-assistant/test/contract/_backends.js",
         "personal-assistant/test/repoContract.test.js"
+      ]
+    },
+    {
+      "id": "build-agent",
+      "layer": "factory",
+      "name": "Build agent (one Claude Code agent per task)",
+      "role": "Do opens ONE interactive Claude Code session in termhub on the claude.ai subscription: the composed brief plus one editable agent prompt (src/build/agent-prompt.md), in a fresh git worktree on a new branch when the card names a repo. The agent decides the task's kind (draft PR, markdown report, other), uses subagents for long work, never merges or pushes the default branch, and finishes with `pa run done`.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "In-process in the PA worker and dashboard; the session is in this machine's termhub",
+        "personal": "unknown: not set up yet"
+      },
+      "details": {
+        "Run row": "build_run (state starting|running|waiting|done|failed|stopped, model, worktree, branch, termhub session, Claude session id, result, caps, cost, tokens, track JSON) and build_msg (note, ask, done from the agent; reply, send from Jarvis). Env JARVIS_RUN_ID tells the agent its run.",
+        "Model": "haiku | sonnet | opus per card (default sonnet), passed as claude --model; --session-id fixes the transcript path (~/.claude/projects/<cwd with non-alphanumerics as ->/<session>.jsonl).",
+        "Guards": "a run whose session vanishes without `pa run done` is failed (worker pass build-runs, every 15 s). Cost and wall-clock caps: planned (8.7.3)."
+      },
+      "code": [
+        "personal-assistant/src/build/index.ts",
+        "personal-assistant/src/build/agent-prompt.md",
+        "personal-assistant/src/repo/buildRuns.ts",
+        "personal-assistant/src/cli/run.ts"
+      ],
+      "env": [
+        {
+          "name": "PA_BUILD_COST_CAP_USD",
+          "default": "5",
+          "what": "cost cap per run, notional subscription dollars"
+        },
+        {
+          "name": "PA_BUILD_WALL_CAP_MIN",
+          "default": "120",
+          "what": "wall-clock cap per run, minutes"
+        }
       ]
     },
     {
@@ -2161,6 +2201,16 @@
       "from": "termhub",
       "to": "meter",
       "label": "Meter page: /pa/api/meter"
+    },
+    {
+      "from": "dispatcher",
+      "to": "build-agent",
+      "label": "Do: worktree, brief, claude --session-id in a termhub session"
+    },
+    {
+      "from": "build-agent",
+      "to": "termhub",
+      "label": "POST /api/sessions; input; DELETE (Stop)"
     }
   ],
   "examples": [
@@ -2707,7 +2757,9 @@
       "kind": "http",
       "config": "factory.serveUrl",
       "path": "/api/health",
-      "headers": { "X-Factory": "1" },
+      "headers": {
+        "X-Factory": "1"
+      },
       "label": "factory serve"
     }
   }

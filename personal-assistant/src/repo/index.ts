@@ -38,6 +38,7 @@ type PoolBackend = Db & { close(): Promise<unknown>; connect(): Promise<unknown>
 const AGGREGATES: Record<string, () => Aggregate> = {
   audio: () => require('./audio.ts'),
   audit: () => require('./audit.ts'),
+  buildRuns: () => require('./buildRuns.ts'),
   backupDrill: () => require('./backupDrill.ts'),
   commitments: () => require('./commitments.ts'),
   drafts: () => require('./drafts.ts'),
@@ -91,6 +92,7 @@ function clientBackend(client: Client & Partial<Pick<Db, 'dialect' | 'session' |
 const SQLITE_TWINS: Record<string, () => Aggregate> = {
   audio: () => require('./sqlite/audio.ts'),
   audit: () => require('./sqlite/audit.ts'),
+  buildRuns: () => require('./sqlite/buildRuns.ts'),
   backupDrill: () => require('./sqlite/backupDrill.ts'),
   commitments: () => require('./sqlite/commitments.ts'),
   drafts: () => require('./sqlite/drafts.ts'),

@@ -243,6 +243,16 @@ async function briefFor(
  * kinds is a code job.
  */
 async function start(o: StartOptions): Promise<Json> {
+  // D30: Build is one Claude Code agent per task (src/build). The factory
+  // path below stays, frozen, behind PA_BUILD=factory.
+  if (process.env.PA_BUILD !== 'factory') {
+    const model = o.model && require('../build/index.ts').MODELS.includes(String(o.model)) ? String(o.model) : null;
+    const run: Json = await require('../build/index.ts').start({ commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null });
+    return {
+      id: run.id, route: 'build', routeReason: 'one Claude Code agent (D30)', mode: null, machine: run.machine || null, url: run.url,
+      repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
+    };
+  }
   const calledAt = Date.now();
   const {
     commitmentId = null, task = null, repoPath = null, machine = null, again = false, via = null,

@@ -534,94 +534,45 @@ const ROUTES: Route[] = [
       return send(res, 200, { open: d.open, web: d.web, original: d.original || null, prefilled: d.prefilled, how: d.how, body: d.draft.body });
     },
   },
-  // A card's dispatch settings (src/dispatch/settings.ts): the resolved
-  // runtime, mode, end state, job kind and app/repo, where each came from, and
-  // the options. POST {field: value | null} stores the card's overrides (null
-  // clears one) and answers the same shape. Do (POST …/dispatch) starts with them.
+  // A card's build settings (src/build/index.ts, D30): the model and the run's
+  // caps, where each came from, and the options. POST {field: value | null}
+  // stores the card's overrides (null clears one) and answers the same shape.
   {
     method: 'GET',
-    path: /^\/api\/commitments\/(\d+)\/dispatch-settings$/,
-    handle: async ({ res, m, send }) => {
-      try {
-        return send(res, 200, await require('../dispatch/settings.ts').forCard(Number(m?.[1])));
-      } catch (e) {
-        return send(res, /no commitment/.test((e as HttpError).message) ? 404 : 400, { error: (e as HttpError).message });
-      }
-    },
+    path: /^\/api\/commitments\/(\d+)\/build-settings$/,
+    handle: async ({ res, m, send }) => send(res, 200, await require('../build/index.ts').forCard(Number(m?.[1]))),
   },
   {
     method: 'POST',
-    path: /^\/api\/commitments\/(\d+)\/dispatch-settings$/,
+    path: /^\/api\/commitments\/(\d+)\/build-settings$/,
     handle: async (c) => {
       const { res, m, send } = c;
       const body = await c.body();
       try {
-        return send(res, 200, await require('../dispatch/settings.ts').setForCard(Number(m?.[1]), body));
+        return send(res, 200, await require('../build/index.ts').setForCard(Number(m?.[1]), body));
       } catch (e) {
-        return send(res, /no commitment/.test((e as HttpError).message) ? 404 : 400, { error: (e as HttpError).message });
+        const err = e as HttpError & { status?: number };
+        return send(res, err.status || 400, { error: err.message });
       }
     },
   },
+  // Do: starts ONE Claude Code agent for the card with its build settings
+  // (src/build/index.ts); a body may override model, costCapUsd, wallCapMin.
   {
     method: 'POST',
     path: /^\/api\/commitments\/(\d+)\/dispatch$/,
     handle: async (c) => {
-      const { req, res, m, send } = c;
+      const { res, m, send } = c;
       const body = await c.body();
-      const dispatch = require('../dispatch');
-      const D = require('../dispatch/deliveryCore.ts');
-      const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
-      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
-      // JOBS-API v1.2: what kind of work, who does it. Unsent: the card's
-      // dispatch settings, else the defaults (src/dispatch/settings.ts).
-      const F = require('../dispatch/factoryCore.ts');
-      let jobKind = null;
-      let runtime = null;
       try {
-        jobKind = typeof body.kind === 'string' && body.kind ? F.jobKind(body.kind) : null;
-        runtime = typeof body.runtime === 'string' && body.runtime ? F.runtime(body.runtime) : null;
-      } catch (e) {
-        return send(res, 400, { error: (e as HttpError).message });
-      }
-      // What the start will resolve to — the card's level or the factory app's
-      // default included; a research/report/plan job delivers `none`. Confirmed
-      // only when the page showed exactly that level and sent it back, with its token.
-      const resolved = await dispatch.previewDelivery({ commitmentId: Number(m?.[1]), mode: body.mode || undefined, delivery, jobKind });
-      const confirmed = D.unattended(resolved.delivery) && body.confirmedLevel === resolved.delivery && pageTokenOk(req);
-      if (D.unattended(resolved.delivery) && !confirmed) {
-        return send(res, 409, {
-          error: `this would ${resolved.delivery === 'push_to_main' ? 'push straight to main' : 'merge automatically'} (${resolved.delivery}) — confirm that level on the page`,
-          delivery: resolved.delivery,
-          plain: D.describe(resolved.delivery),
+        const run = await require('../build/index.ts').start({
+          commitmentId: Number(m?.[1]), model: body.model || null, costCapUsd: body.costCapUsd || null, wallCapMin: body.wallCapMin || null,
         });
-      }
-      let run;
-      try {
-        run = await dispatch.start({
-          commitmentId: Number(m?.[1]),
-          mode: body.mode || undefined,
-          // The level the page confirmed, pinned: a repo default changing in
-          // between cannot swap in another one.
-          delivery: resolved.jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
-          confirmedUnattended: confirmed,
-          jobKind: jobKind || resolved.jobKind,
-          runtime,
-          // The page asked "register it and send?" and you said yes (below).
-          register: body.register === true,
-        });
+        return send(res, 200, { id: run.id, model: run.model, state: run.state, url: run.url, branch: run.branch, repoPath: run.repo_path });
       } catch (e) {
-        // A repo the factory does not know is a setup step on you, with its
-        // fix: the page offers it instead of only showing the error.
-        const err = e as HttpError & { code?: string; fix?: unknown };
-        if (err.code === 'factory_unregistered') return send(res, 409, { error: err.message, fix: err.fix });
-        throw e;
+        const err = e as HttpError & { status?: number };
+        return send(res, err.status || (/no commitment/.test(err.message) ? 404 : 400), { error: err.message });
       }
-      return send(res, 200, {
-        id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,
-        route: run.route || 'claude', routeReason: run.routeReason || null, jobId: run.jobId || null, delivery: run.delivery || null,
-        jobKind: run.jobKind || null, runtime: run.runtime || null,
-        warnings: run.warnings || [],
-      });
     },
   },
 ];

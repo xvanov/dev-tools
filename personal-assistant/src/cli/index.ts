@@ -1813,6 +1813,7 @@ Object.assign(commands, require('./passkeys.ts').make(out, fail));
 commands.secrets = commands.secret; // `pa secrets migrate` reads better than `pa secret migrate`
 Object.assign(commands, require('./meeting.ts').make(out, fail));
 Object.assign(commands, require('./routine.ts').make(out, fail));
+Object.assign(commands, require('./run.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
@@ -1822,7 +1823,7 @@ Object.assign(commands, require('./audit.ts').make(out, fail));
 // only literal requires, and Node never adds `.ts`).
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
-  routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
 };
 
 async function main(argv: string[]) {

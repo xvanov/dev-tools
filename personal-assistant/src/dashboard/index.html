@@ -659,10 +659,9 @@ function cardSource(x, wanted) {
   return [whyBlock(x, wanted), linkChips(x), ...sessionLines(x)];
 }
 
-// A card's dispatch settings (runtime, mode, end state, job kind, repo) live
-// behind its ☰ (dispatchMenu.client.js, GET/POST api/commitments/<id>/
-// dispatch-settings); the card shows one line of what Do will send. Every Do
-// is a factory job (D28): there is no route or machine to pick.
+// A card's build settings (model, cost and time caps) live behind its ☰
+// (dispatchMenu.client.js, GET/POST api/commitments/<id>/build-settings); the
+// card shows one line of what Do will start: one Claude Code agent (D30).
 const dispatchMenu = window.DispatchMenu.controller({
   getJson, post, toast,
   setEditing: (on) => {
@@ -672,7 +671,7 @@ const dispatchMenu = window.DispatchMenu.controller({
 });
 
 function commitmentCard(c) {
-  const doBtn = el('button', { class: 'primary', title: 'Send this to the software factory with the settings shown (change them with ☰)' }, 'Do');
+  const doBtn = el('button', { class: 'primary', title: 'Start one Claude Code agent on this, with the model and caps shown (change them with ☰)' }, 'Do');
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -719,45 +718,11 @@ function commitmentCard(c) {
     // its termhub session is an explicit click there, never a side effect.
     dispatchMenu.close(false);
     toast('sending it on its way…');
-    // Do sends nothing of its own: the card's dispatch settings decide.
-    // The level they resolve to (a repo default included) is shown and
-    // confirmed here when nothing human follows it; the server checks the
-    // page sent back exactly that level. A research/report/plan job has none.
-    const pre = await getJson(`api/commitments/${c.id}/delivery`);
-    let confirmedLevel = null;
-    if (pre.unattended) {
-      if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}
-
-No human step after this. Start it?`)) throw new Error('not started');
-      confirmedLevel = pre.delivery;
-    }
-    const send = (register) => post(`api/commitments/${c.id}/dispatch`, { confirmedLevel, ...(register ? { register: true } : {}) });
-    // With PA_PASSKEYS=on a merge or push to main may need a passkey tap
-    // first (src/auth/stepup.ts): tap, then send again.
-    const sendStepped = (register) => send(register).catch(async (err) => {
-      if (!err.data?.needsStepUp || !window.paAuth) throw err;
-      await window.paAuth.stepUp(err.data.approvalId);
-      return send(register);
-    });
-    // A repo the factory does not know yet is a setup step on you, with
-    // its fix (src/dispatch/route.ts): one click registers it and sends.
-    const r = await sendStepped(false).catch((err) => {
-      const fix = err.data?.fix;
-      if (fix?.action !== 'register') throw err;
-      if (!window.confirm(`${fix.slug} is not registered with the software factory.
-
-Register it now (${fix.command}) and send this?`)) throw err;
-      return sendStepped(true);
-    });
-    // Nothing will work on it (no serve running, no timer): say that first,
-    // not as one warning among many — the job would otherwise sit queued.
-    const notTicked = (r.warnings || []).find((w) => /^ticker:/.test(w));
-    if (r.ticked === false || notTicked) {
-      toast(`run #${r.id}: job ${r.jobId} is queued but will NOT start — ${notTicked ? notTicked.replace(/^ticker:\s*/, '') : 'nothing ticks its app'}`);
-      openContext.set(c.id, null);
-      return;
-    }
-    toast(`run #${r.id} sent to the factory (job ${r.jobId},${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
+    // Do starts ONE Claude Code agent with the card's build settings (model,
+    // caps; D30). It stays on this page; the run is on Build, and opening its
+    // termhub session is an explicit click there.
+    const r = await post(`api/commitments/${c.id}/dispatch`, {});
+    toast(`run #${r.id} started on ${r.model}${r.branch ? ` (branch ${r.branch})` : ''} — follow it on Build`);
     openContext.set(c.id, null);
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {

@@ -1,5 +1,8 @@
 'use strict';
 
+// These exercise the frozen factory path (D30): PA_BUILD=factory keeps it reachable.
+process.env.PA_BUILD = 'factory';
+
 // A local run's start and land against real git, with the store, termhub and
 // the brief's memory stubbed. What earns a test here is each promise a past
 // bug broke:

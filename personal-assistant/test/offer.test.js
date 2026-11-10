@@ -1,5 +1,8 @@
 'use strict';
 
+// These exercise the frozen factory path (D30): PA_BUILD=factory keeps it reachable.
+process.env.PA_BUILD = 'factory';
+
 // Offers (src/dispatch/offer.ts) and accepting them (src/proposals): what the
 // card shows — route, app, end state, pipeline, models, done-criteria and the
 // composed brief — is frozen into the proposal and is exactly what runs at
@@ -221,47 +224,7 @@ const proposals = require('../src/proposals');
     assert.ok(token.length >= 20);
     assert.ok(server.pageTokenOk({ headers: { 'x-pa-page': token } }));
     assert.ok(!server.pageTokenOk({ headers: { 'x-pa-page': 'forged' } }));
-    // A repo default of push_to_main, the picker left empty: the page must name it.
-    world.commitment = { ...world.commitment, status: 'open' };
-    world.repoDefault = 'push_to_main';
-    const pre = await call('GET', '/api/commitments/31/delivery');
-    assert.deepStrictEqual([pre.body.delivery, pre.body.unattended], ['push_to_main', true], 'the page is told the resolved level');
-    calls.length = 0;
-    const blind = await call('POST', '/api/commitments/31/dispatch', { via: 'factory' }, { 'x-pa': '1', 'x-pa-page': token });
-    assert.deepStrictEqual([blind.status, blind.body.delivery], [409, 'push_to_main'], 'no confirmedLevel: 409 with the level');
-    const wrong = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'auto_merge' }, { 'x-pa': '1', 'x-pa-page': token });
-    assert.strictEqual(wrong.status, 409, 'a different level than the resolved one');
-    const noToken = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'push_to_main' }, { 'x-pa': '1' });
-    assert.strictEqual(noToken.status, 409, 'X-PA alone (what an agent can send) is not enough');
-    assert.ok(!calls.some((a) => a[3] === 'job' && a[4] === 'submit'), 'nothing started');
-    store.nextRun = 90;
-    const okRun = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'push_to_main' }, { 'x-pa': '1', 'x-pa-page': token });
-    assert.deepStrictEqual([okRun.status, okRun.body.delivery], [200, 'push_to_main']);
-    world.repoDefault = null;
-    // A repo the factory does not know: a setup step on you, answered with its
-    // fix (409 + fix), and sent once the page says register.
-    {
-      const keep = apps;
-      apps = [];
-      await factory.forgetApps();
-      extra['app add'] = (argv) => {
-        apps = [{ app: 'widget', repo: argv[argv.indexOf('--repo') + 1] }];
-        return { code: 0, stdout: JSON.stringify({ app: 'widget', repo: argv[argv.indexOf('--repo') + 1] }), stderr: '' };
-      };
-      calls.length = 0;
-      const unreg = await call('POST', '/api/commitments/31/dispatch', { via: 'factory' }, { 'x-pa': '1', 'x-pa-page': token });
-      assert.strictEqual(unreg.status, 409);
-      assert.match(unreg.body.error, /not registered with the factory/);
-      assert.deepStrictEqual(unreg.body.fix, { action: 'register', slug: 'acme/widget', command: 'pa factory add acme/widget' });
-      assert.ok(!calls.some((a) => a[3] === 'app' && a[4] === 'add'), 'nothing registered without asking');
-      store.nextRun = 91;
-      const sent = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', register: true }, { 'x-pa': '1', 'x-pa-page': token });
-      assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
-      assert.ok(calls.some((a) => a[3] === 'app' && a[4] === 'add'), 'registered, then sent');
-      delete extra['app add'];
-      apps = keep;
-      await factory.forgetApps();
-    }
+    // (The Do route's end-state confirmation and factory registration went with D30: Do starts one agent.)
     // Accepting an unattended card needs the token too.
     const card = await proposals.create({ kind: 'dispatch', commitmentId: 31, title: 'card', payload: { frozen: true, via: 'claude', delivery: 'auto_merge', mode: 'mr' }, dedupeKey: 'tok-card' });
     const refused = await call('POST', `/api/proposals/${card.id}/accept`, {}, { 'x-pa': '1' });
