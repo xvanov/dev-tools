@@ -27,6 +27,8 @@ def _run_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
         ["gh", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=_TIMEOUT_S,
         check=False,
     )

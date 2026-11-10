@@ -269,7 +269,9 @@ def _fetch_pr_merge_commit_sha(  # pragma: no cover - real-run path; queries liv
         "mergeCommit",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -535,6 +537,8 @@ def _default_patch_provider(
             ["gh", "pr", "diff", str(pr_number), "--repo", app_config.repo],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -568,6 +572,8 @@ def _local_git_patch_fallback(
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=180,
         )
         if base_fetch.returncode != 0:
@@ -583,6 +589,8 @@ def _local_git_patch_fallback(
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=180,
         )
         if head_fetch.returncode != 0:
@@ -592,6 +600,8 @@ def _local_git_patch_fallback(
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=180,
         )
         if diff.returncode != 0:
@@ -605,6 +615,8 @@ def _local_git_patch_fallback(
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
 
@@ -1760,7 +1772,15 @@ def _gh_pr_merge(
     # It runs under the per-story lock now, so it must never hang: a stuck gh
     # would hold the lock and starve ``factory job cancel`` indefinitely.
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=_GH_MERGE_TIMEOUT_S)
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GH_MERGE_TIMEOUT_S,
+        )
     except subprocess.TimeoutExpired:
         return f"gh pr merge timed out after {_GH_MERGE_TIMEOUT_S}s"
     except subprocess.CalledProcessError as exc:
@@ -1780,6 +1800,8 @@ def _gh_pr_merge(
                     check=True,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=_GH_MERGE_TIMEOUT_S,
                 )
                 return None
@@ -1833,7 +1855,9 @@ def _pr_is_merged_on_github(
         "state,mergedAt",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     if proc.returncode != 0:
@@ -1903,7 +1927,9 @@ def _query_pr_is_draft(*, app_config: AppConfig, pr_number: int) -> bool | None:
         "--json", "isDraft", "-q", ".isDraft",
     ]  # fmt: skip
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -1949,7 +1975,9 @@ def _query_pr_head_sha(*, app_config: AppConfig, pr_number: int) -> str | None:
         ".headRefOid",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -1992,7 +2020,9 @@ def _query_pr_files_changed(*, app_config: AppConfig, pr_number: int) -> list[st
         ".files[].path",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -2039,7 +2069,9 @@ def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
         "--required",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     combined = ((proc.stdout or "") + " " + (proc.stderr or "")).lower()
@@ -2146,6 +2178,8 @@ def _ci_failure_is_genuine(*, app_config: AppConfig, pr_number: int) -> bool:
             ["gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2175,6 +2209,8 @@ def _ci_failure_is_genuine(*, app_config: AppConfig, pr_number: int) -> bool:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2221,6 +2257,8 @@ def _pr_state(pr_number: int, repo: str) -> str | None:
             ["gh", "pr", "view", str(pr_number), "--repo", repo, "--json", "state", "-q", ".state"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2259,6 +2297,8 @@ def _close_pr_and_confirm(pr_number: int, repo: str, *, comment: str) -> bool:
             ["gh", "pr", "close", str(pr_number), "--repo", repo],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=30,
         )
@@ -2271,6 +2311,8 @@ def _close_pr_and_confirm(pr_number: int, repo: str, *, comment: str) -> bool:
             ["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body", comment],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=30,
         )
@@ -2335,6 +2377,8 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2381,6 +2425,8 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2407,6 +2453,8 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
             ["gh", "run", "view", run_id, "--repo", app_config.repo, "--log-failed"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2553,6 +2601,8 @@ def _main_head_sha(*, app_config: AppConfig, base_branch: str) -> str | None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -2580,6 +2630,8 @@ def _rerun_failed_main_green(*, app_config: AppConfig, pr_number: int) -> tuple[
             ["gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
@@ -2608,6 +2660,8 @@ def _rerun_failed_main_green(*, app_config: AppConfig, pr_number: int) -> tuple[
             ["gh", "run", "rerun", run_id, "--failed", "--repo", app_config.repo],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
@@ -3122,6 +3176,8 @@ def _attempt_pr_reconcile(*, app_config: AppConfig, pr_number: int) -> bool:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
         )
         return True
@@ -3157,7 +3213,15 @@ def _pr_is_conflicting(*, app_config: AppConfig, pr_number: int) -> bool:
         "mergeable,mergeStateStatus",
     ]
     try:
-        out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60).stdout
+        out = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        ).stdout
         data = _json.loads(out)
     except (
         subprocess.CalledProcessError,
@@ -3244,6 +3308,8 @@ def _reset_branch_for_fresh_rebuild(
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
         except (OSError, subprocess.SubprocessError):
@@ -3271,6 +3337,8 @@ def _reset_branch_for_fresh_rebuild(
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
         except (OSError, subprocess.SubprocessError):
@@ -3690,6 +3758,8 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):

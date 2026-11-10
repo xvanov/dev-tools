@@ -40,7 +40,14 @@ def is_review_bot(login: Any) -> bool:
 
 def _gh(args: list[str], timeout: int = 60) -> tuple[bool, str]:
     try:
-        proc = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            ["gh", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return False, repr(exc)
     if proc.returncode != 0:
