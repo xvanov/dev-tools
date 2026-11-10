@@ -10,14 +10,12 @@
 // folder (<PA data dir>/e2e/<stamp>-<workflow>[-dry]/) with summary.json.
 //
 // Dummy inputs only where a real one would reach other people: teams-ask needs
-// a test chat with only you in it, review-fix one of your own PRs. Nothing
+// a test chat with only you in it. Nothing
 // here ever messages anyone. `--on <machine>` runs the workflow on that stack
 // (goldenPath.remote) and brings its summary back.
 //
 //   whats-on     TTS'd question, replayed as the talk page: warm, smart-turn + transcribe, turn, TTS at the first piece
-//   research     a research card -> factory_start {kind: research} -> report.md
-//   deepseek-pr  the E4 golden path on the API runtime (Azure DeepSeek by default), delivery pr
-//   review-fix   factory_continue {pr} -> the same PR gets fast-forward commits, no new PR, CI green (--pr <n> [--repo])
+//   build-pr, build-continue-pr, research   Build runs (buildRunners.ts)
 //   teams-ask    --test-chat <id> (a chat with only you in it): you type the phrase it prints; it follows that
 //                message stored -> distilled -> card on the board -> new_ask toast, checks person/due/link, drops the card
 //
@@ -51,7 +49,6 @@ const C = require('./goldenPathCore.ts');
 const G = require('./goldenPath.ts');
 const S = require('./screens.ts');
 
-const DEFAULT_API_MODEL = 'azure/deepseek-v4-pro';
 
 function deps0(): Deps {
   const d = G.defaultDeps();
@@ -143,24 +140,10 @@ async function commonDry(id: string, acc: Acceptance, deps: Deps): Promise<{ che
   return { checks: out, limits: lim.ok ? lim.value : null };
 }
 
-async function factoryDry(deps: Deps, repo: string): Promise<Check[]> {
-  const out: Check[] = [];
-  out.push(check('config', 'factory configured', deps.factoryEnabled()));
-  const fm = await G.safely(() => deps.factoryMachine());
-  out.push(check('config', 'factory on this machine (D13)', fm.ok && fm.value == null, fm.ok ? (fm.value ? `on ${fm.value}` : null) : fm.error));
-  const apps = await G.safely(() => deps.factoryApps());
-  const app = apps.ok ? (apps.value as Json[]).find((a) => String(a.repo || '').toLowerCase() === repo.toLowerCase()) : null;
-  out.push(check('build', `factory app for ${repo}`, app, apps.ok ? (app ? `app ${app.app}` : 'not registered') : apps.error));
-  if (app) out.push(G.tickedCheck(app));
-  const fac = await G.safely(() => deps.getJson(`${deps.paBase}/api/factory`));
-  out.push(check('build', 'GET /api/factory', fac.ok && fac.value?.groups, fac.error));
-  return out;
-}
-
 async function claudeDry(deps: Deps): Promise<Check> {
   const r = await G.safely(() => deps.claudeAuth());
   const ok = r.ok && r.value.code === 0 && /claude\.ai|subscription|"loggedIn":\s*true/i.test(r.value.stdout + r.value.stderr);
-  return check('run', 'claude logged in on the factory machine (subscription)', ok, r.ok ? (r.value.stdout || r.value.stderr).trim().split('\n')[0] : r.error);
+  return check('run', 'claude logged in (subscription)', ok, r.ok ? (r.value.stdout || r.value.stderr).trim().split('\n')[0] : r.error);
 }
 
 async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise<{ checks: Check[]; limits: Json | null; notes: string[] }> {
@@ -170,22 +153,18 @@ async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise
     const v = await G.safely(() => deps.getJson(`${deps.paBase}/api/talk/voice`));
     checks.push(check('ask', 'voice service (GET /api/talk/voice)', v.ok && v.value?.tts?.ok, v.ok ? (v.value?.tts?.ok ? `TTS on ${v.value.tts.device}` : v.value?.tts?.error || 'down') : v.error));
     checks.push(check('ask', 'fast lane on (PA_FAST_LANE)', deps.fastLaneOn()));
-  } else if (id === 'research' || id === 'review-fix') {
-    checks.push(...(await factoryDry(deps, o.repo)));
-    checks.push(await claudeDry(deps));
+  } else if (id === 'build-pr' || id === 'build-continue-pr' || id === 'research') {
     const tools = require('../mcp/chatTools.ts');
-    const tool = id === 'research' ? 'factory_start' : 'factory_continue';
-    checks.push(check('ask', `chat tool ${tool}`, tools.CHAT_ACTION_TOOL_NAMES.includes(tool)));
-    checks.push(G.policyDry(tool));
-    if (id === 'review-fix' && o.pr) {
-      const pr = await G.safely(() => prRead(deps, o.repo, o.pr));
-      checks.push(...(pr.ok ? W.prReady(pr.value, o.pr, o.repo) : [check('github', `PR #${o.pr} readable in ${o.repo}`, false, pr.error)]));
-    } else if (id === 'review-fix') notes.push('a real run needs --pr <n> [--repo owner/name]: an open PR of yours with unresolved review comments (left open; only the fix is pushed). Add --pr to the dry run to check it.');
-  } else if (id === 'deepseek-pr') {
-    const base = await G.dryRun({ ...o, runtime: 'api', model: o.model }, deps);
-    checks.push(...base);
-    const m = await G.safely(() => require('../mcp/chatTools.ts').modelOverrides({ runtime: 'api', kind: 'code', model: o.model }));
-    checks.push(check('build', `model ${o.model} accepted for the dev step`, m.ok, m.ok ? m.value.join(' ') : m.error));
+    checks.push(check('ask', 'chat tool build_start', tools.CHAT_ACTION_TOOL_NAMES.includes('build_start')));
+    checks.push(G.policyDry('build_start'));
+    const b = await G.safely(() => deps.getJson(`${deps.paBase}/api/build?limit=1`));
+    checks.push(check('build', 'GET /api/build answers', b.ok && Array.isArray(b.value?.runs), b.error));
+    checks.push(await claudeDry(deps));
+    if (id !== 'research') {
+      const r = await G.safely(() => deps.gh(['repo', 'view', o.repo, '--json', 'viewerPermission'], G.owner(o.repo)));
+      checks.push(check('github', `gh as ${G.owner(o.repo)} can write ${o.repo}`, r.ok && r.value.code === 0 && /WRITE|MAINTAIN|ADMIN/.test(r.value.stdout), r.ok ? r.value.stdout.trim() : r.error));
+    }
+    if (id === 'build-continue-pr') notes.push('a real run opens its own draft PR with a review comment (GitHub API) and closes it at the end');
   } else if (id === 'teams-ask') {
     const st = await G.safely(() => deps.getJson(`${deps.paBase}/api/state`));
     const sources: Json[] = st.ok ? (st.value?.sources || []) : [];
@@ -322,220 +301,6 @@ async function whatsOn(acc: Acceptance, o: Options, deps: Deps, folder: string):
   return { measured, transcripts, checks, notes, usd, links: { ask: `${deps.paBase}/talk` }, pages: [], ask: W.askView('chat', said) };
 }
 
-async function research(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
-  const measured: Measured = {};
-  const checks: Check[] = [];
-  const transcripts: string[] = [];
-  const notes: string[] = [];
-  const cleanup: string[] = [];
-  const marker = `e2e-${deps.uuid()}`;
-  const watch = watchWorker(deps);
-  const ask: string = o.question || `Research how termhub's Windows update script (termhub/windows/update.ps1 in ${o.repo}) handles a dirty working tree, and write it up in under 300 words with file and line citations. (automated e2e run ${marker}; no PR)`;
-  const card = await deps.addCard(`Research: how termhub's update handles a dirty tree (${marker})`);
-  const cardId = String(card.id);
-  let job: string | null = null;
-  let lastJob: Json | null = null;
-  let runId: number | string | null = null;
-  try {
-    const args: Json = { card: cardId, kind: 'research', ask, runtime: 'claude_session', repo: o.repo };
-    const prompt: Json = await deps.answerPrompt('factory_start', args, `${marker}:factory_start`);
-    const t0: number = deps.now();
-    const start: Json | null = await deps.chatCall('factory_start', args);
-    const tStarted: number = deps.now();
-    measured.jarvis = { ms: tStarted - t0, note: 'factory_start round trip after the approval (audited call, no composing model for research)' };
-    checks.push(...(await G.approvalChecks(deps, 'factory_start', prompt, `${marker}:factory_start`, cardId)));
-    if (start?.started !== true || !start.job) throw new Error(`factory_start did not start a job: ${JSON.stringify(start).slice(0, 300)}`);
-    const jobId: string = start.job;
-    job = jobId;
-    runId = start.run;
-    let tRunning: number | null = null;
-    const until = deps.now() + (o.timeouts.research || 5400) * 1000;
-    for (;;) {
-      const st = await G.safely(() => deps.jobStatus(job));
-      if (st.ok) { lastJob = st.value; watch.see(st.value); }
-      if (tRunning == null && lastJob && lastJob.state !== 'queued') tRunning = deps.now();
-      if (lastJob && C.TERMINAL.has(lastJob.state)) break;
-      if (deps.now() > until) throw new Error(`research job ${job} not done after ${o.timeouts.research || 5400} s (state ${lastJob?.state})`);
-      await deps.sleep(C.pollMs(o.poll, tRunning == null, deps.now() - tStarted));
-    }
-    const began = C.startedAt(lastJob, tRunning);
-    const ended = C.endedAt(lastJob, deps.now());
-    measured.dispatcher = began.at != null ? { ms: began.at - tStarted, note: `factory_start return to the job started (${began.clock})` } : { ms: null, note: 'never left queued' };
-    measured['runtime-claude'] = { ms: ended.at - (began.at ?? tStarted), note: `job ${lastJob.state} (${began.clock || 'start call'} to ${ended.clock})` };
-    checks.push(check('build', 'research job done', lastJob.state === 'done', `${job} ${lastJob.state}${lastJob.why ? `: ${lastJob.why}` : ''}`));
-    checks.push(check('build', 'no PR opened', !(lastJob.stories || []).some((s: Json) => s.pr_url)));
-    const rep = await G.safely(() => deps.jobReport(job));
-    const md = rep.ok ? rep.value?.markdown || '' : '';
-    checks.push(check('build', 'report.md delivered', md.trim().length > 200, rep.ok ? `${md.length} chars` : rep.error));
-    if (md) transcripts.push(deps.writeEvidence(folder, 'report.md', md));
-    checks.push(check('build', 'report cites files', /update\.ps1/.test(md) && /:\d+|line \d+|L\d+/i.test(md)));
-    const ids = C.chainIds(lastJob, { card: cardId, run: runId, job });
-    const sb = await G.scrollbacks(deps, ids.steps);
-    for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
-    const st = await G.safely(() => deps.getJson(`${deps.paBase}/api/commitments/${cardId}`));
-    const chain = st.ok ? (st.value?.chain || []).find((c: Json) => Number(c.run) === Number(runId)) : null;
-    checks.push(check('plan', 'card → run → job', chain && chain.job === job, chain ? `job ${chain.job}` : st.error || 'no chain entry'));
-    checks.push(...C.checkRun(await G.sessionLists(deps, ids.steps), ids, { scrollback: sb, pages: await G.linkPages(deps, ids.steps) }).map((c: Check) => ({ ...c, view: 'run' })));
-    const mj = await G.safely(() => deps.chat('factory_job', { job, fresh: true }));
-    checks.push(check('ask', 'factory_job tool → card and report', mj.ok && String(mj.value.card) === cardId && mj.value.report, mj.ok ? null : mj.error));
-    const asked = W.askView('factory_job', mj.ok ? mj.value : mj.error);
-    measured.worker = await watch.finish({ job, card: cardId, run: runId });
-    const cost = Number(lastJob.cost_usd || 0);
-    const steps: Json[] = ids.steps.filter((s: Json) => s.session);
-    const pages: Page[] = [
-      { name: 'plan', url: `${deps.paBase}/`, ready: S.readyFor('plan', `#${cardId}`) },
-      { name: 'build', url: `${deps.paBase}/factory`, ready: S.readyFor('build', jobId.split(':').pop()) },
-      ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
-    ];
-    // Screenshots now, while the card and the sessions still exist.
-    const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
-    return {
-      measured, checks, transcripts, notes, cleanup, usd: cost, shots, pages: [], ask: asked,
-      links: { card: cardId, run: runId, job, sessions: steps.map((s) => s.session.id), report: `${deps.paBase}/api/factory/report?job=${encodeURIComponent(jobId)}` },
-    };
-  } finally {
-    watch.close();
-    if (job && !(lastJob && C.TERMINAL.has(lastJob.state))) {
-      const r = await G.safely(() => deps.chat('factory_cancel', { job }));
-      cleanup.push(r.ok ? `job ${job} cancelled` : `job ${job} NOT cancelled: ${r.error}`);
-    }
-    if (!o.keep) {
-      cleanup.push(...(await G.killSessions(deps, await G.ownSessions(deps, cardId, lastJob ? C.chainIds(lastJob) : null))));
-      const r = await G.safely(() => deps.closeCard(cardId));
-      cleanup.push(r.ok ? `card #${cardId} dropped` : `card #${cardId} NOT dropped: ${r.error}`);
-    } else cleanup.push(`kept (--keep): card #${cardId} and its sessions; \`pa e2e --sweep --marker ${marker}\` removes them`);
-  }
-}
-
-// ------------------------------------------------------------ review-fix ----
-
-/** The PR as review-fix reads it (W.PR_QUERY: one GraphQL call as the repo's owner); null when not found. */
-async function prRead(deps: Deps, repo: string, n: number): Promise<Json | null> {
-  const [owner, name] = repo.split('/');
-  const r = await deps.gh(['api', 'graphql', '-f', `query=${W.PR_QUERY}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${n}`], G.owner(repo));
-  if (r.code !== 0) {
-    if (/Could not resolve to a (PullRequest|Repository)/i.test(r.stderr + r.stdout)) return null;
-    throw new Error(`gh api graphql (PR #${n}): ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
-  }
-  return W.prFacts(JSON.parse(r.stdout));
-}
-
-/** GitHub's compare of two commits: {status, ahead_by, behind_by}; `ahead` = a fast-forward. */
-async function compareHeads(deps: Deps, repo: string, base: string, head: string): Promise<Json> {
-  const r = await deps.gh(['api', `repos/${repo}/compare/${base}...${head}`, '--jq', '{status: .status, ahead_by: .ahead_by, behind_by: .behind_by}'], G.owner(repo));
-  if (r.code !== 0) throw new Error(`gh api compare: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
-  return JSON.parse(r.stdout);
-}
-
-/** A termhub session id from a session link (`…#session=<id>`), or null. */
-function sessionOf(url: unknown): string | null {
-  const m = /#session=([\w-]+)/.exec(String(url || ''));
-  return m ? (m[1] as string) : null;
-}
-
-// The Map's review-fix, for real: factory_continue on one of your PRs through
-// the approval the chat uses, the job to its end, then the PR itself: new
-// commits by fast-forward, no new PR, nothing merged, CI green on the new head.
-// The PR is the user's: it is left open, and nothing but the fix is pushed.
-async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
-  if (!o.pr) throw new Error('a real review-fix run needs --pr <n>: an open PR of yours with unresolved review comments');
-  const measured: Measured = {};
-  const checks: Check[] = [];
-  const transcripts: string[] = [];
-  const notes: string[] = [];
-  const cleanup: string[] = [];
-  const read = await prRead(deps, o.repo, o.pr);
-  const ready = W.prReady(read, o.pr, o.repo);
-  checks.push(...ready);
-  const notReady = ready.filter((c: Check) => !c.ok);
-  if (!read || notReady.length) throw new Error(`PR #${o.pr} cannot be review-fixed: ${notReady.map((c: Check) => `${c.check}${c.detail ? ` (${c.detail})` : ''}`).join('; ')}`);
-  const before: Json = read;
-  const marker = `e2e-${deps.uuid()}`;
-  // delivery pr: never auto_merge, so "nothing merged" is the factory's promise, not luck.
-  // No runtime: the tool's default (claude_session) is part of what is under test.
-  const args: Json = { repo: o.repo, pr: o.pr, delivery: 'pr', ask: o.question || `Fix the unresolved review comments on PR #${o.pr}. (automated e2e run ${marker})` };
-  let job: string | null = null;
-  let lastJob: Json | null = null;
-  let follow: string | null = null;
-  try {
-    const subject = `${marker}:factory_continue`;
-    const prompt: Json = await deps.answerPrompt('factory_continue', args, subject);
-    const t0: number = deps.now();
-    const start: Json | null = await deps.chatCall('factory_continue', args);
-    const tStarted: number = deps.now();
-    measured.jarvis = W.toolCallMs({ at: t0, ms: tStarted - t0 }, start);
-    checks.push(...(await G.approvalChecks(deps, 'factory_continue', prompt, subject, null, { args })));
-    if (start?.started !== true || !start.job) throw new Error(`factory_continue did not start a job: ${JSON.stringify(start).slice(0, 300)}`);
-    job = start.job as string;
-    follow = start.follow || null;
-    checks.push(check('ask', `continues PR #${o.pr}`, Number(start.continues?.pr) === o.pr, start.continues ? `${start.continues.branch} → ${start.continues.into}` : 'no continues in the answer'));
-    checks.push(check('ask', 'runtime claude_session by default', start.runtime === 'claude_session', start.runtime));
-    checks.push(check('ask', 'delivery never merges', start.delivery !== 'auto_merge' && start.delivery !== 'push_to_main', start.delivery));
-    checks.push(check('build', 'the app is ticked (not waiting)', !start.waiting, start.waiting || null));
-    if (start.waiting) throw new Error(`job ${job} would sit queued: ${start.waiting}`);
-
-    let tRunning: number | null = null;
-    const limit = o.timeouts.review || 5400;
-    const until = deps.now() + limit * 1000;
-    for (;;) {
-      const st = await G.safely(() => deps.jobStatus(job));
-      if (st.ok) lastJob = st.value;
-      if (tRunning == null && lastJob && lastJob.state !== 'queued') tRunning = deps.now();
-      if (lastJob && C.TERMINAL.has(lastJob.state)) break;
-      if (deps.now() > until) throw new Error(`review-fix job ${job} not done after ${limit} s (state ${lastJob?.state})`);
-      await deps.sleep(C.pollMs(o.poll, tRunning == null, deps.now() - tStarted));
-    }
-    const began = C.startedAt(lastJob, tRunning);
-    const ended = C.endedAt(lastJob, deps.now());
-    measured.dispatcher = began.at != null ? { ms: began.at - tStarted, note: `factory_continue return to the job started (${began.clock})` } : { ms: null, note: 'never left queued' };
-    measured['runtime-claude'] = { ms: ended.at - (began.at ?? tStarted), note: `job ${lastJob.state} (${began.clock || 'start call'} to ${ended.clock})` };
-    checks.push(check('build', 'job done', lastJob.state === 'done', `${job} ${lastJob.state}${lastJob.why ? `: ${lastJob.why}` : ''}`));
-    checks.push(check('build', `job base is PR #${o.pr}`, Number(lastJob.base?.pr) === o.pr, lastJob.base ? `${lastJob.base.branch} → ${lastJob.base.into}` : 'no base'));
-
-    // CI on the new head: the factory's watch usually saw it through; wait out what is left.
-    const tCi = deps.now();
-    const ciUntil = tCi + (o.timeouts.ci_done || 1800) * 1000;
-    let after = await prRead(deps, o.repo, o.pr);
-    while (after && after.head !== before.head && (!after.ci || W.CI_PENDING.has(after.ci)) && deps.now() < ciUntil) {
-      await deps.sleep(30_000);
-      after = await prRead(deps, o.repo, o.pr);
-    }
-    const compare = after?.head && after.head !== before.head ? await G.safely(() => compareHeads(deps, o.repo, before.head, after.head)) : null;
-    checks.push(...W.reviewFixChecks(before, after, compare?.ok ? compare.value : null, W.jobPrs(lastJob)));
-    measured.github = after?.ci && !W.CI_PENDING.has(after.ci) ? { ms: deps.now() - tCi, note: `CI ${after.ci} on ${String(after.head).slice(0, 10)}; counted from the job's end (the watch ran inside the job)` } : { ms: null, note: `CI ${after?.ci || 'unknown'} at the deadline` };
-    measured.worker = { ms: null, note: 'state change to board redraw: measured by E3/0.4, not by this run' };
-    if (after) notes.push(`review threads: ${before.unresolved} unresolved before, ${after.unresolved} after (the factory pushes fixes; resolving a thread is the reviewer's)`);
-
-    const ids = C.chainIds(lastJob, { card: null, run: start.run, job });
-    const sb = await G.scrollbacks(deps, ids.steps);
-    for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
-    const steps: Json[] = ids.steps.filter((s: Json) => s.session);
-    const pages: Page[] = [
-      { name: 'build', url: `${deps.paBase}/factory`, ready: S.readyFor('build', String(job).split(':').pop()) },
-      ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
-      ...(before.url ? [{ name: 'github-pr', url: before.url }] : []),
-    ];
-    const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
-    return {
-      measured, checks, transcripts, notes, cleanup, usd: Number(lastJob.cost_usd || 0), shots, pages: [],
-      ask: W.askView('factory_continue', start),
-      links: { run: start.run, job, pr: before.url, head: { before: before.head, after: after?.head || null }, sessions: steps.map((s) => s.session.id), follow },
-    };
-  } finally {
-    if (job && !(lastJob && C.TERMINAL.has(lastJob.state))) {
-      const r = await G.safely(() => deps.chat('factory_cancel', { job }));
-      cleanup.push(r.ok ? `job ${job} cancelled` : `job ${job} NOT cancelled: ${r.error}`);
-    }
-    if (!o.keep) {
-      const own = await G.ownSessions(deps, null, lastJob ? C.chainIds(lastJob) : null);
-      const followId = sessionOf(follow);
-      if (followId) own.push({ id: followId, machine: null });
-      cleanup.push(...(await G.killSessions(deps, own)));
-    } else cleanup.push(`kept (--keep): job ${job || '(none)'}'s sessions`);
-    cleanup.push(`PR #${o.pr} left open as it was (yours); only the fix commits were pushed to it`);
-  }
-}
-
 // ------------------------------------------------------------- teams-ask ----
 
 const TEAMS_POLL_MS = 500;
@@ -556,51 +321,6 @@ const onBoard = (st: Json, id: number | string) => [...(st?.board?.onMe || []), 
 function payloadOf(e: Json): Json | null {
   if (typeof e?.payload !== 'string') return e?.payload || null;
   try { return JSON.parse(e.payload); } catch { return null; }
-}
-
-/**
- * The worker hop (8.4.10, 8.4.16, 8.4.46): factory, run and board frames for
- * this run, plus each job-status reading. After a terminal state, wait up to
- * 30 s for the Plan card. No subscription: the hop stays unmeasured, and the
- * run does not wait.
- */
-function watchWorker(deps: Deps) {
-  const frames: Json[] = [];
-  const statuses: Json[] = [];
-  let stop: () => void = () => {};
-  let stopped = false;
-  const close = () => {
-    if (stopped) return;
-    stopped = true;
-    try { stop(); } catch { /* the feed already ended */ }
-  };
-  if (typeof deps.subscribe === 'function') {
-    const unsub = deps.subscribe(`${deps.paBase}/api/events?topics=factory,run,board`, (e: Json) => {
-      frames.push({ topic: e?.topic, at: e?.at || new Date(deps.now()).toISOString(), payload: payloadOf(e) });
-    });
-    if (typeof unsub === 'function') stop = unsub;
-  }
-  return {
-    see(st: Json | null) { if (st?.state) statuses.push({ state: st.state, updated_at: st.updated_at ?? null }); },
-    close,
-    async finish(ids: { job?: unknown; card?: unknown; run?: unknown } = {}) {
-      try {
-        if (typeof deps.subscribe !== 'function') return { ms: null, note: 'worker hop not measured: no /api/events subscription' };
-        const terminal = [...statuses].reverse().find((s) => C.TERMINAL.has(String(s.state)));
-        if (terminal && ids.card != null) {
-          const until = deps.now() + 30_000;
-          while (deps.now() < until) {
-            const hop = W.workerHop({ job: ids.job, card: ids.card, run: ids.run, frames, statuses });
-            if (!/plan card not seen/.test(hop.note)) break;
-            await deps.sleep(200);
-          }
-        }
-        return W.workerHop({ job: ids.job, card: ids.card, run: ids.run, frames, statuses });
-      } finally {
-        close();
-      }
-    },
-  };
 }
 
 // The Map's teams-ask, for real, sending nothing: the PA has no Teams send
@@ -756,73 +476,14 @@ async function teamsAsk(acc: Acceptance, o: Options, deps: Deps, folder: string)
   }
 }
 
-async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
-  const watch = watchWorker(deps);
-  const watched = { ...deps, jobStatus: async (id: string) => { const st = await deps.jobStatus(id); watch.see(st); return st; } };
-  let collected: { transcripts: string[]; links: Json; pages: Page[]; usd: number | null; measured: Measured; shots?: { shots: Json[]; note: string | null }; ask?: { method: 'tool'; tool: string; excerpt: string } } =
-    { transcripts: [], links: {}, pages: [], usd: null, measured: {} };
-  const go = {
-    ...o,
-    runtime: 'api',
-    delivery: 'pr',
-    collect: async ({ ids, lastJob, start, startCall, timeline }: { ids: Json | null; lastJob: Json | null; start: Json | null; startCall: { at: number; ms: number } | null; timeline: Json }) => {
-      const transcripts: string[] = [];
-      const sb: Record<string, string> = await G.scrollbacks(deps, ids?.steps || []);
-      for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
-      const measured: Measured = {};
-      if (startCall) measured.jarvis = W.toolCallMs(startCall, start);
-      if (startCall && timeline.job_started != null) measured.dispatcher = { ms: timeline.job_started - (startCall.at + startCall.ms), note: `factory_start return to job started (${C.startedAt(lastJob, timeline.job_started).clock})` };
-      if (timeline.pr_opened != null && timeline.job_started != null) measured['factory-chain'] = { ms: timeline.pr_opened - timeline.job_started };
-      if (timeline.ci_done != null && timeline.pr_opened != null) measured.github = { ms: timeline.ci_done - timeline.pr_opened, note: `CI ${(ids?.prs[0] || {}).ci || '?'}` };
-      const mj = await G.safely(() => deps.chat('factory_job', { job: ids?.job, fresh: true }));
-      const ask = W.askView('factory_job', mj.ok ? mj.value : mj.error);
-      const steps: Json[] = (ids?.steps || []).filter((s: Json) => s.session);
-      collected = {
-        transcripts,
-        measured,
-        ask,
-        usd: lastJob?.cost_usd != null ? Number(lastJob.cost_usd) : null,
-        links: { card: ids?.card, run: ids?.run, job: ids?.job, steps: (ids?.steps || []).map((s: Json) => ({ step: s.step, runtime: s.runtime, session: s.session?.id || null })), prs: (ids?.prs || []).map((p: Json) => p.url) },
-        pages: [
-          { name: 'plan', url: `${deps.paBase}/` },
-          { name: 'build', url: `${deps.paBase}/factory`, ready: ids?.job ? S.readyFor('build', String(ids.job).split(':').pop()) : undefined },
-          ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
-          ...(ids?.prs || []).slice(0, 1).map((p: Json) => ({ name: 'github-pr', url: p.url })),
-        ],
-      };
-      // Screenshots now, while the PR and sessions still exist.
-      collected.shots = await screenshots(deps, path.join(folder, 'screenshots'), collected.pages);
-    },
-  };
-  try {
-  const report: Json = await G.golden(go, watched);
-  collected.measured.worker = await watch.finish({ job: collected.links?.job, card: collected.links?.card, run: collected.links?.run });
-  return {
-    measured: collected.measured,
-    checks: report.checks,
-    transcripts: collected.transcripts,
-    links: collected.links,
-    usd: collected.usd,
-    shots: collected.shots,
-    pages: [],
-    ask: collected.ask,
-    errors: report.errors,
-    cleanup: report.cleanup,
-    notes: [`golden-path hops: ${report.hops.map((h: Json) => `${h.hop} ${h.reached ? `+${h.sinceStartS}s` : 'NOT REACHED'}`).join(', ')}`, `dev model ${o.model}`],
-    golden: report,
-  };
-  } finally {
-    watch.close();
-  }
-}
-
-const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, research, 'deepseek-pr': deepseekPr, 'review-fix': reviewFix, 'teams-ask': teamsAsk };
+// build-pr, build-continue-pr and research run on Build (buildRunners.ts).
+const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, 'teams-ask': teamsAsk, ...require('./buildRunners.ts').RUNNERS };
 
 // ---------------------------------------------------------------- main ----
 
 function parse(id: string, flags: Flags, lists: Lists): Options {
-  const o: Options = C.parseOptions({ ...flags, ...(id === 'deepseek-pr' ? { runtime: 'api', model: flags.model || DEFAULT_API_MODEL } : {}) }, lists);
-  if (id === 'deepseek-pr' && !o.model) o.model = DEFAULT_API_MODEL;
+  const o: Options = C.parseOptions({ ...flags }, lists);
+  o.repoPath = typeof flags['repo-path'] === 'string' ? flags['repo-path'] : null;
   o.question = typeof flags.question === 'string' ? flags.question : null;
   o.pr = flags.pr != null && flags.pr !== true ? Number(String(flags.pr).replace(/^#/, '')) : null;
   if (flags.pr != null && !(Number.isInteger(o.pr) && o.pr > 0)) throw Object.assign(new Error(`--pr is a PR number (got "${flags.pr}")`), { usage: true });
@@ -833,13 +494,13 @@ function parse(id: string, flags: Flags, lists: Lists): Options {
 /** `pa e2e <workflow>`: dry run or real run, evidence in a run folder. Returns the summary. */
 async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps = deps0()): Promise<Json> {
   // research=, review=, teams= and ask= (seconds) cap this module's own waits; the golden path's parser does not know them.
-  const OWN = /^(research|review|teams|ask)=/;
+  const OWN = /^(research|ci|teams|ask)=/;
   const golden = { ...lists, timeout: (lists.timeout || []).filter((t) => !OWN.test(t)) };
   const acc: Acceptance = W.acceptance(deps.arch(), id);
   const o = parse(id, flags, golden);
   const own = (k: string, dflt = 5400) => Number(String((lists.timeout || []).find((t) => t.startsWith(`${k}=`)) || '').split('=')[1]) || dflt;
   o.timeouts.research = own('research');
-  o.timeouts.review = own('review');
+  o.timeouts.ci = own('ci', 900);
   // teams-ask: for you to type the phrase, then for the stored message to become a card.
   o.timeouts.teams = own('teams', 600);
   o.timeouts.ask = own('ask', 600);
@@ -926,4 +587,4 @@ async function realRun(id: string, acc: Acceptance, o: Options, deps: Deps, runn
   return s;
 }
 
-module.exports = { main, dry, parse, screenshots, RUNNERS, DEFAULT_API_MODEL, deps0 };
+module.exports = { main, dry, parse, screenshots, RUNNERS, deps0 };

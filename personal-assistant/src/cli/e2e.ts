@@ -17,7 +17,7 @@ const { USAGE } = require('../e2e/goldenPathCore.ts');
 const HELP = `${USAGE}
 
   pa e2e <workflow> [--dry-run] [--keep] [--json]   one workflow from the Map (plan 8.2):
-        whats-on | research | deepseek-pr [--model azure/deepseek-v4-pro] | review-fix --pr <n> [--repo owner/name]
+        whats-on | build-pr | build-continue-pr | research [--model haiku] [--repo owner/name] [--repo-path <checkout>] [--keep] [--timeout research=<s>] [--timeout ci=<s>]
         | teams-ask --test-chat <id> [--timeout teams=600] [--timeout ask=600]: prints a phrase for you to type there; sends nothing
         evidence (summary.json, transcripts, screenshots) in <PA data dir>/e2e/<stamp>-<workflow>/
         --on <machine> runs it on that stack (a real run in a termhub session there) and prints its summary here

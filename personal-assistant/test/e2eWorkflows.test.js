@@ -10,16 +10,14 @@ const os = require('os');
 const path = require('path');
 const W = require('../src/e2e/workflowsCore.ts');
 const R = require('../src/e2e/workflows.ts');
-// D30: the live Map's examples are Build's; the pa e2e runners here still drive the frozen
-// factory, so these tests run against the factory-era acceptance blocks kept as a fixture.
 const LIVE = require('../src/dashboard/architecture.json');
-const ARCH = { ...LIVE, examples: [...LIVE.examples.filter((e) => ['whats-on', 'teams-ask', 'phone'].includes(e.id)), ...require('./fixtures/factoryExamples.json')] };
+const ARCH = LIVE;
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
 test('the Map lists the five in-scope workflows; phone is out of scope', () => {
-  assert.deepStrictEqual(W.workflows(ARCH).sort(), ['deepseek-pr', 'research', 'review-fix', 'teams-ask', 'whats-on']);
+  assert.deepStrictEqual(W.workflows(ARCH).sort(), ['build-continue-pr', 'build-pr', 'research', 'teams-ask', 'whats-on']);
   assert.throws(() => W.acceptance(ARCH, 'phone'), /out of scope/);
   assert.throws(() => W.acceptance(ARCH, 'nope'), /no workflow/);
   const a = W.acceptance(ARCH, 'whats-on');
@@ -83,14 +81,6 @@ test('toolCallMs: the jarvis hop excludes the composing model (8.4.22)', () => {
   const old = W.toolCallMs({ at: 0, ms: 6701 }, { started: true });
   assert.deepStrictEqual([old.ms, /including the brief composing model/.test(old.note)], [6701, true], 'a PA without timings_ms is timed whole and says so');
   assert.strictEqual(W.toolCallMs(null, null).ms, null);
-});
-
-test('deepseek-pr: the Map names the model the e2e runs (8.4.22)', () => {
-  const ex = ARCH.examples.find((e) => e.id === 'deepseek-pr');
-  const text = JSON.stringify(ex);
-  assert.ok(!/deepseek\/deepseek-coder/.test(text), 'no direct-route model in the example');
-  assert.match(text, /azure\/deepseek-v4-pro/);
-  assert.match(ex.acceptance.cost.basis, /azure\/deepseek-v4-pro/);
 });
 
 test('scoreCost uses the effective ceiling', () => {
@@ -246,111 +236,6 @@ test('whats-on: smart-turn says not done: the turn ends at endMs of silence and 
   assert.ok(s.failed.some((f) => /smart-turn said the question was done/.test(f)));
 });
 
-test('research: a research job to report.md, no PR, linked in Plan, Run and the job tool; card dropped', async () => {
-  const { deps, log } = fakeDeps();
-  const s = await R.main('research', {}, {}, deps);
-  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
-  const start = log.chat.find(([n]) => n === 'factory_start')[1];
-  assert.deepStrictEqual([start.kind, start.runtime, start.card], ['research', 'claude_session', '90']);
-  assert.deepStrictEqual(log.audit.map((a) => [a.action, a.channel]).reverse(), [['approve', 'e2e'], ['call', 'chat']], 'the start went through the approval');
-  assert.ok(s.checks.filter((c) => c.view === 'policy').length === 2 && s.checks.filter((c) => c.view === 'policy').every((c) => c.ok));
-  assert.ok(fs.existsSync(path.join(s.folder, 'report.md')));
-  assert.ok(s.transcripts.includes('transcripts/session-rs1.txt'));
-  assert.deepStrictEqual(log.closed, ['90']);
-  assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
-  assert.ok(log.shots.includes('plan') && log.shots.includes('run-rs1'));
-  assert.ok(!log.shots.includes('ask'), 'Ask is not a /talk shot');
-  assert.strictEqual(s.views.ask.method, 'tool');
-  assert.strictEqual(s.views.ask.tool, 'factory_job');
-  assert.match(s.views.ask.excerpt, /"card":"90"/);
-  assert.strictEqual(s.hops.find((h) => h.c === 'worker').ms, null);
-  assert.match(s.hops.find((h) => h.c === 'worker').note, /no \/api\/events subscription/);
-  assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
-  assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
-  assert.deepStrictEqual(log.pages, ['http://hub:7000/'], 'the step\'s session link is opened (8.4.17)');
-  assert.ok(s.checks.some((c) => c.view === 'run' && c.check === 'session rs1 link opens' && c.ok));
-});
-
-test('research: the worker hop times done to the Plan card (8.4.10)', async () => {
-  const { deps, log } = fakeDeps();
-  const urls = [];
-  deps.subscribe = (url, onEvent) => {
-    urls.push(url);
-    deps.emit = onEvent;
-    return () => { deps.emit = null; log.shots.push('unsubscribed'); };
-  };
-  const jobStatus = deps.jobStatus;
-  deps.jobStatus = async () => {
-    const st = await jobStatus();
-    if (st.state === 'done' && deps.emit) {
-      const t = '2026-11-08T23:35:59.000Z';
-      deps.emit({ topic: 'factory', at: t, payload: { table: 'push', op: 'push', jobs: ['dev-tools:r001'] } });
-      deps.emit({ topic: 'run', at: '2026-11-08T23:35:59.050Z', payload: { table: 'run', id: 7, factory_job_id: 'dev-tools:r001', factory_state: 'done' } });
-      deps.emit({ topic: 'board', at: '2026-11-08T23:35:59.150Z', payload: { table: 'commitment', op: 'update', id: 90, status: 'done' } });
-    }
-    return st.state === 'done' ? { ...st, updated_at: '2026-11-08T23:35:59.000Z' } : st;
-  };
-  const s = await R.main('research', {}, {}, deps);
-  const w = s.hops.find((h) => h.c === 'worker');
-  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
-  assert.match(urls[0], /topics=factory,run,board/);
-  assert.strictEqual(w.ms, 150);
-  assert.match(w.note, /done terminal 150 ms via plan card \(job status\)/);
-  assert.ok(log.shots.includes('unsubscribed'));
-});
-
-test('research: a step session link that 404s fails the Run view (8.4.17)', async () => {
-  const { deps } = fakeDeps({ pageStatus: async () => 404 });
-  const s = await R.main('research', {}, {}, deps);
-  assert.strictEqual(s.ok, false);
-  const c = s.checks.find((x) => x.check === 'session rs1 link opens');
-  assert.ok(c && c.view === 'run' && !c.ok, JSON.stringify(c));
-  assert.match(c.detail, /→ 404/);
-});
-
-test('research: approval to started is timed from the job\'s own started_at, polled fast until it starts (8.4.9)', async () => {
-  const { deps } = fakeDeps();
-  const slept = [];
-  const sleep = deps.sleep;
-  deps.sleep = async (ms) => { slept.push(ms); return sleep(ms); };
-  let polls = 0;
-  let returnedAt = null;
-  const chat = deps.chat;
-  deps.chat = async (name, args) => {
-    const r = await chat(name, args);
-    if (name === 'factory_start') returnedAt = deps.now();
-    return r;
-  };
-  deps.jobStatus = async () => {
-    polls++;
-    if (polls < 3) return { job_id: 'dev-tools:r001', state: 'queued', runs: [], stories: [] };
-    const started_at = new Date(returnedAt + 2100).toISOString();
-    const done = polls >= 4;
-    return { job_id: 'dev-tools:r001', state: done ? 'done' : 'in_progress', started_at, updated_at: new Date(returnedAt + 11_500).toISOString(), cost_usd: 0, stories: [], runs: [{ id: 3, runtime: 'claude_session', state: 'ok', started_at: new Date(returnedAt + 12_300).toISOString(), session: { termhub_session_id: 'rs1', links: { job: 'dev-tools:r001', step: '3' } } }] };
-  };
-  const s = await R.main('research', {}, {}, deps);
-  const by = Object.fromEntries(s.hops.map((h) => [h.c, h]));
-  assert.strictEqual(by.dispatcher.ms, 2100, JSON.stringify(by.dispatcher));
-  assert.ok(/factory started_at/.test(by.dispatcher.note));
-  assert.strictEqual(by['runtime-claude'].ms, 11_500 - 2100, 'started_at to the done job\'s updated_at');
-  assert.deepStrictEqual(slept.slice(0, 2), [1000, 1000]);
-});
-
-test('research: screenshots are taken before cleanup; --keep leaves the sessions and names its sweep', async () => {
-  const { deps, log } = fakeDeps();
-  const capture = deps.capture;
-  deps.capture = async (d, pages) => {
-    assert.deepStrictEqual(log.killed, [], 'no session killed before the shots');
-    assert.deepStrictEqual(log.closed, [], 'card still up for the shots');
-    return capture(d, pages);
-  };
-  const s = await R.main('research', { keep: true }, {}, deps);
-  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
-  assert.deepStrictEqual(log.killed, []);
-  assert.deepStrictEqual(log.closed, []);
-  assert.ok(s.cleanup.some((c) => /--sweep --marker e2e-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/.test(c)), s.cleanup.join('\n'));
-});
-
 test('dry runs create nothing and cover every workflow', async () => {
   for (const id of W.workflows(ARCH)) {
     const { deps, log } = fakeDeps({ getJson: fakeDeps().deps.getJson });
@@ -362,28 +247,12 @@ test('dry runs create nothing and cover every workflow', async () => {
   }
 });
 
-test('dry run: an app nothing ticks fails the run before it submits (8.4.24)', async () => {
-  const { deps } = fakeDeps({ factoryApps: async () => [{ app: 'dev-tools', repo: 'xvanov/dev-tools', ticked: false }] });
-  const s = await R.main('research', { 'dry-run': true }, {}, deps);
-  const c = s.checks.find((x) => x.check === 'factory ticks app dev-tools');
-  assert.ok(c && !c.ok, JSON.stringify(s.checks));
-  assert.match(c.detail, /serve_tick: true.*factory tick --app dev-tools/);
-  assert.strictEqual(s.ok, false);
-  const unknown = await R.main('research', { 'dry-run': true }, {}, fakeDeps().deps);
-  const u = unknown.checks.find((x) => x.check === 'factory ticks app dev-tools');
-  assert.ok(u.ok && /unknown/.test(u.detail), 'an older factory says nothing: passes with a note');
-});
-
-test('teams-ask without --test-chat and review-fix without --pr start nothing', async () => {
+test('teams-ask without --test-chat starts nothing', async () => {
   const { deps, log } = fakeDeps();
   const s = await R.main('teams-ask', {}, {}, deps);
   assert.strictEqual(s.ok, false);
   assert.match(s.errors[0], /needs --test-chat <id>/);
-  const rf = await R.main('review-fix', {}, {}, deps);
-  assert.ok(!rf.ok && /needs --pr <n>/.test(rf.errors[0]), JSON.stringify(rf.errors));
   assert.strictEqual(log.chat.length, 0);
-  assert.throws(() => R.parse('review-fix', { pr: 'abc' }, {}), /--pr is a PR number/);
-  assert.strictEqual(R.parse('review-fix', { pr: '#12' }, {}).pr, 12);
 });
 
 // --- teams-ask (8.4.30) ----------------------------------------------------------------------
@@ -575,88 +444,6 @@ function reviewFixDeps({ after = {}, compare = 'ahead', start = {}, job = {} } =
   return { deps, log, gh };
 }
 
-test('review-fix: factory_continue on the PR through the approval; fast-forward, same PR, nothing merged, CI green', async () => {
-  const { deps, log, gh } = reviewFixDeps();
-  const s = await R.main('review-fix', { pr: '12' }, {}, deps);
-  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
-  const call = log.chat.find(([n]) => n === 'factory_continue')[1];
-  assert.deepStrictEqual([call.repo, call.pr, call.delivery, call.runtime], ['xvanov/dev-tools', 12, 'pr', undefined], 'delivery pr (never merges); the default runtime is under test');
-  assert.deepStrictEqual(log.audit.map((a) => [a.action, a.channel]).reverse(), [['approve', 'e2e'], ['call', 'chat']]);
-  assert.ok(s.checks.filter((c) => c.view === 'policy').every((c) => c.ok) && s.checks.some((c) => c.check === 'factory_continue call audited after the approval'), 'found by its args hash');
-  for (const name of ['PR #12 got new commits', 'pushed fast-forward (no force push)', 'same branch, no new PR opened', 'nothing merged; the PR is still open', 'CI green on the new head', 'job base is PR #12', 'continues PR #12']) {
-    assert.ok(s.checks.some((c) => c.check === name && c.ok), name);
-  }
-  assert.ok(gh.every(([, owner]) => owner === 'xvanov'), 'gh as the repo owner');
-  assert.ok(gh.some(([a]) => a[1] === `repos/xvanov/dev-tools/compare/${'a'.repeat(40)}...${'b'.repeat(40)}`));
-  const by = Object.fromEntries(s.hops.map((h) => [h.c, h]));
-  assert.match(by.jarvis.note, /less the composing model's 900 ms/);
-  assert.strictEqual(s.cost.usd, 0);
-  assert.deepStrictEqual(s.links.head, { before: 'a'.repeat(40), after: 'b'.repeat(40) });
-  assert.ok(log.shots.includes('build') && log.shots.includes('github-pr') && log.shots.includes('run-rf5'));
-  assert.ok(!log.shots.includes('ask'));
-  assert.strictEqual(s.views.ask.tool, 'factory_continue');
-  assert.match(s.views.ask.excerpt, /dev-tools:042/);
-  assert.deepStrictEqual(log.killed.sort(), ['follow8', 'rf5']);
-  assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
-  assert.ok(s.cleanup.some((c) => /PR #12 left open/.test(c)));
-});
-
-test('review-fix: a force push, a new PR, a merge or red CI fails the run', async () => {
-  const cases = [
-    [{ compare: 'diverged' }, 'pushed fast-forward (no force push)'],
-    [{ after: { opened: [[13, 'fix/retry']] } }, 'same branch, no new PR opened'],
-    [{ after: { opened: [[13, 'factory/story-7']] }, job: { stories: [{ id: 7, branch: 'factory/story-7' }] } }, 'same branch, no new PR opened'],
-    [{ job: { pr_urls: ['https://github.com/xvanov/dev-tools/pull/12', 'https://github.com/xvanov/dev-tools/pull/14'] } }, 'same branch, no new PR opened'],
-    [{ after: { state: 'MERGED', merged: true } }, 'nothing merged; the PR is still open'],
-    [{ after: { ci: 'FAILURE' } }, 'CI green on the new head'],
-    [{ after: { head: 'a'.repeat(40) } }, 'PR #12 got new commits'],
-  ];
-  for (const [over, name] of cases) {
-    const { deps } = reviewFixDeps(over);
-    const s = await R.main('review-fix', { pr: '12' }, {}, deps);
-    assert.strictEqual(s.ok, false, name);
-    assert.ok(s.checks.some((c) => c.check === name && !c.ok), `${name}: ${JSON.stringify(s.checks.filter((c) => !c.ok))}`);
-  }
-});
-
-test('review-fix: a PR someone else opens in the repo meanwhile is not the job\'s new PR (8.4.42)', async () => {
-  const { deps } = reviewFixDeps({ after: { opened: [[69, 'factory/65-other-story']] }, job: { pr_urls: ['https://github.com/xvanov/dev-tools/pull/12'], stories: [{ id: 201, branch: 'fix/retry', pr_url: 'https://github.com/xvanov/dev-tools/pull/12', pr_number: 12 }] } });
-  const s = await R.main('review-fix', { pr: '12' }, {}, deps);
-  const c = s.checks.find((x) => x.check === 'same branch, no new PR opened');
-  assert.ok(c && c.ok, JSON.stringify(c));
-  assert.strictEqual(c.detail, "the job's only PR is #12; #69 opened meanwhile from other branches, not counted");
-  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
-  assert.deepStrictEqual(W.jobPrs({ pr_urls: ['https://github.com/o/r/pull/12'], stories: [{ pr_number: 14, branch: 'b1' }, { pr_url: 'https://github.com/o/r/pull/15' }], base: { branch: 'fix/retry' } }), { prs: [12, 14, 15], branches: ['b1', 'fix/retry'] });
-});
-
-test('review-fix: a job for an app nothing ticks, or a PR with nothing to fix, starts no wait', async () => {
-  const idle = reviewFixDeps({ start: { waiting: 'app dev-tools is not ticked: ...' } });
-  const s = await R.main('review-fix', { pr: '12' }, {}, idle.deps);
-  assert.ok(!s.ok && /would sit queued/.test(s.errors[0]), JSON.stringify(s.errors));
-  assert.ok(idle.log.chat.some(([n]) => n === 'factory_cancel'), 'the queued job is cancelled');
-  const { deps, log } = reviewFixDeps();
-  deps.gh = async () => ({ code: 0, stdout: JSON.stringify(prJson({ unresolved: 0 })), stderr: '' });
-  const none = await R.main('review-fix', { pr: '12' }, {}, deps);
-  assert.ok(!none.ok && /has unresolved review threads \(0 of 1 unresolved\)/.test(none.errors[0]), JSON.stringify(none.errors));
-  assert.ok(!log.chat.some(([n]) => n === 'factory_continue'), 'nothing started');
-});
-
-test('review-fix dry run: the PR exists, is open, ours, and has unresolved threads', async () => {
-  const { deps } = reviewFixDeps();
-  const s = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
-  for (const name of ['PR #12 exists in xvanov/dev-tools', 'PR #12 is open', 'PR #12 is from a branch of xvanov/dev-tools', 'PR #12 has unresolved review threads']) {
-    assert.ok(s.checks.some((c) => c.check === name && c.ok), name);
-  }
-  deps.gh = async () => ({ code: 0, stdout: JSON.stringify(prJson({ state: 'CLOSED', unresolved: 0 })), stderr: '' });
-  const closed = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
-  assert.deepStrictEqual(closed.checks.filter((c) => c.view === 'github' && !c.ok).map((c) => c.check), ['PR #12 is open', 'PR #12 has unresolved review threads']);
-  deps.gh = async () => ({ code: 1, stdout: '', stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 12.' });
-  const gone = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
-  assert.ok(gone.checks.some((c) => c.check === 'PR #12 exists in xvanov/dev-tools' && !c.ok));
-  const bare = await R.main('review-fix', { 'dry-run': true }, {}, reviewFixDeps().deps);
-  assert.ok(!bare.checks.some((c) => c.view === 'github') && bare.notes.some((n) => /--pr <n>/.test(n)));
-});
-
 test('--on runs the workflow on that machine (8.4.25): the dry run by exec, a real run in a termhub session', async () => {
   const ran = [];
   const sessions = [];
@@ -671,71 +458,23 @@ test('--on runs the workflow on that machine (8.4.25): the dry run by exec, a re
     },
     hub: () => ({ createSession: async (s) => { sessions.push(s); return { id: 'remote1' }; } }),
   });
-  const s = await R.main('review-fix', { on: 'lab', 'dry-run': true, pr: '12' }, { timeout: ['review=600'] }, deps);
+  const s = await R.main('build-pr', { on: 'lab', 'dry-run': true }, { timeout: ['research=600'] }, deps);
   assert.deepStrictEqual(s, summary, 'the remote summary, even on a failing exit');
-  assert.deepStrictEqual(ran[0].argv, ['node', 'bin/pa.js', 'e2e', 'review-fix', '--json', '--dry-run', '--pr', '12', '--timeout', 'review=600']);
+  assert.deepStrictEqual(ran[0].argv, ['node', 'bin/pa.js', 'e2e', 'build-pr', '--json', '--dry-run', '--timeout', 'research=600']);
   assert.strictEqual(ran[0].cwd, '/home/tester/src/dev-tools/personal-assistant');
   assert.strictEqual(ran[0].machine, 'lab');
 
-  const real = await R.main('review-fix', { on: 'lab', pr: '12' }, {}, deps);
+  const real = await R.main('build-pr', { on: 'lab' }, {}, deps);
   assert.strictEqual(real.kind, 'run');
-  assert.match(sessions[0].command, /^node bin\/pa\.js e2e review-fix --json --pr 12 --report e2e-report-[\w-]+\.json$/);
-  assert.match(sessions[0].title, /^pa e2e review-fix/);
+  assert.match(sessions[0].command, /^node bin\/pa\.js e2e build-pr --json --report e2e-report-[\w-]+\.json$/);
+  assert.match(sessions[0].title, /^pa e2e build-pr/);
 });
 
 // --- 8.4.40: a screenshot step never skips the summary or the cleanup ------------------------
 
-test('review-fix: a capture that throws or never settles is a failed check; the summary and cleanup still happen', async () => {
-  for (const capture of [async () => { throw new Error('browser gone'); }, () => new Promise(() => {})]) {
-    const { deps, log } = reviewFixDeps();
-    deps.capture = capture;
-    deps.shotMs = 50;
-    const s = await R.main('review-fix', { pr: '12' }, {}, deps);
-    assert.strictEqual(s.ok, false);
-    assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
-    const shot = s.checks.find((c) => c.check === 'screenshot of build');
-    assert.ok(shot && shot.view === 'evidence' && !shot.ok, JSON.stringify(s.checks.filter((c) => !c.ok)));
-    assert.match(shot.detail, /browser gone|no screenshots after/);
-    assert.deepStrictEqual(log.killed.sort(), ['follow8', 'rf5'], 'the sessions are still killed');
-    assert.ok(s.checks.some((c) => c.check === 'CI green on the new head' && c.ok), 'the outcome checks are kept');
-  }
-});
-
-test('a run left on a promise nothing settles writes its summary and report at exit, non-zero', async () => {
-  const report = path.join(os.tmpdir(), `pa-e2e-report-${process.pid}.json`);
-  const { deps } = reviewFixDeps();
-  let held = false;
-  deps.answerPrompt = () => { held = true; return new Promise(() => {}); };
-  const before = process.listenerCount('beforeExit');
-  R.main('review-fix', { pr: '12', report }, {}, deps);
-  for (let i = 0; i < 200 && !held; i++) await new Promise((r) => setImmediate(r));
-  assert.ok(held, 'the run reached the call that never settles');
-  assert.strictEqual(process.listenerCount('beforeExit'), before + 1, 'the guard is armed while the run is out');
-  process.emit('beforeExit', 0);
-  try {
-    assert.strictEqual(process.exitCode, 1);
-    const s = JSON.parse(fs.readFileSync(report, 'utf8'));
-    assert.strictEqual(s.ok, false);
-    assert.match(s.errors[0], /stopped in the review-fix runner with nothing left to run/);
-    assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
-  } finally {
-    process.exitCode = 0;
-    fs.rmSync(report, { force: true });
-  }
-  const done = reviewFixDeps();
-  await R.main('review-fix', { pr: '12' }, {}, done.deps);
-  assert.strictEqual(process.listenerCount('beforeExit'), before, 'a run that ends disarms it');
-});
-
 test('shotChecks: a view with no file fails; a shot fails nothing', () => {
   assert.deepStrictEqual(W.shotChecks([{ view: 'build', file: 'b.png' }, { view: 'run-x', file: null, error: 'no screenshot within 60 s' }]), [{ view: 'evidence', check: 'screenshot of run-x', ok: false, detail: 'no screenshot within 60 s' }]);
   assert.deepStrictEqual(W.shotChecks(null), []);
-});
-
-test('deepseek-pr defaults to the Azure DeepSeek deployment on the API runtime', () => {
-  const o = R.parse('deepseek-pr', {}, {});
-  assert.strictEqual(o.runtime, 'api');
-  assert.strictEqual(o.model, 'azure/deepseek-v4-pro');
 });
 
 (async () => {
