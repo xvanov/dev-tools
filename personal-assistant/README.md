@@ -1,5 +1,7 @@
 # personal-assistant
 
+For how Build runs one Claude Code agent per task, see [AGENT.md, "Build: one Claude Code agent per task (D30)"](./AGENT.md#build-one-claude-code-agent-per-task-d30).
+
 A personal agentic layer that sits between you and the coding agents. It watches where work
 arrives — Outlook mail and calendar, Teams chats, GitHub, Jira, and conversations it records in the
 room — turns what it finds into **typed commitments** (who asked, for what, by when, in which
