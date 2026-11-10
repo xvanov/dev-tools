@@ -40,6 +40,8 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 from email.utils import parsedate_to_datetime
@@ -270,6 +272,21 @@ def _path(root: Path) -> Path:
     return state_dir(Path(root)) / "runtime_limits.json"
 
 
+@contextmanager
+def _locked(root: Path) -> Iterator[None]:
+    """Serialise read-modify-write of runtime_limits.json across processes."""
+    from factory.oscompat import lock_file, unlock_file
+
+    path = _path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(path.name + ".lock").open("a+") as handle:
+        lock_file(handle)
+        try:
+            yield
+        finally:
+            unlock_file(handle)
+
+
 def load(root: Path) -> dict[str, Any]:
     try:
         data = json.loads(_path(root).read_text(encoding="utf-8"))
@@ -311,30 +328,31 @@ def trip(
     A later reset already recorded is kept (two runs hitting the same wall
     must not shorten it)."""
     now = now or datetime.now(UTC)
-    data = load(root)
-    prev = data.get(hit.runtime) if isinstance(data.get(hit.runtime), dict) else {}
-    prev_until = _parse_iso(prev.get("until")) if prev else None
-    trips = 1
-    if prev_until is not None and prev_until > now:
-        # Still open: this hit is another run reporting the SAME wall (parallel
-        # workers fail together). Not a fresh trip, so no backoff escalation.
-        trips = max(1, int(prev.get("trips") or 1))
-    elif prev_until is not None and (now - prev_until).total_seconds() < BACKOFF_MEMORY_S:
-        trips = int(prev.get("trips") or 0) + 1
-    until = hit.until or now + timedelta(seconds=backoff_s(hit.runtime, trips))
-    if prev_until is not None and prev_until > until:
-        until = prev_until
-    entry = {
-        "until": _iso(until),
-        "reason": hit.reason,
-        "text": hit.text[:300],
-        "reset_known": hit.until is not None,
-        "tripped_at": _iso(now),
-        "trips": trips,
-        "source": source,
-    }
-    data[hit.runtime] = entry
-    _write(root, data)
+    with _locked(root):
+        data = load(root)
+        prev = data.get(hit.runtime) if isinstance(data.get(hit.runtime), dict) else {}
+        prev_until = _parse_iso(prev.get("until")) if prev else None
+        trips = 1
+        if prev_until is not None and prev_until > now:
+            # Still open: this hit is another run reporting the SAME wall (parallel
+            # workers fail together). Not a fresh trip, so no backoff escalation.
+            trips = max(1, int(prev.get("trips") or 1))
+        elif prev_until is not None and (now - prev_until).total_seconds() < BACKOFF_MEMORY_S:
+            trips = int(prev.get("trips") or 0) + 1
+        until = hit.until or now + timedelta(seconds=backoff_s(hit.runtime, trips))
+        if prev_until is not None and prev_until > until:
+            until = prev_until
+        entry = {
+            "until": _iso(until),
+            "reason": hit.reason,
+            "text": hit.text[:300],
+            "reset_known": hit.until is not None,
+            "tripped_at": _iso(now),
+            "trips": trips,
+            "source": source,
+        }
+        data[hit.runtime] = entry
+        _write(root, data)
     return entry
 
 
