@@ -171,7 +171,7 @@ def test_default_tracker_is_owner_derived(monkeypatch: pytest.MonkeyPatch) -> No
 def test_work_owner_in_token_map_is_not_personal(monkeypatch: pytest.MonkeyPatch) -> None:
     """FACTORY_GH_OWNER_MAP picks tokens and carries WORK owners too."""
     monkeypatch.delenv("FACTORY_PERSONAL_OWNERS", raising=False)
-    monkeypatch.setenv("FACTORY_GH_OWNER_MAP", "innergy-dev=kalin-work")
+    monkeypatch.setenv("FACTORY_GH_OWNER_MAP", "innergy-dev=work-user")
     assert tracker.default_tracker("innergy-dev/raven") == "local"
 
 
@@ -554,3 +554,29 @@ def test_render_config_writes_derived_tracker(monkeypatch: pytest.MonkeyPatch) -
             detection=Detection(),
         )
         assert AppConfig.model_validate(yaml.safe_load(text)).tracker == want
+
+
+def test_failed_tracker_write_does_not_repay_the_pm_every_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """raven:001 (2026-11-10): a tracker write failing AFTER a paid PM call left the
+    direction ``created``; every serve tick paid for a fresh PM run (9 in 90 min,
+    the hourly budget only slowed it). The PM answer for an unchanged direction is
+    reused; the model is called once."""
+    from factory.chain.pm_sync import pm_sync
+
+    db = _seed(tmp_path, repo="xvanov/raven-personal")
+    _direction(tmp_path)
+    pm_calls: list[str] = []
+    _fake_pm(monkeypatch, pm_calls)
+
+    class _Down(Exception):
+        status = 404
+
+    repo = _Repo(has_issues=True)
+    repo.create_issue = lambda **kw: (_ for _ in ()).throw(_Down("404 Not Found"))  # type: ignore[method-assign]
+
+    for _ in range(3):
+        summary = pm_sync("raven", tmp_path, github_client=_Client(repo), state_db_path=db)
+        assert summary.errors
+    assert len(pm_calls) == 1

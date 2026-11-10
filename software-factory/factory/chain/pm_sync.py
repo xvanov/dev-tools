@@ -714,16 +714,30 @@ def pm_sync(
             if dry_run:
                 pm_result = _dry_run_pm_result(direction, validation)
             else:
-                pm_result = _call_pm_persona(
-                    direction,
-                    app_repo_path,
-                    root,
-                    job_routing.model_overrides,
-                    context_dir=getattr(app_config, "context_dir", None),
-                    runtime=job_routing.runtime,
-                    claude_model=job_routing.claude_model,
-                )
-                merge_state(direction, {"pm_result": pm_result})
+                # A paid PM answer for an UNCHANGED direction is reused: when a
+                # later step (tracker write, ...) failed, the direction stays
+                # ``created`` and every tick would otherwise pay for a fresh
+                # PM run (raven:001, 2026-11-10: 9 runs; the hourly budget only
+                # slows that down). The answer is keyed by the direction's hash.
+                import hashlib
+
+                dir_hash = hashlib.sha256(
+                    f"{direction.raw_frontmatter!r}\n{direction.raw_body}".encode()
+                ).hexdigest()
+                cached = (direction.state or {}).get("pm_result")
+                if isinstance(cached, dict) and (direction.state or {}).get("pm_result_hash") == dir_hash:
+                    pm_result = cached
+                else:
+                    pm_result = _call_pm_persona(
+                        direction,
+                        app_repo_path,
+                        root,
+                        job_routing.model_overrides,
+                        context_dir=getattr(app_config, "context_dir", None),
+                        runtime=job_routing.runtime,
+                        claude_model=job_routing.claude_model,
+                    )
+                    merge_state(direction, {"pm_result": pm_result, "pm_result_hash": dir_hash})
                 assert app_config is not None and github_client is not None
                 # Some-vacuous-some-positive (Flow A step 4): triage proceeds,
                 # but the vacuous criteria still surface as warnings on the
