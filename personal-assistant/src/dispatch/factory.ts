@@ -314,9 +314,9 @@ function modelEntries(m: ModelsInput): string[] | string {
  * `--delivery-default` is this repo's PA default, else PA_DELIVERY_DEFAULT —
  * though the PA sends `--delivery` on every job regardless.
  */
-async function addApp({ repo, deliveryDefault = null, path: clonePath = null }: { repo: string; deliveryDefault?: string | null; path?: string | null }): Promise<Json> {
+async function addApp({ repo, deliveryDefault = null, path: clonePath = null, serveTick = true }: { repo: string; deliveryDefault?: string | null; path?: string | null; serveTick?: boolean }): Promise<Json> {
   const level = deliveryDefault || (await require('./delivery.ts').defaultFor(repo).catch(() => null)) || require('./delivery.ts').fallback();
-  const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath }));
+  const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath, serveTick }));
   await forgetApps();
   if (!r.app) throw new F.FactoryError('bad_output', 'app add answered without an app');
   return r;

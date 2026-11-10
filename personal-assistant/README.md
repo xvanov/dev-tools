@@ -1039,7 +1039,11 @@ factory approve <job>` (only the `factory approve-direction` the job's own warni
 the ask (`factoryCore.inferKind`, deterministic: plan mode is `plan`; the planner's *coding* is
 `code` and *investigate* is `research`; then the words — write a document → `report`, change
 something → `code`, a question → `research`; else `code`), and a code job's repo the factory does
-not know yet is registered with it first (`factory app add`).
+not know yet is registered with it first (`factory app add --serve-tick`: worked on
+automatically, since you register a repo to send work to it; `pa factory add <repo>
+--no-serve-tick` and the Repos form's checkbox turn that off). Factory serve ticks an app with an
+active job either way; when nothing will tick the job (serve not running), the Do toast and the
+card say it will not start instead of leaving it silently queued.
 
 **Which route works** is measured: every run records its route, the reason, the ask's kind, and its
 outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs add pipeline, delivery, models,
@@ -1769,7 +1773,7 @@ Code runs. On the board, a card that can be started shows one quiet line of what
 settings — runtime, mode, end state, job kind (default: decided from the ask, with the reason),
 repo/app, review and the job caps (budget, wall clock, agent rounds) — each marked default, inferred or set on
 this card, with a reset. Build's Repos editor sets an app's review default (and the diff size that turns
-`auto` on) and its caps. A change is saved on
+`auto` on), its caps and whether it is worked on automatically (`serve_tick`; on for a repo added there). A change is saved on
 the card at once (`POST /api/commitments/<id>/dispatch-settings`); Do sends nothing of its own.
 
 The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);

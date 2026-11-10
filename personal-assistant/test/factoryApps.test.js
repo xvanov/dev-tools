@@ -55,13 +55,19 @@ const A = require('../src/dashboard/factoryApps.ts');
   assert.throws(() => A.setArgv('docs', { requires: { test: ['rm -rf'] } }), is400(/not a program name/));
   assert.throws(() => A.setArgv('docs', { delivery: 'yolo' }), is400(/unknown delivery/));
   assert.throws(() => A.setArgv('docs', { pipeline: 'swarm' }), is400(/pipeline/));
+  // "worked on automatically" (raven, 2026-11-09)
+  assert.deepStrictEqual(A.setArgv('docs', { serveTick: true }), ['app', 'set', 'docs', '--json', '--serve-tick=on']);
+  assert.deepStrictEqual(A.setArgv('docs', { serveTick: false }).slice(-1), ['--serve-tick=off']);
+  assert.throws(() => A.setArgv('docs', { serveTick: 'yes' }), is400(/serveTick/));
 }
 
 // --- the add form --------------------------------------------------------------------------
 
 {
+  // A repo added here is worked on automatically unless the box is unticked.
   assert.deepStrictEqual(A.addInput({ repo: ' https://github.com/innergy-dev/raven.git ', path: 'C:\\repos\\raven' }),
-    { repo: 'innergy-dev/raven', path: 'C:\\repos\\raven', deliveryDefault: null });
+    { repo: 'innergy-dev/raven', path: 'C:\\repos\\raven', deliveryDefault: null, serveTick: true });
+  assert.strictEqual(A.addInput({ repo: 'a/b', serveTick: false }).serveTick, false);
   assert.throws(() => A.addInput({ repo: 'raven' }), /owner\/name/);
   assert.throws(() => A.addInput({ repo: 'a/b', path: 'x\ny' }), /one local path/);
   assert.throws(() => A.addInput({ repo: 'a/b', delivery: 'yolo' }), /unknown delivery/);
@@ -74,6 +80,8 @@ const A = require('../src/dashboard/factoryApps.ts');
     gates: { test: { state: 'none' } }, readiness: { status: 'missing_tool', blocking: 'gate test needs lychee, not on PATH', warnings: [], missing_tools: { test: ['lychee'] } } });
   assert.deepStrictEqual([r.delivery, r.pipeline, r.readiness.status, r.readiness.missingTools], ['draft_pr', 'chain', 'missing_tool', { test: ['lychee'] }]);
   assert.strictEqual(A.row({ app: 'old', repo: 'a/old', delivery: { default: 'pr' } }).readiness, null, 'an older factory: readiness unknown, not "configured"');
+  assert.strictEqual(A.row({ app: 'old', repo: 'a/old' }).serveTick, null, 'an older factory: unknown, not "no"');
+  assert.strictEqual(A.row({ app: 'r', repo: 'a/r', serve_tick: true }).serveTick, true);
   assert.deepStrictEqual(A.row({ app: 'bad', error: 'ValueError: x' }), { app: 'bad', error: 'ValueError: x' });
 }
 
@@ -142,7 +150,7 @@ const A = require('../src/dashboard/factoryApps.ts');
 
   r = await call('POST', '/api/factory/apps', { headers: { 'x-pa': '1' }, body: { repo: 'acme/docs' } });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(calls.pop(), { add: { repo: 'acme/docs', path: null, deliveryDefault: null } });
+  assert.deepStrictEqual(calls.pop(), { add: { repo: 'acme/docs', path: null, deliveryDefault: null, serveTick: true } });
   assert.strictEqual(r.body.suggested_gates.test_command.command, 'none');
   assert.strictEqual((await call('POST', '/api/factory/apps', { headers: { 'x-pa': '1' }, body: { repo: 'nope' } })).status, 400);
 

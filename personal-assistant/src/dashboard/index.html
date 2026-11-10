@@ -87,6 +87,7 @@
   .ctx-toggle > summary { cursor: pointer; color: var(--muted); }
   .ctx { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--line); font-size: 13px; }
   .ctx .msg { white-space: pre-wrap; margin: 2px 0 6px; line-height: 1.4; }
+  .ctx .who.warn { color: var(--warn); font-weight: 600; }
   .ctx .who { color: var(--muted); font-size: 12px; }
   /* Buttons: the .j-btn shape from theme.css, as element rules so every
      button the scripts render picks it up. */
@@ -560,6 +561,11 @@ function contextPanel(x) {
     lines.push(el('div', { class: 'who', title: [r.route_reason, ...(r.factory_warnings || []).map((w) => `warning: ${w}`)].filter(Boolean).join('\n') }, `run #${r.id} · ${r.status} · ${r.mode} · ${where}${(r.factory_warnings || []).length ? ' · factory warned' : ''} `,
       r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, r.route === 'factory' ? 'follow job' : 'open session') : null,
       r.mr_url ? link(r.mr_url, 'PR') : null));
+    // A job nothing ticks never starts: shown on the card, not only in a tooltip.
+    const notTicked = (r.factory_warnings || []).find((w) => /^ticker:/.test(String(w)));
+    if (notTicked && ['starting', 'running', 'waiting'].includes(r.status) && (!r.factory_state || r.factory_state === 'queued')) {
+      lines.push(el('div', { class: 'who warn' }, `will not start: ${String(notTicked).replace(/^ticker:\s*/, '')}`));
+    }
   }
   // Every run's full chain: job, steps and their sessions, every PR with CI (plan E1).
   lines.push(...chainLines(x));
@@ -743,7 +749,15 @@ No human step after this. Start it?`)) throw new Error('not started');
 Register it now (${fix.command}) and send this?`)) throw err;
       return sendStepped(true);
     });
-    toast(`run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
+    // Nothing will work on it (no serve running, no timer): say that first,
+    // not as one warning among many — the job would otherwise sit queued.
+    const notTicked = (r.warnings || []).find((w) => /^ticker:/.test(w));
+    if (r.ticked === false || notTicked) {
+      toast(`run #${r.id}: job ${r.jobId} is queued but will NOT start — ${notTicked ? notTicked.replace(/^ticker:\s*/, '') : 'nothing ticks its app'}`);
+      openContext.set(c.id, null);
+      return;
+    }
+    toast(`run #${r.id} sent to the factory (job ${r.jobId},${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`);
     openContext.set(c.id, null);
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {

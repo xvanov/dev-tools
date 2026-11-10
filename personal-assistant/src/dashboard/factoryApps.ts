@@ -7,11 +7,15 @@
 //                                     (answers at once; ?fresh=1 asks the factory)
 //   GET  /api/factory/apps/<app>      `factory app show <app>`: gates, readiness and the gates
 //                                     detection suggests (incl. ones mirrored from the repo's CI)
-//   POST /api/factory/apps            {repo, path?, delivery?} -> `factory app add`
+//   POST /api/factory/apps            {repo, path?, delivery?, serveTick? (default true)} -> `factory app add`
 //   POST /api/factory/apps/<app>      {delivery?, pipeline?, gates?: {test: "cmd"|"none"|""},
 //                                      requires?: {test: ["lychee"]}, review?: off|on|auto,
 //                                      reviewMinDiffLines?: n, caps?: {budget_usd, wall_clock_h,
-//                                      max_rounds}} -> `factory app set` (JOBS-API v1.9)
+//                                      max_rounds}, serveTick?: bool} -> `factory app set` (JOBS-API v1.9)
+//
+// serveTick ("worked on automatically"): factory serve ticks the app on its
+// interval (`serve_tick: true`). Off, serve still ticks it while a job is
+// active. On by default for a repo added here: you add one to send work to it.
 //
 // A gate is a shell command, `none` (the repo has no such check: skipped) or ""
 // (not configured). Commands go to the factory as one argv element each
@@ -101,19 +105,23 @@ function setArgv(app: string, body: Json): string[] {
     if (!CAPS.includes(key)) throw bad(`unknown cap "${key}"`);
     argv.push(`--cap=${key}=${capValue(key, v)}`);
   }
+  if (body?.serveTick != null) {
+    if (typeof body.serveTick !== 'boolean') throw bad('serveTick: true or false');
+    argv.push(`--serve-tick=${body.serveTick ? 'on' : 'off'}`);
+  }
   if (argv.length === 4) throw bad('nothing to change');
   return argv;
 }
 
-/** Pure. The add form, checked: {repo, path, delivery}. */
-function addInput(body: Json): { repo: string; path: string | null; deliveryDefault: string | null } {
+/** Pure. The add form, checked: {repo, path, delivery, serveTick (default true)}. */
+function addInput(body: Json): { repo: string; path: string | null; deliveryDefault: string | null; serveTick: boolean } {
   const repo = String(body?.repo || '').trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
   if (!SLUG.test(repo)) throw bad('a repo is owner/name');
   const p = typeof body?.path === 'string' ? body.path.trim() : '';
   if (/[\r\n\0]/.test(p) || p.length > 500) throw bad('one local path');
   const delivery = typeof body?.delivery === 'string' && body.delivery ? body.delivery : null;
   if (delivery && !require('../dispatch/deliveryCore.ts').isDelivery(delivery)) throw bad(`unknown delivery "${delivery}"`);
-  return { repo, path: p || null, deliveryDefault: delivery };
+  return { repo, path: p || null, deliveryDefault: delivery, serveTick: body?.serveTick !== false };
 }
 
 /** Pure. A row of `app list` as the page shows it (an old factory's rows have no gates). */
@@ -130,6 +138,8 @@ function row(a: Json): Json {
     review: a.review ? { default: a.review.default ?? null, autoMinDiffLines: a.review.auto_min_diff_lines ?? null } : null,
     caps: a.caps ? { budget_usd: a.caps.budget_usd ?? null, wall_clock_h: a.caps.wall_clock_h ?? null, max_rounds: a.caps.max_rounds ?? null } : null,
     ticked: a.ticked ?? null,
+    // "worked on automatically" (an older factory sends none: null)
+    serveTick: typeof a.serve_tick === 'boolean' ? a.serve_tick : null,
     gates: a.gates || null,
     readiness: r ? { status: r.status, blocking: r.blocking || null, warnings: r.warnings || [], missingTools: r.missing_tools || {} } : null,
   };

@@ -386,12 +386,16 @@ function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null,
  * `factory app add` for a repo the factory does not know yet (JOBS-API.md).
  * `--delivery-default` is the app's own default; the PA still sends
  * `--delivery` on every job, so it only matters for jobs submitted elsewhere.
+ * `--serve-tick` (on unless `serveTick: false`): the PA registers a repo
+ * because it is about to send work there, so factory serve works on it on
+ * its interval, not only while a job is active.
  */
-function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null }: { repo: string; deliveryDefault?: string; path?: string | null }): string[] {
+function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null, serveTick = true }: { repo: string; deliveryDefault?: string; path?: string | null; serveTick?: boolean }): string[] {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || ''))) throw new Error(`not a repo: "${repo}" — want owner/name`);
   if (!DELIVERIES.includes(deliveryDefault)) throw new Error(`unknown delivery "${deliveryDefault}"`);
   const argv = ['app', 'add', '--json', '--repo', String(repo), '--delivery-default', deliveryDefault];
   if (clonePath) argv.push(`--path=${String(clonePath)}`);
+  if (serveTick !== false) argv.push('--serve-tick');
   return argv;
 }
 

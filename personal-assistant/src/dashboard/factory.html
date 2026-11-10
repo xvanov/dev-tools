@@ -154,6 +154,7 @@
   <form id="addrepo" autocomplete="off">
     <label class="wide">Add repo <input name="repo" placeholder="owner/name" required></label>
     <label class="wide">Local path <input name="path" placeholder="optional: an existing clone"></label>
+    <label class="wide" title="On: the factory works on this repo on its schedule (serve_tick: true). Off: only while one of its jobs is active. A job you start is worked on either way."><input type="checkbox" name="serveTick" checked> Worked on automatically (on by default: you add a repo to send work to it)</label>
     <div class="row"><button type="submit">Add repo</button><span class="meta" id="addhint"></span></div>
   </form>
 </details>

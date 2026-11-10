@@ -769,10 +769,12 @@ const commands: Json = {
       return;
     }
     if (sub === 'add') {
-      if (!repo) return fail('usage: pa factory add <owner/name> [--delivery-default level] [--path p]');
+      if (!repo) return fail('usage: pa factory add <owner/name> [--delivery-default level] [--path p] [--no-serve-tick]');
       const str = (n: any) => (flags[n] && flags[n] !== true ? String(flags[n]) : null);
-      const r = await factory.addApp({ repo, deliveryDefault: str('delivery-default'), path: str('path') });
+      // Worked on automatically unless asked not to: you add a repo to send work to it.
+      const r = await factory.addApp({ repo, deliveryDefault: str('delivery-default'), path: str('path'), serveTick: flagBool(flags, 'serve-tick', true) });
       out(`registered ${r.repo || repo} as factory app ${r.app}${r.delivery?.default ? ` (its default ${r.delivery.default})` : ''}`);
+      if (typeof r.serve_tick === 'boolean') out(`  worked on automatically: ${r.serve_tick ? 'yes' : 'no (only while a job is active)'}`);
       if (r.config_path) out(`  config ${r.config_path}`);
       return;
     }

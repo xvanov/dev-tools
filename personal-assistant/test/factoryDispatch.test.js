@@ -774,8 +774,11 @@ async function factoryReconcile() {
 // --- item 6: registering a repo with the factory ---------------------------------------
 
 async function factoryRegister() {
-  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/widget' }), ['app', 'add', '--json', '--repo', 'acme/widget', '--delivery-default', 'draft_pr']);
-  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'auto_merge', path: '/srv/w' }).slice(-3), ['--delivery-default', 'auto_merge', '--path=/srv/w']);
+  // The PA registers a repo to send work to it: worked on automatically (serve_tick)
+  // unless asked not to (raven, 2026-11-09: a repo added without it was never ticked).
+  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/widget' }), ['app', 'add', '--json', '--repo', 'acme/widget', '--delivery-default', 'draft_pr', '--serve-tick']);
+  assert.ok(!F.appAddArgv({ repo: 'acme/widget', serveTick: false }).includes('--serve-tick'));
+  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'auto_merge', path: '/srv/w' }).slice(-4), ['--delivery-default', 'auto_merge', '--path=/srv/w', '--serve-tick']);
   assert.throws(() => F.appAddArgv({ repo: 'acme/w; rm -rf /' }), /not a repo/);
   assert.throws(() => F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'yolo' }), /unknown delivery/);
   assert.ok(!F.appAddArgv({ repo: 'a/b' }).includes('--delivery-max'), 'the contract has no ceiling');
@@ -793,7 +796,7 @@ async function factoryRegister() {
   const r = await route.forced({ target, register: true });
   assert.strictEqual(r.app, 'gadget');
   const add = calls.find((c) => c.argv[3] === 'app' && c.argv[4] === 'add');
-  assert.deepStrictEqual(add.argv.slice(3), ['app', 'add', '--json', '--repo', 'acme/gadget', '--delivery-default', 'pr'], 'the repo\'s PA default');
+  assert.deepStrictEqual(add.argv.slice(3), ['app', 'add', '--json', '--repo', 'acme/gadget', '--delivery-default', 'pr', '--serve-tick'], 'the repo\'s PA default');
   store.repoDefault = null;
 }
 

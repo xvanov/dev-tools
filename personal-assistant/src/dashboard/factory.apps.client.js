@@ -24,6 +24,7 @@
     on: 'on — every solo job',
     off: 'off — no review',
   };
+  var SERVE_TICK_TITLE = 'yes: the factory works on this repo on its schedule (serve_tick). no: only while one of its jobs is active. A job you start is worked on either way.';
   var CAP_LABEL = { budget_usd: 'Budget per job ($)', wall_clock_h: 'Wall clock per job (h)', max_rounds: 'Agent rounds per job' };
   var state = { apps: [], deliveries: [], pipelines: ['chain', 'solo', 'auto'], gates: ['lint', 'format_check', 'type_check', 'test'], enabled: true };
   var editing = null; // app name in the sheet
@@ -112,6 +113,7 @@
         a.pipeline ? el('span', { class: 'chip', text: a.pipeline }) : null,
         a.review && a.review.default ? el('span', { class: 'chip', text: 'review ' + a.review.default }) : null,
         a.caps ? el('span', { class: 'chip', title: 'per-job caps (0 = none)', text: '$' + a.caps.budget_usd + ' · ' + a.caps.wall_clock_h + 'h · ' + a.caps.max_rounds + ' rounds' }) : null,
+        typeof a.serveTick === 'boolean' ? el('span', { class: 'chip', title: SERVE_TICK_TITLE, text: 'worked on automatically: ' + (a.serveTick ? 'yes' : 'no') }) : null,
         el('button', { type: 'button', text: 'Edit', onclick: function () { openEditor(a.app, null); } }),
         a.gates ? el('div', { class: 'meta', text: gateSummary(a.gates) }) : null,
         r && r.blocking ? el('div', { class: 'why', text: r.blocking }) : null
@@ -233,7 +235,12 @@
         el('label', null, CAP_LABEL.wall_clock_h, num('cap-wall_clock_h', caps.wall_clock_h, '0.5')),
         el('label', null, CAP_LABEL.max_rounds, num('cap-max_rounds', caps.max_rounds, '1'))
       ),
-      el('div', { class: 'meta', text: 'A job that reaches a cap stops for you (needs you), with its work saved; Continue gives it the caps again. 0 = no cap.' })
+      el('div', { class: 'meta', text: 'A job that reaches a cap stops for you (needs you), with its work saved; Continue gives it the caps again. 0 = no cap.' }),
+      el('label', { title: SERVE_TICK_TITLE }, 'Worked on automatically',
+        select('serveTick', (typeof a.serveTick === 'boolean' ? [] : [keep]).concat([
+          { value: 'on', label: 'yes — on the factory\'s schedule' },
+          { value: 'off', label: 'no — only while one of its jobs is active' },
+        ]), typeof a.serveTick === 'boolean' ? (a.serveTick ? 'on' : 'off') : ''))
     );
     var gates = a.gates || {};
     state.gates.forEach(function (g) { form.append(gateFields(g, gates[g])); });
@@ -281,6 +288,8 @@
       if (v !== '' && Number(v) !== (row.caps || {})[k]) caps[k] = Number(v);
     });
     if (Object.keys(caps).length) body.caps = caps;
+    var st = form.elements.serveTick.value;
+    if (st && (st === 'on') !== row.serveTick) body.serveTick = st === 'on';
     state.gates.forEach(function (g) {
       var mode = form.elements['mode-' + g].value;
       var cmd = form.elements['cmd-' + g].value.trim();
@@ -312,13 +321,14 @@
     var btn = form.querySelector('button[type=submit]');
     btn.disabled = true;
     hint.textContent = 'registering (a clone can take a while)…';
-    post('api/factory/apps', { repo: repo, path: form.elements.path.value.trim() }).then(function (r) {
+    post('api/factory/apps', { repo: repo, path: form.elements.path.value.trim(), serveTick: form.elements.serveTick.checked }).then(function (r) {
       hint.textContent = '';
       form.reset();
-      toast('Registered ' + r.app + ' — confirm its gates');
+      toast('Registered ' + r.app + (typeof r.serve_tick === 'boolean' ? ' (worked on automatically: ' + (r.serve_tick ? 'yes' : 'no') + ')' : '') + ' — confirm its gates');
       // Show it at once from the add result, then refresh from the factory.
       state.apps = state.apps.filter(function (a) { return a.app !== r.app; }).concat([{
         app: r.app, repo: r.repo, path: r.path, delivery: r.delivery && r.delivery.default, pipeline: r.pipeline_default,
+        serveTick: typeof r.serve_tick === 'boolean' ? r.serve_tick : null,
         gates: null, readiness: r.readiness ? { status: r.readiness.status, blocking: r.readiness.blocking } : null,
       }]);
       renderList();
