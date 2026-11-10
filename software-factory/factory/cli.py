@@ -41,6 +41,7 @@ test_persona_app = typer.Typer(help="Run a single persona end-to-end for testing
 app.add_typer(test_persona_app, name="test-persona")
 app.add_typer(apps_app, name="app")
 from factory.cli_jobs import job_app  # noqa: E402 - sub-app registration (docs/JOBS-API.md)
+import factory.cli_board  # noqa: E402, F401 - registers `job board` / `job step` (JOBS-API v1.11)
 
 app.add_typer(job_app, name="job")
 

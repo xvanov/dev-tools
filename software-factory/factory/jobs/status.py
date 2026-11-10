@@ -360,6 +360,8 @@ def runs_view(rows: list[dict[str, Any]], job_id: str | None = None) -> list[dic
                 "started_at": _run_started(r),
                 "ended_at": None if state == "running" else r.get("ts"),
                 "session": session,
+                # v1.11: `factory job step <id>` can show this step's turns.
+                "viewable": bool(r.get("stream_path") or (session or {}).get("stream")),
             }
         )
     return out

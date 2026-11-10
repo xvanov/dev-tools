@@ -174,6 +174,7 @@ def run_claude(
         direction_id=direction_id,
         repo_path=str(cwd),
         story_path=story_path,
+        run_dir=str(run_dir),
     )
     claude_bin = claude_binary()
     if claude_bin is None:

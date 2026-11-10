@@ -704,6 +704,10 @@ class Run(SQLModel, table=True):
     # the stale-story pass may recover the story. NULL = not owned by a
     # process we can probe (a claude_session row: its run outlives the tick).
     owner_pid: int | None = None
+    # The step's turn stream (plan 8.8): an api run's ``stream.jsonl``, or a
+    # Claude Code run's run dir holding ``stream-<n>.jsonl``. Read by
+    # ``factory job step`` (factory.jobs.board) for Build's run viewer.
+    stream_path: str | None = None
 
 
 def _engine(db_path: Path | None = None) -> Any:
@@ -744,6 +748,7 @@ def _record_run(
     software_factory_root: Path | None = None,
     started_at: str | None = None,
     update_row_id: int | None = None,
+    stream_path: str | None = None,
 ) -> None:
     ended_at = datetime.now(UTC).isoformat()
     redacted_error = redact_secrets(error) if error is not None else None
@@ -821,6 +826,7 @@ def _record_run(
             # run: the session stays reviewable, so the final row keeps it.
             session_json=existing.session_json if existing is not None else None,
             started_at=(existing.started_at if existing is not None else None) or started_at,
+            stream_path=stream_path or (existing.stream_path if existing is not None else None),
         )
         session.add(row)
         session.commit()
@@ -893,12 +899,14 @@ def _upsert_provisional_run(
     app: str | None,
     session_json: str | None = None,
     started_at: str | None = None,
+    stream_path: str | None = None,
 ) -> int | None:
     """Insert (``row_id`` None) or update the in-flight ``runs`` row.
 
     ``session_json`` / ``started_at`` (plan E2): a watchable API run opens its
     row at start with the termhub session on it, so ``job status`` can link
-    the live view before anything is spent.
+    the live view before anything is spent. ``stream_path`` (plan 8.8): the
+    run's ``stream.jsonl``, so Build's run viewer can tail it while it runs.
 
     The row is a normal ``runs`` row (``success=False``, ``premodel_infra=False``,
     ``error`` = :data:`_PROVISIONAL_RUN_ERROR`), so every reader that sums
@@ -933,10 +941,13 @@ def _upsert_provisional_run(
                 session_json=session_json,
                 started_at=started_at,
                 owner_pid=os.getpid(),
+                stream_path=stream_path,
             )
         else:
             if session_json is not None:
                 row.session_json = session_json
+            if stream_path is not None:
+                row.stream_path = stream_path
             row.tokens_in = max(int(row.tokens_in or 0), tokens_in)
             row.tokens_out = max(int(row.tokens_out or 0), tokens_out)
             row.cached_input_tokens = max(int(row.cached_input_tokens or 0), cached_input_tokens)
@@ -2478,6 +2489,7 @@ async def _sandbox_run_impl(
             started_at=_started_at,
             software_factory_root=software_factory_root,
             update_row_id=row_id,
+            stream_path=_ledger.get("stream"),
         )
 
     if dry_run:
@@ -2953,6 +2965,7 @@ async def _sandbox_run_impl(
                     model_tier=difficulty,
                     direction_id=direction_id,
                     app=app,
+                    stream_path=_ledger.get("stream"),
                 )
         except Exception:  # noqa: BLE001 - a checkpoint must never break a run
             _log.warning("provisional ledger checkpoint failed", exc_info=True)
@@ -3020,6 +3033,20 @@ async def _sandbox_run_impl(
         )
         if _watch is not None and _watch.warning:
             _log.info("api watch: %s", _watch.warning)
+        if _watch is not None:
+            # Plan 8.8: every row of this run names its stream (Build's viewer).
+            with _ledger_lock:
+                _ledger["stream"] = str(_watch.stream.path)
+                if _ledger["id"] is not None:
+                    _upsert_provisional_run(
+                        _ledger["id"], db_path=db_path, persona=persona,
+                        model=llm_config.model, tokens_in=0, tokens_out=0,
+                        cached_input_tokens=0, cost_usd=0.0, duration_s=_elapsed(),
+                        story_path=str(story_path), repo_path=str(repo_path),
+                        story_id=story_id, model_tier=difficulty,
+                        direction_id=direction_id, app=app,
+                        stream_path=_ledger["stream"],
+                    )
         if _watch is not None and _watch.session and _watch.step_id is not None:
             with _ledger_lock:
                 _upsert_step(_watch.step_id, json.dumps(_watch.session, sort_keys=True))
@@ -3613,13 +3640,14 @@ def _open_text_watch(
         )
         if watch is None:
             return None, box["row"]
-        if watch.session and box["row"] is not None:
+        if box["row"] is not None:
             _upsert_provisional_run(
                 box["row"], db_path=db_path, persona=persona, model=model_id,
                 tokens_in=0, tokens_out=0, cached_input_tokens=0, cost_usd=0.0,
                 duration_s=0.0, story_path=None, repo_path=None, story_id=story_id,
                 model_tier=model_tier, direction_id=direction_id, app=app,
-                session_json=json.dumps(watch.session, sort_keys=True),
+                session_json=json.dumps(watch.session, sort_keys=True) if watch.session else None,
+                stream_path=str(watch.stream.path),
             )
         shown = prompt if len(prompt) <= _TEXT_WATCH_PROMPT_CAP else (
             prompt[:_TEXT_WATCH_PROMPT_CAP] + f"\n… ({len(prompt)} chars)"
@@ -3741,6 +3769,7 @@ def text_run(
             started_at=_started_at,
             software_factory_root=software_factory_root,
             update_row_id=_tw["row"],
+            stream_path=str(_tw["watch"].stream.path) if _tw["watch"] is not None else None,
         )
         _end_text_watch(
             _tw["watch"],

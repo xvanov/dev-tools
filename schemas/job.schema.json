@@ -80,7 +80,8 @@
         "billing": { "type": "string", "enum": ["metered", "subscription"] },
         "started_at": { "type": ["string", "null"] },
         "ended_at": { "type": ["string", "null"] },
-        "session": { "anyOf": [{ "$ref": "#/$defs/session" }, { "type": "null" }] }
+        "session": { "anyOf": [{ "$ref": "#/$defs/session" }, { "type": "null" }] },
+        "viewable": { "type": "boolean", "description": "v1.11: `factory job step <id>` can show this step's turns (it has a stream)" }
       },
       "additionalProperties": true
     },

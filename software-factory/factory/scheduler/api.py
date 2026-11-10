@@ -62,7 +62,7 @@ MAX_BODY = 1_000_000
 
 #: Verbs the API runs. ``job follow`` streams forever and stays CLI-only.
 _ALLOWED: dict[str, set[str] | None] = {
-    "job": {"submit", "status", "list", "cancel", "resume", "report", "dispatch"},
+    "job": {"submit", "status", "list", "cancel", "resume", "report", "dispatch", "board", "step"},
     "app": None,  # every app verb (add, set, show, list)
 }
 
@@ -72,6 +72,8 @@ _READ_ONLY = (
     ["job", "status"],
     ["job", "list"],
     ["job", "report"],
+    ["job", "board"],  # JOBS-API v1.11 (Build's board)
+    ["job", "step"],  # a long poll (--wait): must not hold the lock
     ["app", "list"],
     ["app", "show"],
 )
@@ -208,6 +210,14 @@ def _fast_app_list(as_json: bool) -> None:
 
 def _dispatch_fast(argv: list[str]) -> None:
     """Run a hot read. Raises :class:`_NotFast` when ``argv`` is not one."""
+    if argv[:2] in (["job", "board"], ["job", "step"]):
+        from factory.cli_board import parse_fast, run_fast
+
+        board_opts = parse_fast(argv)
+        if board_opts is None:
+            raise _NotFast()
+        run_fast(board_opts)
+        return
     parsed = _parse_fast(argv)
     if parsed is None:
         raise _NotFast()

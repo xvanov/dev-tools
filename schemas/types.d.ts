@@ -93,6 +93,8 @@ export type JobStep = {
   started_at: string | null;
   ended_at: string | null;
   session: JobSession | null;
+  /** v1.11: `factory job step <id>` can show this step's turns (it has a stream) */
+  viewable?: boolean;
   [key: string]: unknown;
 };
 

@@ -34,7 +34,10 @@ def open_run(
     direction_id: str | None,
     repo_path: str | None,
     story_path: str | None = None,
+    run_dir: str | None = None,
 ) -> int | None:
+    """Open the run's provisional row. ``run_dir`` (plan 8.8) is where its
+    ``stream-<n>.jsonl`` rounds land, so Build's run viewer can read them."""
     from sqlmodel import Session
 
     from factory.runner import _PROVISIONAL_RUN_ERROR, Run, _engine
@@ -59,6 +62,7 @@ def open_run(
             cost_usd=0.0,
             subscription_equiv_usd=0.0,
             premodel_infra=False,
+            stream_path=run_dir,
         )
         session.add(row)
         session.commit()

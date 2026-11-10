@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8, v1.9 and v1.10 2026-11-09, at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, v1.7 2026-11-08, v1.8, v1.9 and v1.10 2026-11-09, v1.11 2026-11-10, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -940,3 +940,74 @@ serve never ticked it and the PA's job sat `queued` forever.
   on|off` changes it. `app add`, `app set`, `app show` and every `app list` row add
   `"serve_tick": true | false`. Errors add `invalid_serve_tick`. The PA registers repos with
   `--serve-tick` (you add a repo to send work to it).
+
+## v1.11 additions (2026-11-10): the board and one step's turns (Build's board, plan 8.8)
+
+Additive, read-only. Both verbs run on `factory serve` (`POST /api/cli`, concurrent with
+other reads, without Typer) and as plain CLI commands. Code: `factory/jobs/board.py`,
+`factory/cli_board.py`.
+
+### Status / list: new field
+
+`runs[].viewable: bool`: the step has a turn stream `factory job step` can read. Every new
+step has one: an api step's `api_runs/<run>/stream.jsonl` (with or without termhub), a
+Claude Code step's run dir (`stream-<n>.jsonl`, one per round). The path is
+`runs.stream_path`; an api step from before it falls back to its session's `stream`.
+
+### `factory job board --json`
+
+What `factory tui` shows, as one object (reused for 2 s; up to 30 s old it is answered at once while serve builds the next in the background; ETAs and velocity are recomputed every 60 s):
+
+```
+{"as_of", "mode", "active": bool,
+ "spend": {"today_since": ISO, "today": {"metered_usd", "notional_usd"},
+           "week": {"metered_usd", "notional_usd"}},
+ "spend_cap_usd": number | null,
+ "paused": [{"runtime", "until", "reason", "reset_known", "why"}],
+ "live": [{"persona", "model", "story_id", "app", "direction_id", "job_id", "started_at", "elapsed_s"}],
+ "directions": [{"job_id", "app", "direction_id", "title", "total_stories", "completed_stories",
+                 "in_flight_stories", "total_handlers", "completed_handlers", "progress": 0..1 | null,
+                 "eta": {"p50_s", "p75_s", "p95_s", "samples", "insufficient", "reason"} | null,
+                 "current_personas": [...],
+                 "stories": [{"id", "title", "state", "points", "completed_handlers", "total_handlers",
+                              "remaining": [...], "persona", "persona_elapsed_s", "dev_retries",
+                              "last_rejection_reason"}]}],
+ "recent_runs": [<runs[] item> + {"tokens_in", "tokens_out", "subscription_equiv_usd", "duration_s"}],
+ "velocity": [{"persona", "model_tier", "samples", "median", "p25", "p75"}]}
+```
+
+`metered_usd` is `runs.cost_usd` (API keys). `notional_usd` is what Claude Code runs would
+have cost at API prices (`subscription_equiv_usd`): the subscription is not billed per run.
+"Today" starts at the factory host's local midnight. `directions` are the directions with a
+story in flight (as in the TUI); `progress` is completed handlers over all handlers.
+
+### `factory job step <step_id> --json [--cursor F:O] [--limit N] [--wait S] [--at F:O]`
+
+```
+{"step": <runs[] item> + {"app", "direction_id", "tokens_in", "tokens_out", "cached_input_tokens",
+                          "subscription_equiv_usd", "duration_s", "error"},
+ "events": [{"kind", "at": "F:O", "ts"?, ...}],
+ "cursor": "F:O", "more": bool, "done": bool, "has_stream": bool}
+```
+
+- The cursor is `<file index>:<byte offset>` into the step's stream files (a Claude Code step
+  has one file per round). Start without one; pass back each reply's `cursor`. Only complete
+  lines are read. `--limit` caps the stream lines read (default 200, max 1000), plus 512 KB.
+  `more`: bytes are already waiting, read again now. `done`: the step ended and everything
+  was read.
+- `--wait S` (max 25): when nothing is new and the step is running, the reply waits for the
+  next line (a long poll), checking every 0.25 s.
+- `--at F:O`: only the record at that position (an event's `at`), with the caps lifted (up
+  to 200,000 characters): the viewer's "show all".
+- Events, the same for both runtimes (`factory.claude_session.stream.normalize_event`):
+  `init` (`runtime`, `model`, `session_id`, `cwd`, `title`, `persona`), `text`, `thinking`,
+  `tool_call` (`id`, `name`, `input`: the arguments as indented JSON text), `tool_result`
+  (`tool_use_id`, `name` (api only), `is_error`), `prompt`, `usage` (api: `tokens_in`,
+  `cached_input_tokens`, `tokens_out`, `cost_usd`), `diff` (`files[{path, added, deleted}]`,
+  `untracked`, `insertions`, `deletions`), `gate` (`round`, `passed`, `reason`, `checks`),
+  `error` (`code`), `note`, `result` (`ok`, `subtype`, `runtime`, `billing`:
+  `metered|notional`, `cost_usd`, `tokens_in`, `cached_input_tokens`, `tokens_out`, `turns`,
+  `duration_ms`, `stop_reason`). A text field cut at its cap (text 4000, tool result 1500,
+  tool arguments 1500 characters) carries `full_len`.
+- Errors: `not_found` (no such step), `invalid_step_id`, `invalid_cursor`.
+

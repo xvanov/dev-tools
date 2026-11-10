@@ -159,12 +159,7 @@ def render_event(event: dict[str, Any]) -> str | None:
         message = event.get("message") or {}
         for part in message.get("content") or [] if isinstance(message, dict) else []:
             if isinstance(part, dict) and part.get("type") == "tool_result":
-                content = part.get("content")
-                if isinstance(content, list):
-                    content = " ".join(
-                        str(c.get("text") or "") for c in content if isinstance(c, dict)
-                    )
-                text = " ".join(str(content or "").split())
+                text = " ".join(tool_result_text(part.get("content")).split())
                 mark = "✗" if part.get("is_error") else "✓"
                 return f"    {mark} {text[:160]}"
         return None
@@ -233,4 +228,225 @@ def _render_factory(event: dict[str, Any]) -> str | None:
     return None
 
 
-__all__ = ["ClaudeResult", "iter_events", "parse_stream", "render_event"]
+def tool_result_text(content: Any) -> str:
+    """The text of a ``tool_result`` part's ``content``: a string, or a list of
+    blocks (``text`` blocks joined; an image block reads ``[image]``)."""
+    if isinstance(content, list):
+        parts: list[str] = []
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "image":
+                parts.append("[image]")
+            else:
+                parts.append(str(c.get("text") or ""))
+        return "\n".join(p for p in parts if p)
+    return str(content or "")
+
+
+# --------------------------------------------------------------------------- #
+# One normalized event shape for the web run viewer (Build's board, plan 8.8).
+#
+# Both runtimes write the same stream: Claude Code's ``stream-json`` as is, and
+# an API run's (``factory.api_watch``) in that shape plus ``factory`` records.
+# So there is ONE parser for both, here next to the terminal renderer.
+# --------------------------------------------------------------------------- #
+
+#: Default caps for one event's text on the wire (a ``full`` read lifts them).
+VIEW_TEXT_CAP = 4000
+VIEW_RESULT_CAP = 1500
+VIEW_ARGS_CAP = 1500
+#: The ceiling even a ``full`` read keeps (one line can be megabytes).
+VIEW_FULL_CAP = 200_000
+
+
+def _capped(text: str, cap: int) -> dict[str, Any]:
+    """``{"text"}`` plus ``"full_len"`` when ``text`` was cut at ``cap``."""
+    if len(text) <= cap:
+        return {"text": text}
+    return {"text": text[:cap], "full_len": len(text)}
+
+
+def normalize_event(event: dict[str, Any], *, full: bool = False) -> list[dict[str, Any]]:
+    """The viewer's events for one stream record (``[]`` for what a human does
+    not need). Pure; never raises on a malformed record.
+
+    Kinds: ``init``, ``text``, ``thinking``, ``tool_call`` (``id``, ``name``,
+    ``input`` as JSON text), ``tool_result`` (``tool_use_id``, ``name``,
+    ``is_error``), ``prompt``, ``usage``, ``diff``, ``gate``, ``error``,
+    ``note``, ``result``. A cut text carries ``full_len``.
+    """
+    try:
+        return _normalize(event, full=full)
+    except Exception:  # noqa: BLE001 - one bad record must not break the page
+        return []
+
+
+def _normalize(event: dict[str, Any], *, full: bool) -> list[dict[str, Any]]:
+    text_cap = VIEW_FULL_CAP if full else VIEW_TEXT_CAP
+    result_cap = VIEW_FULL_CAP if full else VIEW_RESULT_CAP
+    args_cap = VIEW_FULL_CAP if full else VIEW_ARGS_CAP
+    etype = event.get("type")
+    if etype == "system":
+        if event.get("subtype") != "init":
+            return []
+        return [
+            {
+                "kind": "init",
+                "runtime": "api" if event.get("runtime") == "api" else "claude_session",
+                "session_id": event.get("session_id"),
+                "model": event.get("model"),
+                "cwd": event.get("cwd"),
+                "title": event.get("title"),
+                "persona": event.get("persona"),
+            }
+        ]
+    message = event.get("message") or {}
+    content = message.get("content") if isinstance(message, dict) else None
+    if etype == "assistant":
+        out: list[dict[str, Any]] = []
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype == "text" and str(part.get("text") or "").strip():
+                out.append({"kind": "text", **_capped(str(part["text"]).rstrip(), text_cap)})
+            elif ptype == "thinking" and str(part.get("thinking") or "").strip():
+                out.append(
+                    {"kind": "thinking", **_capped(str(part["thinking"]).rstrip(), text_cap)}
+                )
+            elif ptype == "tool_use":
+                args = json.dumps(part.get("input") or {}, default=str, indent=1)
+                capped = _capped(args, args_cap)
+                call: dict[str, Any] = {
+                    "kind": "tool_call",
+                    "id": str(part.get("id") or ""),
+                    "name": str(part.get("name") or "?"),
+                    "input": capped["text"],
+                }
+                if "full_len" in capped:
+                    call["full_len"] = capped["full_len"]
+                out.append(call)
+        return out
+    if etype == "user":
+        if isinstance(content, str):
+            return [{"kind": "prompt", **_capped(content, text_cap)}] if content.strip() else []
+        out = []
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_result":
+                out.append(
+                    {
+                        "kind": "tool_result",
+                        "tool_use_id": str(part.get("tool_use_id") or ""),
+                        "name": str(part.get("tool_name") or "") or None,
+                        "is_error": bool(part.get("is_error")),
+                        **_capped(tool_result_text(part.get("content")), result_cap),
+                    }
+                )
+            elif part.get("type") == "text" and str(part.get("text") or "").strip():
+                out.append({"kind": "prompt", **_capped(str(part["text"]), text_cap)})
+        return out
+    if etype == "result":
+        api = event.get("runtime") == "api"
+        usage = event.get("usage") or {}
+        usage = usage if isinstance(usage, dict) else {}
+        cached = _int(usage.get("cache_read_input_tokens"))
+        return [
+            {
+                "kind": "result",
+                "ok": not bool(event.get("is_error")) and event.get("subtype") in (None, "success"),
+                "subtype": str(event.get("subtype") or ""),
+                "runtime": "api" if api else "claude_session",
+                # api: metered spend. claude_session: what the run would have
+                # cost at API prices; the subscription is not billed per run.
+                "billing": "metered" if api else "notional",
+                "cost_usd": round(_float(event.get("total_cost_usd")), 6),
+                "tokens_in": _int(usage.get("input_tokens"))
+                + _int(usage.get("cache_creation_input_tokens"))
+                + cached,
+                "cached_input_tokens": cached,
+                "tokens_out": _int(usage.get("output_tokens")),
+                "turns": _int(event.get("num_turns")),
+                "duration_ms": _int(event.get("duration_ms")),
+                "stop_reason": str(event.get("stop_reason") or "") or None,
+                **_capped(str(event.get("result") or ""), text_cap),
+            }
+        ]
+    if etype == "factory":
+        return _normalize_factory(event, text_cap=text_cap)
+    return []
+
+
+def _normalize_factory(event: dict[str, Any], *, text_cap: int) -> list[dict[str, Any]]:
+    """The factory's own records in an API-runtime stream (``factory.api_watch``)."""
+    sub = event.get("subtype")
+    if sub == "usage":
+        return [
+            {
+                "kind": "usage",
+                "tokens_in": _int(event.get("tokens_in")),
+                "cached_input_tokens": _int(event.get("cached_input_tokens")),
+                "tokens_out": _int(event.get("tokens_out")),
+                "cost_usd": round(_float(event.get("cost_usd")), 6),
+            }
+        ]
+    if sub == "diff":
+        files = [
+            {
+                "path": str(f.get("path") or "?"),
+                "added": _int(f.get("added")),
+                "deleted": _int(f.get("deleted")),
+            }
+            for f in (event.get("files") or [])[:200]
+            if isinstance(f, dict)
+        ]
+        return [
+            {
+                "kind": "diff",
+                "files": files,
+                "untracked": [str(p) for p in (event.get("untracked") or [])[:200]],
+                "insertions": _int(event.get("insertions")),
+                "deletions": _int(event.get("deletions")),
+            }
+        ]
+    if sub == "gate":
+        return [
+            {
+                "kind": "gate",
+                "round": event.get("round"),
+                "passed": bool(event.get("passed")),
+                "reason": str(event.get("reason") or "")[:2000],
+                "checks": [str(c) for c in (event.get("checks") or [])][:20],
+            }
+        ]
+    if sub == "prompt":
+        return [
+            {
+                "kind": "prompt",
+                "source": event.get("source"),
+                **_capped(str(event.get("text") or ""), text_cap),
+            }
+        ]
+    if sub == "error":
+        return [
+            {
+                "kind": "error",
+                "code": str(event.get("code") or ""),
+                **_capped(str(event.get("detail") or ""), text_cap),
+            }
+        ]
+    if sub == "note":
+        return [{"kind": "note", **_capped(str(event.get("text") or ""), text_cap)}]
+    return []
+
+
+__all__ = [
+    "ClaudeResult",
+    "iter_events",
+    "normalize_event",
+    "parse_stream",
+    "render_event",
+    "tool_result_text",
+]

@@ -91,6 +91,10 @@ _RUNS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("started_at", "VARCHAR"),
     # The process checkpointing a provisional row (runner.Run.owner_pid).
     ("owner_pid", "INTEGER"),
+    # Where the step's turn stream lives (plan 8.8, Build's run viewer): an api
+    # run's ``api_runs/<run>/stream.jsonl``, a Claude Code run's run dir (its
+    # ``stream-<n>.jsonl`` rounds). NULL = no stream (or a row predating it).
+    ("stream_path", "VARCHAR"),
 ]
 
 _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [
