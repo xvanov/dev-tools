@@ -2632,7 +2632,7 @@
         ],
         "verdict": {
           "result": "fail",
-          "date": "2026-11-08",
+          "date": "2026-11-10",
           "report": "docs/native/acceptance/teams-ask.md"
         }
       }

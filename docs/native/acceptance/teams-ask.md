@@ -21,6 +21,30 @@ asks:
 - Teams' system threads (drafts, mentions, notifications) are stored and distilled as group
   chats.
 
+## Re-run, 2026-11-10: still FAIL (outcome not shown live)
+
+All eight 2026-11-08 defects (8.4.30-37) are fixed and ticked. This re-run could not send
+anything (the PA has no Teams send path; D-log: M365 is read-only), so the real run, which waits
+for the owner to type its phrase, was not driven.
+
+- `pa e2e teams-ask --test-chat 48:notes --dry-run`: map 2/2, run 6/6 (served commit `3b28b1d`).
+- Real recent ask, card #6803 (Teams chat, 4 h old, distilled by the served model): links to a
+  real message id (`link` pass; no `-1`), no system thread. `person` was the bare address
+  `shane.govenor@innergy.com`: the Teams cache gives an author's address and no name, so the new
+  person row took the address as its name. **Fixed** in `distill/identity.ts` (`nameFor`: a
+  first.last address becomes "First Last"; a person filed under an address is renamed when a name
+  is known), test `identityName.test.js` (b822931). Cards already stored keep the address until
+  their person is next resolved. `due`: the message states no deadline, so none is right
+  (not scored).
+- Ingest: today's teams-cache passes take 25-330 ms (was 8.7 s). Notify: `new_ask` rows exist
+  live (kind, budget and quiet-hours digest all working: "quiet hours", "budget 4 spent").
+- Later hops, read against Build (one Claude Code agent per task, D30) rather than the old
+  factory: unchanged by this flow; no reply-send hop (a Teams reply is copy and open Teams).
+- Not measured live: board hop (~50 ms bus + state build 43 ms, 8.4.33) and the end-to-end
+  timing from a typed message.
+
+To pass: the owner runs `pa e2e teams-ask --test-chat 48:notes` and types the printed phrase.
+
 | | |
 |---|---|
 | Date | 2026-11-08, 21:50-22:05Z |
