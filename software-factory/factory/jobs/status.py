@@ -136,16 +136,6 @@ IGNORED_STATES: frozenset[str] = frozenset({_S.SUPERSEDED_BY_SIBLING.value})
 LOCAL_MERGED_STATES: frozenset[str] = frozenset({_S.DEPLOY_PENDING.value, _S.DEPLOYED.value})
 #: Finished work that ``factory job cancel`` must leave alone (finding 6).
 CANCEL_PROTECTED_STATES: frozenset[str] = LOCAL_MERGED_STATES | DELIVERED_UNMERGED_STATES
-#: Local evidence that a PR exists.
-LOCAL_PR_STATES: frozenset[str] = frozenset(
-    {
-        _S.PR_OPEN.value,
-        _S.CI_PENDING.value,
-        _S.CI_GREEN.value,
-        _S.READY_FOR_MERGE.value,
-    }
-    | LOCAL_MERGED_STATES
-)
 
 
 #: Where a ``draft_pr`` / ``pr`` story waits while its PR's CI is watched.

@@ -3797,20 +3797,6 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
     return summary
 
 
-def _ci_watch_window(
-    events: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], float | None]:
-    """``(prior ci_fix_redispatch events, start of the current wait)``.
-
-    Both are scoped to events AFTER the latest ``story_resumed`` (the
-    ``_handle_ci_failure`` precedent: an operator resume resets the CI-fix
-    budget). The current wait is the first ``delivery_ci_watch_started`` after
-    the latest redispatch — each fix the dev hands back gets a fresh clock.
-    """
-    prior, _since_fix, start = _ci_watch_scope(events)
-    return prior, start
-
-
 def _ci_watch_scope(
     events: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:

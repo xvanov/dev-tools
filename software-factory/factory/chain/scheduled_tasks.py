@@ -184,13 +184,6 @@ def _dry_run_fixture(persona: str, app: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _slugify_title(title: str) -> str:
-    import re
-
-    s = re.sub(r"[^A-Za-z0-9]+", "-", title.strip().lower()).strip("-")
-    return (s[:40] or "scheduled-finding").strip("-") or "scheduled-finding"
-
-
 # Statuses that mean a direction is finished/abandoned — a new duplicate for
 # the same issue is fine once the prior one is closed out.
 _TERMINAL_DIRECTION_STATUSES = frozenset(

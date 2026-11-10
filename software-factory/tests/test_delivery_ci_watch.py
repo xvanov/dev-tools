@@ -350,7 +350,7 @@ def test_no_verdict_within_the_window_delivers_with_a_note(
     # First read starts the clock (the event's ts is real "now"; the watch
     # clock reads now_fn, so pin the start by reading it back).
     watch(PENDING, t0)
-    start = am._ci_watch_window(_events(am_root, s))[1]
+    start = am._ci_watch_scope(_events(am_root, s))[2]
     assert start is not None
     watch(None, start + am.DELIVERY_CI_WAIT_S - 1)  # unreadable: still waiting
     assert _reload(db, s.id).state == StoryState.PR_OPEN.value
@@ -367,7 +367,7 @@ def test_no_checks_at_all_delivers_after_the_grace(am_root: Path, disarms: list[
 
     def watch(now_offset: float) -> None:
         events = _events(am_root, s)
-        start = am._ci_watch_window(events)[1]
+        start = am._ci_watch_scope(events)[2]
         base = start if start is not None else 0.0
         am._watch_ci_then_deliver(
             story=_reload(db, s.id),
