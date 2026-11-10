@@ -75,9 +75,9 @@ def read_state(repo: str, pr: int) -> dict[str, Any] | None:
             "graphql",
             "-f",
             f"query={_QUERY}",
-            "-F",
+            "-f",
             f"owner={owner}",
-            "-F",
+            "-f",
             f"name={name}",
             "-F",
             f"pr={pr}",
@@ -145,9 +145,9 @@ def reply_and_resolve(thread_id: str, body: str) -> str | None:
             "-f",
             "query=mutation($id:ID!,$b:String!){addPullRequestReviewThreadReply(input:"
             "{pullRequestReviewThreadId:$id,body:$b}){comment{id}}}",
-            "-F",
+            "-f",
             f"id={thread_id}",
-            "-F",
+            "-f",
             f"b={body}",
         ]
     )
@@ -159,7 +159,7 @@ def reply_and_resolve(thread_id: str, body: str) -> str | None:
             "graphql",
             "-f",
             "query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}",
-            "-F",
+            "-f",
             f"id={thread_id}",
         ]
     )

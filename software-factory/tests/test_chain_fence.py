@@ -54,3 +54,12 @@ def test_factory_app_is_exempt(tmp_path: Path) -> None:
     (repo / ".gitlab-ci.yml").write_text("t\n")
     assert fence.enforce(repo, "main", app="factory") == []
     assert (repo / ".gitlab-ci.yml").exists()
+
+
+def test_renaming_a_fenced_file_away_is_reverted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "dev")
+    _git(repo, "mv", ".github/workflows/ci.yml", "src/ci.txt")
+    reverted = fence.enforce(repo, "main", app="demo")
+    assert ".github/workflows/ci.yml" in reverted
+    assert (repo / ".github" / "workflows" / "ci.yml").read_text() == "run: pytest\n"

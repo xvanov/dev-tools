@@ -53,14 +53,17 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def changed_fenced_paths(repo: Path, base_ref: str) -> list[str]:
-    """Fenced paths whose worktree content differs from ``base_ref`` (incl. untracked)."""
+    """Fenced paths whose worktree content differs from ``base_ref`` (incl. untracked).
+
+    ``-z`` keeps non-ASCII names unquoted; ``--no-renames`` lists the OLD path of a
+    renamed fenced file (rename detection would show only the new, unfenced one)."""
     names: set[str] = set()
-    diff = _git(repo, "diff", "--name-only", base_ref, "--")
+    diff = _git(repo, "diff", "--name-only", "--no-renames", "-z", base_ref, "--")
     if diff.returncode == 0:
-        names.update(x for x in diff.stdout.splitlines() if x.strip())
-    other = _git(repo, "ls-files", "--others", "--exclude-standard")
+        names.update(x for x in diff.stdout.split("\0") if x.strip())
+    other = _git(repo, "ls-files", "-z", "--others", "--exclude-standard")
     if other.returncode == 0:
-        names.update(x for x in other.stdout.splitlines() if x.strip())
+        names.update(x for x in other.stdout.split("\0") if x.strip())
     return sorted(n for n in names if is_fenced(n))
 
 
