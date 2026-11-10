@@ -442,7 +442,7 @@ function sse(port, pathAndQuery, headers = {}) {
     const routines = fs.readFileSync(path.join(dir, 'routines.client.js'), 'utf8');
     assert.ok(index.indexOf('<script src="events.js"></script>') < index.search(/<script>\r?\n/), 'Plan loads events.js before its own script');
     assert.match(index, /PAEvents\.subscribe\(\{ topics: \['board', 'run'\]/);
-    assert.match(build, /<script src="events\.js"><\/script>[\s\S]*<script src="permission\.js"><\/script>[\s\S]*<script src="factory\.js"><\/script>/, 'Build: the feed, then Jarvis\'s permission card, then its script');
+    assert.match(build, /<script src="events\.js"><\/script>[\s\S]*<script src="permission\.js"><\/script>[\s\S]*<script src="build-board\.js"><\/script>/, 'Build: the feed, then Jarvis\'s permission card, then its script');
     assert.match(build, /data-permission-card/);
     assert.match(buildJs, /PAEvents\.subscribe\(\{ topics: \['factory', 'run'\]/);
     assert.match(buildJs, /waiting for your approval/);

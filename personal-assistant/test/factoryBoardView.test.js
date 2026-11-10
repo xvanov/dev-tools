@@ -71,8 +71,6 @@ const F = require('../src/dispatch/factoryCore.ts');
   new vm.Script(src, { filename: 'factory.board.client.js' });
   assert.doesNotMatch(src, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
   assert.ok(!/fetch\('\//.test(src) && !/getJson\('\//.test(src), 'relative URLs only (termhub /pa/ proxy)');
-  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'factory.html'), 'utf8');
-  assert.ok(html.indexOf('src="factory-board.js"') > 0 && html.indexOf('src="factory-board.js"') < html.indexOf('src="factory.js"'), 'loaded before the page script');
 
   // ---- the proxy routes -----------------------------------------------------------
   assert.strictEqual(P.stepPath('/api/factory/steps/42/events'), '42');

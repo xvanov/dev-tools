@@ -88,9 +88,7 @@ const A = require('../src/dashboard/factoryApps.ts');
 // --- the page: section, script, no HTML sink -----------------------------------------------
 
 {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'factory.html'), 'utf8');
-  assert.match(html, /id="repos"/);
-  assert.match(html, /<script src="factory-apps\.js"><\/script>/, 'relative: works under termhub\'s /pa/');
+  // The Build page (D30) no longer loads the repos section; the client stays, frozen with the factory.
   const client = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'factory.apps.client.js'), 'utf8');
   assert.doesNotMatch(client, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/, 'no HTML sink: repo and CI text');
   assert.doesNotMatch(client, /fetch\('\//, 'relative URLs only');

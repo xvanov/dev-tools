@@ -246,6 +246,11 @@ const ROUTES: Route[] = [
     path: (url) => url.pathname === '/talk' || startsWith('/talk.', '/talk/', '/api/talk/')(url),
     handle: (c) => require('./talk.ts').route(c.req, c.res, c.url, c),
   },
+  // The Build board (dashboard/buildBoard.ts, D30): one card per Build agent run.
+  {
+    path: (url) => oneOf('/build-board.js', '/api/build')(url) || url.pathname.startsWith('/api/build/'),
+    handle: (c) => require('./buildBoard.ts').route(c.req, c.res, c.url, c),
+  },
   // The Factory layer (dashboard/factory.ts, factory.html): every factory job
   // from the worker's stored list, and its actions (X-PA guarded there).
   {

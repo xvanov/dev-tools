@@ -476,7 +476,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.match(page.body, /<script src="nav\.js" data-layer="factory"><\/script>/, 'the switcher, as the Factory layer');
     assert.match(page.body, /<link rel="stylesheet" href="theme\.css">/, 'the shared theme');
     assert.match(page.body, /<meta name="pa-page" content="[^"]+">/, 'a page token for unattended levels');
-    assert.match(page.body, /src="factory\.js"/, 'relative: works under termhub\'s /pa/');
+    assert.match(page.body, /src="build-board.js"/, 'relative: works under termhub\'s /pa/');
     const client = await call('GET', '/factory.js');
     assert.doesNotMatch(client.body, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/, 'no HTML sink: agents wrote this text');
     store.board = { jobs: [{ job_id: 'widget:015', title: 'a', state: 'needs_human', warnings: ['factory approve-direction 015 --app widget'] }], polled_at: new Date() };

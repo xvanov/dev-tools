@@ -15,180 +15,81 @@
   .meta { color: var(--ink-2); font-size: var(--text-sm); }
   .meta.bad { color: var(--bad); }
 
-  /* The settings panel (theme.css .jside): freshness, the spend line (today's PA
-     model spend, the factory's metered spend and what its Claude Code runs would
-     have cost at API prices), and the New job form. */
   .spend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .stat { background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px;
-    display: flex; flex-direction: column; min-width: 0; }
+  .stat { background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px; display: flex; flex-direction: column; min-width: 0; }
   .stat b { font: 600 var(--text-md)/1.2 var(--font-mono); }
   .stat span { color: var(--ink-2); font-size: var(--text-xs); }
 
   .new > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
   .new form { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); margin: 10px 0 4px; }
   .new label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
-  .new label.wide { grid-column: 1 / -1; }
   .new input, .new textarea, .new select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
     border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px; }
   .new textarea { min-height: 84px; resize: vertical; }
-  .new .row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+  .new .row { display: flex; gap: 8px; align-items: center; }
 
-  /* The one thing: the jobs, by group, across the whole width. */
-  main { display: grid; gap: 16px; padding: var(--jtop) var(--gutter) var(--gutter); grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
-  main #chatyes { grid-column: 1 / -1; margin-bottom: 0; }
-  main:empty::before { content: "No jobs to show. The panel (») says why."; color: var(--ink-3); font-size: var(--text-sm); }
+  /* The one thing: the agents' runs, across the whole width. */
+  main { display: grid; gap: 16px; padding: var(--jtop) var(--gutter) var(--gutter); grid-template-columns: minmax(0, 1fr); align-items: start; }
   section { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow-1); }
   section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   section h2 .n { color: var(--ink-2); font: 500 var(--text-sm) var(--font-mono); margin-left: 6px; }
   section.needs_you { border-color: var(--amber); }
   section.needs_you h2 { color: var(--amber); }
   .empty { color: var(--ink-3); font-size: var(--text-sm); }
+  .runsec { display: grid; gap: 0; }
 
-  .job { border-top: 1px solid var(--line); padding: 10px 0; }
-/* Landed on from a link (#job=…): plan E1's drill-down target. */
-.job.target, .runs li.target { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+  .job { border-top: 1px solid var(--line); padding: 12px 0; display: grid; gap: 8px; }
   .job:first-of-type { border-top: 0; }
-  .job .t { font-weight: 550; }
-  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .job .t { font-weight: 550; overflow-wrap: anywhere; }
+  .mono { font-family: var(--font-mono); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .chip { background: var(--surface-2); border-radius: var(--radius-pill); padding: 1px 8px; font-size: var(--text-xs); color: var(--ink-2); }
   .chip.mono { font-family: var(--font-mono); }
-  .chip.k-research, .chip.k-report { color: var(--signal); }
-  .chip.r-claude_session { color: var(--ok); }
-  .chip.s-needs_human, .chip.s-blocked, .chip.ci-failing { color: var(--amber); background: var(--amber-soft); }
-  .chip.s-failed { color: var(--bad); }
-  .chip.s-done, .chip.ci-passing { color: var(--ok); }
-  .why { color: var(--ink-2); font-size: var(--text-sm); margin-top: 4px; border-left: 2px solid var(--line); padding-left: 8px; }
-  .job.needs_you .why { border-left-color: var(--amber); }
-  .stories, .runs { list-style: none; margin: 6px 0 0; padding: 0; font-size: var(--text-sm); }
-  .stories li, .runs li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 1px 0; color: var(--ink-2); }
-  a { color: var(--signal); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .cost { color: var(--ink-2); font: var(--text-xs) var(--font-mono); margin-top: 4px; }
-  .excerpt { margin-top: 6px; font-size: 13px; white-space: pre-wrap; max-height: 7.5em; overflow: hidden;
-    background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 8px; }
-  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  details.more { margin-top: 4px; font-size: var(--text-sm); }
-  details.more > summary { cursor: pointer; color: var(--ink-2); }
-
-  button { font: inherit; font-size: 12px; border: 1px solid var(--line-strong); background: var(--surface-1);
-    color: var(--ink); border-radius: var(--radius); padding: 3px 10px; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--signal); }
-  button.primary { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
-  button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+  .chip.s-needs_human, .chip.s-waiting { color: var(--amber); background: var(--amber-soft); }
+  .chip.s-failed, .chip.s-stopped { color: var(--bad); }
+  .chip.s-done { color: var(--ok); }
+  .chip.s-running, .chip.s-starting { color: var(--signal); }
+  .why { color: var(--ink-2); font-size: var(--text-sm); border-left: 2px solid var(--line); padding-left: 8px; overflow-wrap: anywhere; }
+  .why.err { border-left-color: var(--bad); color: var(--bad); }
+  .why.result { border-left-color: var(--ok); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn, button { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 4px 10px; cursor: pointer; text-decoration: none; }
+  button.primary { background: var(--signal); color: var(--on-signal); border-color: transparent; }
+  button.danger { color: var(--bad); }
   button:disabled { opacity: .5; cursor: default; }
-
-  /* Read report: a sheet over the page. */
-  .sheet { position: fixed; inset: 0; background: var(--scrim); display: flex; justify-content: center; align-items: flex-start;
-    padding: 5vh 16px; z-index: 30; }
-  .sheet[hidden] { display: none; }
-  .sheet .paper { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); width: min(860px, 100%);
-    max-height: 90vh; overflow: auto; padding: 16px 22px; }
-  .sheet .bar { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-  .md h3, .md h4, .md h5 { margin: 14px 0 6px; }
-  .md p { margin: 6px 0; }
-  .md pre, .md code { font: 12px/1.4 var(--font-mono); background: var(--surface-2); border-radius: var(--radius-sm); }
-  .md pre { padding: 8px; overflow: auto; white-space: pre-wrap; }
-  .md code { padding: 0 4px; }
-  .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--ink-2); }
-  .md li.d1 { margin-left: 16px; } .md li.d2 { margin-left: 32px; }
-
-  /* Repos: the factory's registered repos, their gates and readiness. */
-  .repolist { list-style: none; margin: 8px 0 0; padding: 0; font-size: var(--text-sm); }
-  .repolist li { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
-  .repolist li:first-child { border-top: 0; }
-  .repolist .nm { font-weight: 550; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-  .repolist .why { flex-basis: 100%; margin-top: 0; }
-  .chip.rd-configured { color: var(--ok); }
-  .chip.rd-not_configured { color: var(--amber); background: var(--amber-soft); }
-  .chip.rd-missing_tool { color: var(--bad); }
-  #appform { display: grid; gap: 10px; margin-top: 10px; }
-  #appform label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
-  #appform input, #appform select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
+  button.linkish { border: 0; background: none; color: var(--signal); padding: 0 4px; font-size: var(--text-sm); }
+  button.linkish.cur { font-weight: 700; color: var(--ink); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .replyin { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
     border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px; }
-  #appform input.cmd { font-family: var(--font-mono); font-size: 12px; }
-  #appform .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  #appform fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin: 0; display: grid; gap: 6px; }
-  #appform legend { font-weight: 600; font-size: 13px; padding: 0 4px; }
-  #appform .gaterow { display: grid; grid-template-columns: 9em minmax(0, 1fr); gap: 6px; }
-  #appform .sug { font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
-  #appform .sug button { margin-left: 6px; font-size: 11px; padding: 1px 6px; }
-  #appform .row { display: flex; gap: 8px; align-items: center; }
-  @media (max-width: 560px) { #appform .gaterow, #appform .two { grid-template-columns: minmax(0, 1fr); } }
+  .askbox { border: 1px solid var(--amber); border-radius: var(--radius); padding: 8px; display: grid; gap: 6px; background: var(--amber-soft); }
+  .bpager { display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; }
 
-  /* The Board view (factory.board.client.js, plan 8.8.2). */
-  .viewsw { display: flex; gap: 4px; }
-  .viewsw button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
-  main.boardview { display: flex; flex-direction: column; gap: 14px; }
-  body.viewing main.boardview { margin-right: min(46vw, 720px); }
-  .bstrip, .brecent { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 14px; box-shadow: var(--shadow-1); }
-  .bstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
-  .bcards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); align-items: start;
-    background: none; border: 0; box-shadow: none; padding: 0; }
-  .bcard { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; box-shadow: var(--shadow-1);
-    display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .bcard.open { grid-column: 1 / -1; }
-  .bcard.needs_you { border-color: var(--amber); }
-  .bcard .t { font-weight: 600; }
-  .bprog, .bcost, .brow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
-  .brow { justify-content: space-between; }
-  .pbar { flex: 1 1 120px; height: 6px; background: var(--surface-2); border-radius: var(--radius-pill); overflow: hidden; min-width: 80px; }
-  .pbar > span { display: block; height: 100%; background: var(--signal); border-radius: inherit; transition: width .4s var(--ease); }
-  .pbar.delivered > span { background: var(--ok); }
-  .pbar.needs_you > span, .pbar.warn > span { background: var(--amber); }
-  .pbar.ended > span { background: var(--bad); }
-  .pbar.unknown > span { width: 30% !important; animation: bslide 1.6s var(--ease) infinite alternate; opacity: .6; }
-  @keyframes bslide { from { margin-left: 0; } to { margin-left: 70%; } }
-  .pbar.still > span { animation: none; opacity: 1; margin-left: 0; }
-  .btop { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); align-items: start; }
-  .bpager { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
-  .bpager button.cur { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
-  .bnow { font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
-  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: bpulse 1.4s ease-in-out infinite; }
-  @keyframes bpulse { 50% { opacity: .3; } }
-  @media (prefers-reduced-motion: reduce) { .pulse, .pbar.unknown > span { animation: none; } }
-  .dots { display: flex; flex-wrap: wrap; gap: 3px; }
-  .dot { width: 10px; height: 10px; padding: 0; border-radius: 50%; border: 0; background: var(--ink-3); cursor: pointer; }
-  .dot.ok { background: var(--ok); } .dot.failed { background: var(--bad); } .dot.running { background: var(--signal); animation: bpulse 1.4s ease-in-out infinite; }
-  button.linkish { border: 0; background: none; color: var(--signal); padding: 0; font-size: var(--text-sm); }
-  button.linkish:disabled { color: var(--ink-3); }
+  /* The timeline: one lane per agent. A bar pulses only while its agent works;
+     an ended agent's is static. A tick is one tool call (red when it failed). */
   .trace { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
   .lane { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 8px; align-items: center; }
   .lname { font: 600 var(--text-xs) var(--font-mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .track { position: relative; height: 22px; background: var(--surface-2); border-radius: var(--radius-sm); }
-  .blk { position: absolute; top: 2px; bottom: 2px; padding: 0 4px; border-radius: 4px; border: 1px solid transparent; font: 10px/16px var(--font-mono);
-    color: var(--on-signal); background: var(--ok); overflow: hidden; white-space: nowrap; min-width: 6px; }
-  .blk.failed { background: var(--bad); } .blk.running { background: var(--signal); }
-  .blk.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
-  .brecent ul.runs li { gap: 8px; }
-  .brecent h2 { margin: 0 0 6px; font-size: 13px; }
-  .brecent h2 + ul { margin-bottom: 10px; }
+  .track { position: relative; height: 22px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
+  .blk { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; background: var(--ok); opacity: .55; min-width: 4px; }
+  .blk.failed { background: var(--bad); }
+  .blk.running { background: var(--signal); opacity: .8; animation: bpulse 1.4s ease-in-out infinite; }
+  .tick { position: absolute; top: 1px; bottom: 1px; width: 2px; background: var(--ink); opacity: .7; }
+  .tick.err { background: var(--bad); opacity: 1; width: 3px; }
+  @keyframes bpulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .blk.running { animation: none; } }
 
-  /* The run viewer: one step's turns, on the right, streaming. */
-  .fviewer { position: fixed; top: 0; right: 0; bottom: 0; width: min(46vw, 720px); z-index: 25; background: var(--surface-1);
-    border-left: 1px solid var(--line); box-shadow: var(--shadow-2); display: flex; flex-direction: column; }
-  .fviewer[hidden] { display: none; }
-  @media (max-width: 900px) { .fviewer { width: 100vw; } body.viewing main.boardview { margin-right: 0; } }
-  .vbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  .vhead { padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
-  .vhead .t { font-weight: 600; }
-  .vlist { flex: 1; overflow: auto; padding: 8px 12px 24px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-  .vtext { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 var(--font-mono); }
-  .vturn .vtext { font-family: var(--font-sans); font-size: 13px; }
-  .vtool { border: 1px solid var(--line); border-left: 3px solid var(--signal); border-radius: var(--radius-sm); padding: 4px 8px; background: var(--surface-2); }
-  .vtool.err { border-left-color: var(--bad); }
-  .vtool > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; list-style: none; min-width: 0; }
-  .vtool > summary::-webkit-details-marker { display: none; }
+  .calls > summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-2); }
+  ul.steps, ul.msgs { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+  ul.steps li { display: flex; gap: 8px; align-items: baseline; min-width: 0; font-size: 12px; }
   .tname { font: 600 12px var(--font-mono); flex: none; }
   .targ { font: 12px var(--font-mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .tres { flex: none; font-weight: 700; } .tres.ok { color: var(--ok); } .tres.err { color: var(--bad); } .tres.pending { color: var(--ink-3); }
-  .vlabel { color: var(--ink-3); font-size: var(--text-xs); margin-top: 6px; text-transform: uppercase; letter-spacing: .04em; }
-  .vthink, .vprompt, .vdiff { color: var(--ink-2); }
-  .vthink > summary, .vprompt > summary, .vdiff > summary { cursor: pointer; font-size: var(--text-sm); }
-  .vdiff ul { margin: 4px 0; padding-left: 16px; } .add { color: var(--ok); } .del { color: var(--bad); }
-  .vmeta { color: var(--ink-3); font: var(--text-xs) var(--font-mono); }
-  .vgate, .vresult { border-radius: var(--radius-sm); padding: 6px 8px; font-size: 13px; }
-  .vgate.pass, .vresult.pass { background: color-mix(in srgb, var(--ok) 12%, transparent); }
-  .vgate.fail, .vresult.fail { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  ul.msgs { border-top: 1px solid var(--line); padding-top: 6px; gap: 6px; }
+  .msg .mt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+  .msg .ans { color: var(--ink-2); }
+  .msg.k-ask .mt { font-weight: 550; }
 
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--surface-0); padding: 8px 14px; border-radius: var(--radius); font-size: 13px; opacity: 0;
@@ -198,71 +99,32 @@
 </head>
 <body>
 <h1 class="sr-only">Build</h1>
-<div class="jframe">
-<aside class="jside" id="factory-settings" data-jside aria-label="Factory settings">
+<aside class="jside" id="factory-settings" data-jside aria-label="Build settings">
 <div>
   <h2>Status</h2>
   <span class="meta" id="updated">loading…</span>
 </div>
-<div class="viewsw" role="group" aria-label="View">
-  <button type="button" data-view="board" title="Progress, the steps on a time axis, and each step's turns">Board</button>
-  <button type="button" data-view="list" title="Jobs grouped: needs you, running, delivered, ended">List</button>
-</div>
 <div>
-  <h2>Spend</h2>
+  <h2>Agents</h2>
   <div class="spend" id="spend"></div>
 </div>
 <details class="new" id="newjob" open>
-  <summary>New job</summary>
+  <summary>New run</summary>
   <form id="newform" autocomplete="off">
-    <label class="wide">Title <input name="title" maxlength="200" required placeholder="What is it, in a few words"></label>
-    <label class="wide">Ask <textarea name="ask" placeholder="What you want, in your own words — the builder sees only this"></textarea></label>
-    <label>Kind <select name="kind"></select></label>
-    <label>Runtime <select name="runtime"></select></label>
-    <label>Repo <select name="repo"><option value="">loading repos…</option></select></label>
-    <label hidden data-repo-other>Other repo <input name="repoOther" placeholder="owner/name, e.g. innergy-dev/raven"></label>
-    <label data-code>End state <select name="delivery"></select></label>
-    <label class="wide" title="Each line becomes one acceptance criterion: the builder works until every line is true, and the reviewer checks against them.">Done when — one check per line (optional) <textarea name="done" placeholder="e.g.&#10;README explains the --dry-run flag&#10;CI is green"></textarea></label>
-    <div class="row"><button class="primary" type="submit">Start job</button><span class="meta" id="newhint"></span></div>
-  </form>
-</details>
-<!-- Repos (factory.apps.client.js): the repos the factory knows, their gates and
-     readiness; add one, edit one. -->
-<details class="new" id="repos">
-  <summary>Repos <span class="meta" id="repos-n"></span></summary>
-  <ul class="repolist" id="repolist"><li class="empty">loading…</li></ul>
-  <form id="addrepo" autocomplete="off">
-    <label class="wide">Add repo <input name="repo" placeholder="owner/name" required></label>
-    <label class="wide">Local path <input name="path" placeholder="optional: an existing clone"></label>
-    <label class="wide" title="On: the factory works on this repo on its schedule (serve_tick: true). Off: only while one of its jobs is active. A job you start is worked on either way."><input type="checkbox" name="serveTick" checked> Worked on automatically (on by default: you add a repo to send work to it)</label>
-    <div class="row"><button type="submit">Add repo</button><span class="meta" id="addhint"></span></div>
+    <label>Task<textarea name="task" required placeholder="What should the agent do?"></textarea></label>
+    <label>Model<select name="model"><option value="haiku">haiku</option><option value="sonnet" selected>sonnet</option><option value="opus">opus</option></select></label>
+    <label>Repo (optional, a checkout path)<input name="repo" type="text" placeholder="C:\repos\…"></label>
+    <div class="row"><button class="primary" type="submit">Start</button><span class="meta" id="newhint"></span></div>
   </form>
 </details>
 </aside>
 <main id="board" class="jmain" data-permission-card></main>
-</div>
-<div class="sheet" id="sheet" hidden>
-  <div class="paper" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-    <div class="bar"><h2 id="sheet-title">Report</h2><button type="button" id="sheet-close">Close</button></div>
-    <div class="meta" id="sheet-meta"></div>
-    <div id="sheet-body"></div>
-  </div>
-</div>
-<div class="sheet" id="appsheet" hidden>
-  <div class="paper" role="dialog" aria-modal="true" aria-labelledby="appsheet-title">
-    <div class="bar"><h2 id="appsheet-title">Repo</h2><button type="button" id="appsheet-close">Close</button></div>
-    <div class="meta" id="appsheet-meta"></div>
-    <form id="appform" autocomplete="off"></form>
-  </div>
-</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="events.js"></script>
-<!-- Jarvis's permission prompt (e.g. its factory_approve), answerable here too.
-     Before factory.js, which takes the page token out of the DOM. -->
+<!-- Jarvis's permission prompt (e.g. its build_reply), answerable here too.
+     Before build-board.js, which takes the page token out of the DOM. -->
 <script src="login.js"></script>
 <script src="permission.js"></script>
-<script src="factory-board.js"></script>
-<script src="factory.js"></script>
-<script src="factory-apps.js"></script>
+<script src="build-board.js"></script>
 </body>
 </html>
