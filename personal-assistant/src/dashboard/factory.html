@@ -20,6 +20,11 @@
   .stat b { font: 600 var(--text-md)/1.2 var(--font-mono); }
   .stat span { color: var(--ink-2); font-size: var(--text-xs); }
 
+  .usageline { display: flex; gap: 8px; align-items: center; min-height: 24px; }
+  .usageline .chip { font-size: var(--text-sm); padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink); }
+  .usageline .chip b { font-family: var(--font-mono); }
+  .usageline .chip.sev-warning { color: var(--amber); }
+  .usageline .chip.sev-critical { color: var(--bad); }
   .usage { display: grid; gap: 8px; }
   .meter { display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; border-radius: var(--radius); }
   .meter .mh { display: flex; justify-content: space-between; font-size: var(--text-sm); }
@@ -131,7 +136,10 @@
   </form>
 </details>
 </aside>
-<main id="board" class="jmain" data-permission-card></main>
+<main class="jmain">
+<div id="usageline" class="usageline" hidden aria-live="polite"></div>
+<div id="board" data-permission-card></div>
+</main>
 <div id="toast" role="status" aria-live="polite"></div>
 <script src="events.js"></script>
 <!-- Jarvis's permission prompt (e.g. its build_reply), answerable here too.

@@ -36,6 +36,12 @@ assert.deepStrictEqual(['2026-11-10T14:10:00Z', '2026-11-10T12:20:00Z', '2026-11
   assert.strictEqual(B.meterView({ percent: 95 }, '').severity, 'critical');
   assert.strictEqual(B.meterView({ percent: 250 }, '').width, 100);
   assert.strictEqual(B.meterView(null, '').text, '0%');
+  assert.strictEqual(B.extraView({ used_usd: 250, limit_usd: 250, percent: 100 }).text, '$250.00 used of $250.00 (100%)');
+  assert.strictEqual(B.extraView({ used_usd: 50, limit_usd: 200 }).text, '$50.00 used of $200.00 (25%)', 'percent derived when absent');
+  assert.strictEqual(B.extraView({ used_usd: 180, limit_usd: 200, percent: 90 }).severity, 'critical');
+  const sum = B.usageSummary({ ok: true, meters: [{ kind: 'weekly_all', percent: 12 }, { kind: 'session', percent: 78.4, severity: 'warning' }, { kind: 'weekly_scoped', percent: 99 }] });
+  assert.deepStrictEqual(sum, [{ label: '5h', text: '78%', severity: 'warning' }, { label: 'week', text: '12%', severity: 'normal' }]);
+  assert.deepStrictEqual(B.usageSummary({ ok: false }), []);
 }
 
 {

@@ -129,7 +129,31 @@
     };
   }
 
-  var pure = { resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
+  /** Extra usage, pure: "$250.00 used of $250.00 (100%)", a severity and a bar width. */
+  function extraView(x) {
+    var p = num(x && x.percent);
+    if (x && x.percent == null && num(x.limit_usd) > 0) p = num(x.used_usd) / num(x.limit_usd) * 100;
+    return {
+      text: money(x && x.used_usd) + ' used of ' + money(x && x.limit_usd) + ' (' + Math.round(p) + '%)',
+      severity: p >= 90 ? 'critical' : p >= 75 ? 'warning' : 'normal',
+      width: Math.max(0, Math.min(100, p)),
+    };
+  }
+
+  /** The header's one-line summary: the 5-hour and weekly meters as [{label, text, severity}] (empty when unknown). */
+  function usageSummary(u) {
+    var out = [];
+    if (!u || !u.ok) return out;
+    [['session', '5h'], ['weekly_all', 'week']].forEach(function (k) {
+      var m = (u.meters || []).filter(function (x) { return x && x.kind === k[0]; })[0];
+      if (!m) return;
+      var v = meterView(m, '', null);
+      out.push({ label: k[1], text: v.text, severity: v.severity });
+    });
+    return out;
+  }
+
+  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
   if (typeof document === 'undefined') return pure;
 
   // ---- the browser half ------------------------------------------------------------
@@ -203,17 +227,28 @@
     });
     var x = u.extra;
     if (x && x.limit_usd != null) {
-      rows.push(el('div', { class: 'meter sev-' + (x.percent >= 90 ? 'critical' : x.percent >= 75 ? 'warning' : 'normal') },
-        el('div', { class: 'mh' }, el('span', { text: 'Extra usage' }), el('b', { text: money(x.used_usd) + ' / ' + money(x.limit_usd) })),
-        el('div', { class: 'bar' }, el('i', { style: 'width:' + Math.max(0, Math.min(100, num(x.percent))) + '%' }))));
+      var xv = extraView(x);
+      rows.push(el('div', { class: 'meter sev-' + xv.severity },
+        el('div', { class: 'mh' }, el('span', { text: 'Extra usage' }), el('b', { text: xv.text })),
+        el('div', { class: 'bar' }, el('i', { style: 'width:' + xv.width + '%' }))));
     }
     if (u.stale) rows.push(el('div', { class: 'meta', text: 'as of ' + new Date(u.fetched_at).toLocaleTimeString() + ' · ' + (u.reason || 'refresh failed') }));
     box.replaceChildren.apply(box, rows.length ? rows : [el('div', { class: 'meta', text: 'limits unavailable' })]);
   }
+  // The same numbers on one line above the board, where the » drawer need not be opened.
+  function drawUsageLine() {
+    var line = document.getElementById('usageline');
+    if (!line) return;
+    var parts = usageSummary(state.usage);
+    line.hidden = !parts.length;
+    line.replaceChildren.apply(line, [el('span', { class: 'meta', text: 'Limits' })].concat(parts.map(function (p) {
+      return el('span', { class: 'chip sev-' + p.severity }, p.label + ' ', el('b', { text: p.text }));
+    })));
+  }
   function loadUsage() {
     clearTimeout(state.usageTimer);
-    return fetch('api/factory/usage').then(function (r) { return r.json(); }).then(function (d) { state.usage = d; drawUsage(); })
-      .catch(function () { state.usage = { ok: false }; drawUsage(); })
+    return fetch('api/factory/usage').then(function (r) { return r.json(); }).then(function (d) { state.usage = d; drawUsage(); drawUsageLine(); })
+      .catch(function () { state.usage = { ok: false }; drawUsage(); drawUsageLine(); })
       .then(function () { state.usageTimer = setTimeout(loadUsage, 30000); });
   }
 
@@ -353,14 +388,15 @@
     var board = document.getElementById('board');
     var runs = order(d.runs);
     var needs = d.needs_you || [];
-    board.replaceChildren(
+    // replaceChildren(null) would write the text "null"; drop the absent sections.
+    board.replaceChildren.apply(board, [
       needs.length ? el.apply(null, ['section', { class: 'needs_you' }, el('h2', {}, 'Needs you', el('span', { class: 'n', text: String(needs.length) }))].concat(needs.map(function (n) {
         return el('div', { class: 'job' }, el('div', { class: 't', text: '#' + n.run + (n.kind === 'idle' ? ' (idle) ' : ' ') + n.task }), el('div', { class: 'why', text: n.question }),
           el('a', { class: 'btn', href: '#run-' + n.run, text: n.kind === 'idle' ? 'Look at its card' : 'Answer on its card' }));
       }))) : null,
       el.apply(null, ['section', { class: 'runsec' }, el('h2', {}, 'Agents', el('span', { class: 'n', text: String(d.total) }))].concat(
         runs.length ? runs.map(function (r) { return card(r, d.now); }) : [el('div', { class: 'empty', text: 'No agent runs yet. Do on a Plan card starts one.' })])),
-      pager(d.total));
+      pager(d.total)].filter(function (n) { return n != null; }));
     var spend = document.getElementById('spend');
     if (spend) spend.replaceChildren(
       el('div', { class: 'stat' }, el('b', { text: String(d.live) }), el('span', { text: 'live agents' })),
