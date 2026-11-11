@@ -253,6 +253,8 @@ function renderSessions() {
       `<span class="title">${escapeHtml(s.title || s.id)}${sessionLinksHtml(s.links)}</span>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Close session">&#10005;</button>`;
+    item.dataset.id = s.id;
+    paintAgentState(item, s.id);
     for (const a of item.querySelectorAll('.s-links a')) a.addEventListener('click', (ev) => ev.stopPropagation());
     // The whole row opens the terminal — clicking anywhere but the buttons
     // (which stop propagation) counts, so you don't have to hit the text exactly.
@@ -309,9 +311,30 @@ function renderIdleBar() {
   bar.classList.toggle('live', (d.running || 0) > 0);
 }
 
+// Which agent sessions need the human. sessiond's idle hub already classifies
+// every claude/opencode/cursor session each second (shells are never tracked, so
+// they never get a state) and pushes each change as `session-state`. The row's
+// `needs-you` class follows it: waiting or limited = the agent is not working.
+const agentState = new Map();   // sessionId -> 'working' | 'waiting' | 'limited'
+function paintAgentState(el, id) {
+  const st = agentState.get(id);
+  el.classList.toggle('needs-you', st === 'waiting' || st === 'limited');
+}
+function setAgentState(id, st) {
+  if (!id) return;
+  if (st === 'working' || st === 'waiting' || st === 'limited') agentState.set(id, st);
+  else agentState.delete(id);
+  const el = document.querySelector(`.session-item[data-id="${CSS.escape(id)}"]`);
+  if (el) paintAgentState(el, id);
+}
+
 async function refreshIdle() {
   try {
     state.idle = await api('/api/idle');
+    // The snapshot is the authority; the push only makes a change instant.
+    const seen = new Set();
+    for (const s of state.idle.sessions || []) { seen.add(s.id); setAgentState(s.id, s.state); }
+    for (const id of [...agentState.keys()]) if (!seen.has(id)) setAgentState(id, null);
   } catch {
     // sessiond unreachable — the sidebar's own status line already says so
   }
@@ -3638,7 +3661,9 @@ function connectVoice() {
       catchUpArmed([...voice.armed]);
     } else if (msg.type === 'session-state') {
       // A session went working / waiting on you / limited / exited (sessiond's
-      // idle hub): redraw the sidebar now, not on the next 2 s poll.
+      // idle hub): tint its row now — a class flip on one element, no fetch, no
+      // rebuild — then redraw the sidebar from the poll.
+      setAgentState(msg.sessionId, msg.state);
       refresh();
       refreshIdle();
     } else if (msg.type === 'waiting') onWaiting(msg);

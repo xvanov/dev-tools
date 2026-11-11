@@ -340,7 +340,8 @@ ok('each state change and exit is broadcast as session-state, once', () => {
     { type: 'session-state', sessionId: 's2', state: 'exited', reason: null },
   ]);
   const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
-  assert.match(app, /msg\.type === 'session-state'\) \{\s*(\/\/[^\n]*\s*)*refresh\(\);/, 'the page redraws on it');
+  assert.match(app, /msg\.type === 'session-state'\) \{\s*(\/\/[^\n]*\s*)*setAgentState\(msg\.sessionId, msg\.state\);\s*refresh\(\);/, 'the page tints the row, then redraws on it');
+  assert.match(app, /classList\.toggle\('needs-you'/, 'waiting/limited rows get the needs-you class');
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'sessiond.ts'), 'utf8'), /forwardSessionStates\(idle, voice\)/, 'sessiond wires it');
 });
 

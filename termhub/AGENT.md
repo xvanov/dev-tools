@@ -1260,7 +1260,10 @@ layouts.
 `{type:'armed', sessionId, armed}` and `{type:'session-state', sessionId, state, reason}` (every idle-hub
 state change, `working` / `waiting` / `limited`, and `exited`, for any agent session, armed or not:
 the page redraws its sidebar on it instead of waiting for its 2 s poll; `lib/idleHub.js`
-`forwardSessionStates`). Client → server: `{type:'ping'}` → `{type:'pong'}`.
+`forwardSessionStates`). The page also flips the row's `needs-you` class (gray wash, `styles.css`)
+on `waiting`/`limited` straight from that message (`setAgentState` in `web/app.js`, one class
+toggle, no fetch), seeded and corrected by the 5 s `/api/idle` snapshot; shells have no state, so
+they never tint. Client → server: `{type:'ping'}` → `{type:'pong'}`.
 Arming goes over REST, not the socket, so it survives a dropped connection.
 
 **When it stays silent.** No speech engine at all, no `claude` CLI, no transcript, a session whose

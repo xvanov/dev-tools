@@ -81,6 +81,12 @@ html, body {
    background vs. just archived/restorable. */
 .session-item.open { box-shadow: inset 3px 0 0 var(--signal-soft); }
 .session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
+/* An agent (claude/opencode/cursor) that is not working — waiting on you, or
+   stopped at a limit. Set from sessiond's session-state push (app.js
+   setAgentState); shells never get it. A flat gray wash: no animation, so it
+   costs nothing to paint. */
+.session-item.needs-you { background: rgba(140, 140, 150, 0.28); }
+.session-item.needs-you:hover { background: rgba(140, 140, 150, 0.4); }
 .session-item .title { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
 .session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
 /* What the session belongs to (card, job, step, PR): a small second line. */
