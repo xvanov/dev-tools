@@ -172,6 +172,21 @@
 # re-mints the auth URL, per the 10-28 note), cause 6 (ForceDaemon already true, tray
 # present) and a reboot (uptime since 10-27). sessiond (pid 6664, 3 sessions) and the
 # loopback front stayed healthy throughout.
+#
+# WHAT THE 2026-11-10 ESCALATION FOUND (LAP-US101): cause 7 again, with the same trigger.
+# Tailscale auto-updated to 1.104.6 between 22:25 and 22:29 (MsiInstaller event 11707), and the
+# outage began at 22:30. The state was NeedsLogin with HaveNodeKey=true, LoggedOut=false,
+# ForceDaemon=true, the tray running and Health "You are logged out." This remedy reported only
+# "LOGGED OUT", for two reasons. The watchdog task is not elevated, so
+# Get-TailscaledKeyExpiry hit "Access is denied" on %ProgramData%\Tailscale\Logs and returned
+# ''. That function was the only path to the cause-7 diagnosis, so the diagnosis never printed.
+# The Application event log has no such restriction. The NeedsLogin branch now also asks
+# Get-TailscaleRecentUpdate for a Tailscale MSI install in the last 48h. If it finds one and
+# the node still has its key, it reports cause 7 and names the console fix, with no elevation
+# needed. There is still no repair: a human must open the auth URL, and 'Disable key expiry'
+# stops the next update from doing this again. Ruled out: cause 6 (ForceDaemon already true,
+# tray present), and `tailscale up` (it only re-mints the URL; see the 10-28 note). sessiond
+# (pid 30840, 1 session) and the loopback front (pid 23764) stayed healthy and were not touched.
 
 param(
   [string]$Signature,
@@ -312,6 +327,19 @@ function Get-TailscaledKeyExpiry {
   return ''
 }
 
+# Cause 7 evidence that does NOT need elevation (2026-11-10). A Tailscale auto-update restarts
+# tailscaled, which re-registers, and that is when an expired node key shows up. MsiInstaller
+# event 11707 ("Product: Tailscale -- Installation completed successfully.") is readable from
+# a non-elevated task. Returns the install time as a string, or ''.
+function Get-TailscaleRecentUpdate {
+  try {
+    $ev = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'MsiInstaller'; Id = 11707; StartTime = (Get-Date).AddHours(-48) } -MaxEvents 50 -ErrorAction Stop |
+          Where-Object { $_.Message -match 'Product: Tailscale\b' } | Select-Object -First 1
+    if ($ev) { return $ev.TimeCreated.ToString('yyyy-MM-dd HH:mm') }
+  } catch { }
+  return ''
+}
+
 # ---- 0. resolve the CLI (cause 1) -------------------------------------------
 
 $script:TsExe = Resolve-TailscaleExe
@@ -443,6 +471,14 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
       $expiredAt = Get-TailscaledKeyExpiry
       if ($expiredAt) {
         Write-Host "remedy: cause is a NODE KEY EXPIRY (tailscaled log: control reported the key expired at $expiredAt), not a logout or a termhub fault. Logging in clears it for one key lifetime only. To stop it recurring: Tailscale admin console -> Machines -> $env:COMPUTERNAME -> 'Disable key expiry'."
+      } else {
+        # The log read above needs elevation; the watchdog task usually is not. Fall back to
+        # the event log, which is readable either way (2026-11-10).
+        $updatedAt = Get-TailscaleRecentUpdate
+        $prefs7 = Get-TailscalePrefs
+        if ($updatedAt -and $prefs7 -and $prefs7.LoggedOut -eq $false) {
+          Write-Host "remedy: Tailscale auto-updated at $updatedAt (MsiInstaller 11707). That restarted tailscaled, and the node still holds its key (LoggedOut=false), so this is almost certainly a NODE KEY EXPIRY found at re-register (cause 7). It is not a logout and not a termhub fault. Logging in clears it for one key lifetime. To stop it recurring: Tailscale admin console -> Machines -> $env:COMPUTERNAME -> 'Disable key expiry'."
+        }
       }
     }
   }
