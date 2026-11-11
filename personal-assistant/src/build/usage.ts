@@ -131,7 +131,7 @@ async function fetchOnce(): Promise<Json> {
     });
     if (res.status === 429) {
       const after = Number(res.headers.get('retry-after')) * 1000;
-      return { ok: false, reason: 'usage endpoint rate-limited', fetched_at: now, retry_ms: Math.max(Math.min(BACKOFF_MAX_MS, BACKOFF_MS * 2 ** strikes++), Number.isFinite(after) ? after : 0) };
+      return { ok: false, reason: 'usage endpoint rate-limited', fetched_at: now, retry_ms: Math.max(Math.min(BACKOFF_MAX_MS, BACKOFF_MS * 2 ** strikes++), Number.isFinite(after) ? Math.min(after, BACKOFF_MAX_MS) : 0) };
     }
     if (!res.ok) return { ok: false, reason: `usage endpoint answered ${res.status}`, fetched_at: now };
     const { meters, extra } = parseUsage(await res.json());

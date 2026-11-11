@@ -124,7 +124,8 @@
       severity: sev,
       text: Math.round(p) + '%',
       reset: resetsIn(m && m.resets_at, now),
-      highlight: scoped && String(selectedModel || '').toLowerCase().indexOf(String(m.model).toLowerCase()) >= 0,
+      // "Fable", "Claude Fable 5.1": any distinctive word of the scope's model in the selected one.
+      highlight: scoped && String(m.model).toLowerCase().split(/[^a-z]+/).some(function (w) { return w.length >= 4 && w !== 'claude' && String(selectedModel || '').toLowerCase().indexOf(w) >= 0; }),
     };
   }
 
@@ -194,7 +195,7 @@
     }
     var sel = document.querySelector('#newform select[name="model"]');
     var rows = (u.meters || []).map(function (m) {
-      var v = meterView(m, sel ? sel.value : '', u.fetched_at);
+      var v = meterView(m, sel ? sel.value : '', new Date().toISOString());
       return el('div', { class: 'meter sev-' + v.severity + (v.highlight ? ' hot' : '') },
         el('div', { class: 'mh' }, el('span', { text: v.label }), el('b', { text: v.text })),
         el('div', { class: 'bar' }, el('i', { style: 'width:' + v.width + '%' })),

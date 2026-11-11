@@ -31,6 +31,8 @@ assert.deepStrictEqual(['2026-11-10T14:10:00Z', '2026-11-10T12:20:00Z', '2026-11
   assert.deepStrictEqual([hot.highlight, hot.text, hot.width, hot.severity], [true, '42%', 41.5, 'normal']);
   assert.strictEqual(B.meterView({ percent: 41, model: 'Fable' }, 'sonnet').highlight, false);
   assert.strictEqual(B.meterView({ percent: 41 }, 'fable').highlight, false);
+  assert.strictEqual(B.meterView({ percent: 41, model: 'Claude Fable 5.1' }, 'claude-fable-5-1').highlight, true, 'a longer display name still lights');
+  assert.strictEqual(B.meterView({ percent: 41, model: 'Claude Fable 5.1' }, 'claude-sonnet-5-5').highlight, false, '"claude" alone does not');
   assert.strictEqual(B.meterView({ percent: 95 }, '').severity, 'critical');
   assert.strictEqual(B.meterView({ percent: 250 }, '').width, 100);
   assert.strictEqual(B.meterView(null, '').text, '0%');
