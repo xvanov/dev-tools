@@ -71,16 +71,20 @@ assert.deepStrictEqual(core.validate(sample()), []);
     { id: 2, status: 'open', summary: 'Ask the vendor' },
     { id: 3, status: 'dispatched', summary: 'Build it' },
     { id: 4, status: 'dropped', summary: 'Old idea' },
-    { id: 5, status: 'open', summary: 'Folded', superseded_by: 2 },
+    { id: 5, status: 'open', summary: 'Folded', superseded_by: 7 },
     // card 6 does not exist
+    { id: 7, status: 'done', summary: 'The survivor' },
   ];
   const r = core.resolve(sample(), cards, { now: new Date('2026-01-02T03:04:05Z') });
-  assert.deepStrictEqual(r.tasks.map((t) => t.state), ['done', 'todo', 'doing', 'dropped', 'dropped', 'missing']);
-  assert.deepStrictEqual([r.progress.done, r.progress.total, r.progress.percent], [1, 3, 33], 'dropped, folded and missing cards leave the total');
+  assert.deepStrictEqual(r.tasks.map((t) => t.state), ['done', 'todo', 'doing', 'dropped', 'done', 'missing'], 'an open folded card follows the card it was folded into');
+  assert.deepStrictEqual([r.progress.done, r.progress.total, r.progress.percent], [2, 4, 50], 'dropped and missing cards leave the total');
+  // a folded card that was itself dropped stays dropped; one folded into an open card is open
+  assert.strictEqual(core.taskState({ status: 'dropped', superseded_by: 7 }, false, new Map([[7, { status: 'open' }]])), 'dropped');
+  assert.strictEqual(core.taskState({ status: 'open', superseded_by: 2 }, false, new Map([[2, { status: 'open' }]])), 'todo');
   assert.deepStrictEqual(r.progress.doing, ['Build it']);
   assert.strictEqual(r.tasks[5].title, 'card #6 not found');
-  assert.strictEqual(r.tasks[4].foldedInto, 2);
-  assert.deepStrictEqual(r.groups.map((g) => [g.name, g.done, g.total, g.percent]), [['Now', 1, 2, 50], ['Later', 0, 1, 0]]);
+  assert.strictEqual(r.tasks[4].foldedInto, 7);
+  assert.deepStrictEqual(r.groups.map((g) => [g.name, g.done, g.total, g.percent]), [['Now', 1, 2, 50], ['Later', 1, 2, 50]]);
   // a live build run marks a card as being worked on
   assert.strictEqual(core.resolve(sample(), cards, { runningCards: [2] }).tasks[1].state, 'doing');
   // nothing counted: 0%, not NaN

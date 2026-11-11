@@ -84,6 +84,13 @@ async function cardsFor(page: Row): Promise<{ cards: Row[]; running: number[] }>
   const ids = (page.tasks || []).map((t: Row) => Number(t.card)).filter((n: number) => Number.isInteger(n) && n > 0);
   if (!ids.length) return { cards: [], running: [] };
   const cards = await repo.commitments.forPage(ids);
+  // the cards they were folded into, a few hops deep, so a folded task follows its survivor
+  for (let hops = 0; hops < 4; hops++) {
+    const have = new Set(cards.map((c: Row) => Number(c.id)));
+    const more = [...new Set(cards.map((c: Row) => Number(c.superseded_by)).filter((n: number) => n > 0 && !have.has(n)))];
+    if (!more.length) break;
+    cards.push(...(await repo.commitments.forPage(more)));
+  }
   let running: number[] = [];
   if (typeof repo.buildRuns?.forCards === 'function') {
     try {

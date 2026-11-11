@@ -1158,8 +1158,9 @@ The format (version 1; `src/pages/core.ts` validates it and reports every proble
 ```
 
 `kind` is service, job, data, external, identity or person; `status` is live, planned, retiring or
-blocked. A task's title and status come from its card: a done card counts as done, a dropped or
-folded card and a card that does not exist leave the total (shown struck through), and a card
+blocked. A task's title and status come from its card: a done card counts as done, a dropped card and a
+card that does not exist leave the total (shown struck through), an open card the dedupe pass folded
+into another follows that card, and a card
 with a live build run or `doing: true` is "working on". Hover or click a flow in the legend to
 light up its arrows; click a box for its detail and its tasks.
 

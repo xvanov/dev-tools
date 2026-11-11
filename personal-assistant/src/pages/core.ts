@@ -14,9 +14,9 @@
 //   parsePublishUrl(text)             the claude.ai artifact link in the CLI's answer
 //
 // A task's card comes from the board: open/dispatched counts as to do, done as
-// done, dropped or folded into another card leaves the total (it is shown, struck
-// through). A card that does not exist is shown as "card #N not found" and does
-// not count either way.
+// done, dropped leaves the total (it is shown, struck through). An open card
+// folded into another (superseded_by) follows that card. A card that does not
+// exist is shown as "card #N not found" and does not count either way.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -154,11 +154,22 @@ function normalize(page: Row): Row {
   };
 }
 
-/** A card's state on a page: todo | doing | done | dropped | missing. */
-function taskState(card: Row | undefined, doing: boolean): string {
+/**
+ * A card's state on a page: todo | doing | done | dropped | missing. A card
+ * the dedupe pass folded into another (superseded_by) that is still open is
+ * the same work as its survivor, so it takes the survivor's state; a folded
+ * card that was itself closed keeps its own.
+ */
+function taskState(card: Row | undefined, doing: boolean, byId: Map<number, Row> = new Map()): string {
   if (!card) return 'missing';
-  if (card.superseded_by != null || card.status === 'dropped') return 'dropped';
-  if (card.status === 'done') return 'done';
+  let c: Row = card;
+  for (let hops = 0; hops < 5 && c.superseded_by != null && (c.status === 'open' || c.status === 'dispatched'); hops++) {
+    const next = byId.get(Number(c.superseded_by));
+    if (!next) break;
+    c = next;
+  }
+  if (c.status === 'dropped') return 'dropped';
+  if (c.status === 'done') return 'done';
   return doing ? 'doing' : 'todo';
 }
 
@@ -179,7 +190,7 @@ function resolve(page: Row, cards: Row[], { runningCards = [], now = new Date() 
   const running = new Set(runningCards.map(Number));
   const tasks = p.tasks.map((t: Row) => {
     const card = byId.get(Number(t.card));
-    const state = taskState(card, Boolean(t.doing) || running.has(Number(t.card)));
+    const state = taskState(card, Boolean(t.doing) || running.has(Number(t.card)), byId);
     return {
       card: t.card,
       group: t.group || 'Tasks',
