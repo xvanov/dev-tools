@@ -138,8 +138,8 @@ command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memor
 `pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
 (a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
 chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, factory_jobs,
-factory_job, sessions) are allowed; the actions (`CHAT_ACTION_TOOLS`: factory_start, factory_continue,
-factory_resume, factory_cancel, factory_approve, session_start, build_*, card_edit) are on no allow list, so every call asks,
+factory_job, sessions, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: factory_start, factory_continue,
+factory_resume, factory_cancel, factory_approve, session_start, build_*, card_edit, card_plan_apply) are on no allow list, so every call asks,
 and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
 the dispatch paths themselves (`dispatch.start`, `factory.cancelJob|approve|resume`), never a second
 implementation, and an unattended end state from them becomes a card (`suggested by the chat`), as
@@ -401,7 +401,17 @@ so any change can be undone unless the row moved since. `editCard` (`pa card edi
 the dashboard's Edit) changes a card's title, details, due date, project or notes in place and writes a
 same-status ledger row (`before.edit` holds the replaced values; `ledger.undo` refuses such a row). It also stamps
 `touched_at`, so re-distillation keeps the card as edited, and `keep.plan` matches a re-extraction of the
-original wording to it through that row (`orig_summary`) instead of adding a duplicate. The assistant may close things on its
+original wording to it through that row (`orig_summary`) instead of adding a duplicate.
+
+Several card changes at once are a **card plan** (`src/cardplans.ts`; tables `card_plan` and `card_plan_item`, sql/045 and
+sql-sqlite/017; repo aggregate `cardPlans`): `propose` validates every item (cards exist and are open, dates read, project
+known; all problems come back together) and stores it without touching a card; `apply` runs the ticked items in order as
+`you` (`editCard`; the ledger close plus its duplicate group, as `pa done --dismiss`; `request.add`, as `pa task add`), each
+ledger reason starting `card plan #N:`, records applied / skipped / failed per item, goes on past a failure, and never runs an
+applied item again (an item is claimed `pending` to `running` first). Item numbers are 1-based as shown. One yes: the
+dashboard's "Proposed card changes" card (`cardplan.client.js`, GET `/api/cardplans`, POST `/api/cardplans/:id/apply|discard`),
+`pa cardplan list|show|apply [--skip 1,3]|discard`, or the chat's `card_plan_apply`, whose approval card and spoken question
+name every change (`cardplans.approvalText`, wired in `sdkFeed.canUseTool`). A new plan posts a feed notice. The assistant may close things on its
 own (DURABLE.md), but never silently and never without that row. A new closer calls
 `transition`; it does not run `update commitment set status`. (The debrief predates this and
 keeps its own reversible log in `meeting_debrief.applied`.)

@@ -111,6 +111,16 @@ Actions — each asks the user to approve the call, so just make the call (no ne
 - \`card_edit {card, title?, details?, due?, project?, note?, reason?}\` changes a card in place (title, details,
   due date, project, or a dated note appended to the details). Use it when the user says "change the title /
   move the due date / add a note to card 412" — never dismiss and recreate a card to change it.
+- \`card_plan_propose {title, rationale?, sources?, items[]}\` — **several card changes at once.** Needs no yes: it only
+  stores a proposal. When the user wants more than one change ("read Drew's plan, then update our cards: close what
+  is not needed, edit, create new ones", "clean up the cards for X"), read and analyze first, then send ALL the
+  changes in ONE plan instead of calling \`card_edit\` / \`done\` / \`task_add\` one by one. Items: \`{op: edit, card,
+  title?, details?, due?, project?, note?, reason}\`, \`{op: close, card, as?: dismiss|done, reason}\`, \`{op: create,
+  title, details?, due?, project?, reason}\`; always give each a short \`reason\`. It checks every card is open and
+  every date reads, and returns all problems together: fix them and send again. Then say, in a line, that it is
+  waiting on the dashboard ("Proposed card changes": the user unticks what they do not want and presses Apply), or ask
+  "apply all N?" and, on a yes, call \`card_plan_apply {plan, skip?}\` — one prompt for the whole set. A single change
+  still goes straight to \`card_edit\` / \`task_add\` / \`done\`.
 
 - \`factory_start\` — start work from a card (\`card\`: its context becomes the brief, composed server-side)
   and/or the user's words (\`ask\`). kind code (default) | research | report. **Runtime: claude_session
@@ -240,6 +250,7 @@ lists the unread pushes, oldest first, each headed \`## notification <id>\`.
 // The chat's permissions, once, for both agent CLIs: settingsJson() renders
 // them for Claude Code, src/chat/agent.js for opencode.
 const ALLOW_COMMANDS = [
+  'cardplan list', 'cardplan show',
   'brief', 'inbox', 'show', 'search', 'who', 'runs', 'review', 'drafts', 'memory', 'meeting',
   'routine list', 'backup list', 'context', 'projects', 'run list', 'run status',
   // Listing is reading.
@@ -249,7 +260,7 @@ const ALLOW_COMMANDS = [
   // Reading the feed.
   'notify list', 'notify weights', 'notify digest',
 ];
-const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'card edit', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
+const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'card edit', 'cardplan apply', 'cardplan discard', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
   // Accepting a card starts work; a repo default changes what every later run delivers.
   'answer', 'delivery set', 'delivery clear', 'factory add',
   // A factory job: code becomes a card, research/report may start (pa factory

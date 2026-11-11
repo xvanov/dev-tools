@@ -10,12 +10,14 @@
 // read-only surface — a coding session in bypass mode must never see a tool
 // that starts work.
 //
-//   reads    board, card, factory_jobs, factory_job, sessions, build_runs, build_run
+//   reads    board, card, factory_jobs, factory_job, sessions, build_runs, build_run, card_plan_propose
+//            (card_plan_propose only STORES a proposed set of card changes for the user to
+//            approve on the dashboard: it changes no card, so it runs unasked)
 //            Allowed without a prompt (src/chat/index.js CHAT_READ_TOOLS).
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
 //   actions  factory_start, factory_continue, factory_resume, factory_cancel,
-//            factory_approve, session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit
+//            factory_approve, session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.ts start,
@@ -43,8 +45,8 @@ type Json = Record<string, any>;
 
 const repository = require('../repo');
 
-const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions', 'build_runs', 'build_run'];
-const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit'];
+const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions', 'build_runs', 'build_run', 'card_plan_propose'];
+const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_plan_apply'];
 
 // The user's rule: a factory job runs on Claude Code (their subscription)
 // unless they ask for the API ("with DeepSeek", "use the API", a model id).
@@ -166,9 +168,59 @@ const READ_TOOLS = [
       'One Build agent run in detail: state, cost and tokens, its agents (main and subagents) and last tool calls, and every message it and Jarvis exchanged (notes, asks, replies), plus the termhub link.',
     inputSchema: { type: 'object', properties: { run: { type: 'integer', minimum: 1 } }, required: ['run'], additionalProperties: false },
   },
+  {
+    name: 'card_plan_propose',
+    description:
+      "Propose SEVERAL card changes as ONE plan the user approves once (and can trim) on the dashboard's \"Proposed card changes\" card. Use it instead of calling card_edit / done / task_add one by one whenever the user wants more than one change (\"update our cards from Drew's plan\"): read and analyze first, then send all the changes here. This only STORES the proposal and changes no card, so it runs without a prompt. Each item: `op` edit | close | create. edit: `card` + any of title, details, due, project, note. close: `card` (+ `as`: dismiss = not needed (default) or done). create: `title` (+ details, due, project). Every item takes a short `reason` (the user sees it). `card` ids come from board and must be open; `due` is words like friday, tomorrow 3pm, 2d, 2026-11-20 (not past). Everything is checked first and all problems come back together: fix and send again. Returns the plan id and its link. Then tell the user it waits on the dashboard, or ask \"apply all N?\" and call card_plan_apply.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', maxLength: 200, description: 'What the plan is from, e.g. "Drew\'s VM migration plan".' },
+        rationale: { type: 'string', maxLength: 4000, description: 'The analysis in a few sentences: why these changes.' },
+        sources: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 500 }, description: 'Links or names of what you read.' },
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 60,
+          items: {
+            type: 'object',
+            properties: {
+              op: { type: 'string', enum: ['edit', 'close', 'create'] },
+              card: { type: 'string', maxLength: 20, description: 'A board card id, for edit and close.' },
+              title: { type: 'string', maxLength: 500 },
+              details: { type: ['string', 'null'], maxLength: 8000 },
+              due: { type: ['string', 'null'], maxLength: 80, description: 'null clears the date (edit).' },
+              project: { type: ['string', 'null'], maxLength: 120 },
+              note: { type: 'string', maxLength: 2000, description: 'Edit only: appended to the details as a dated line.' },
+              as: { type: 'string', enum: ['dismiss', 'done'], description: 'Close only; default dismiss.' },
+              reason: { type: 'string', maxLength: 300, description: 'Why, in a few words (shown to the user and kept in the ledger).' },
+            },
+            required: ['op'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['title', 'items'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const ACTION_TOOLS = [
+  {
+    name: 'card_plan_apply',
+    description:
+      "Apply a stored card plan (from card_plan_propose): ONE approval for all its changes (the user approves the call, which names how many). Use it when the user says yes in the conversation (\"apply all 6\"); `skip` lists item numbers (1-based, as shown in the plan) the user wants left out. Items run in order as the user's own changes; one that fails is recorded and the rest go on; an applied item never runs twice. Returns each item's result.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan: { type: 'integer', minimum: 1, description: 'The plan id card_plan_propose returned.' },
+        skip: { type: 'array', items: { type: 'integer', minimum: 1 }, description: 'Item numbers to leave out.' },
+      },
+      required: ['plan'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'card_edit',
     description:
@@ -869,6 +921,14 @@ async function handle(name: string, args: Json = {}) {
     case 'build_send': {
       await require('../build/messages.ts').send(Number(args.run), args.text);
       return { run: Number(args.run), sent: true };
+    }
+    case 'card_plan_propose': {
+      const r = await require('../cardplans.ts').propose({ title: args.title, rationale: args.rationale, sources: args.sources, items: args.items, via: 'chat' });
+      return { plan: r.id, items: r.items, link: r.link, waiting: 'on the dashboard (Proposed card changes), or apply it here with card_plan_apply' };
+    }
+    case 'card_plan_apply': {
+      const r = await require('../cardplans.ts').apply(Number(args.plan), { skip: args.skip || [] });
+      return { plan: r.id, status: r.status, applied: r.applied, failed: r.failed, skipped: r.skipped, items: r.items.map((i: Json) => ({ n: i.n, status: i.status, line: i.line, ...(i.error ? { error: i.error } : {}), ...(i.result?.created ? { card: i.result.created } : {}) })) };
     }
     case 'card_edit': {
       const card = parseCardId(args.card);

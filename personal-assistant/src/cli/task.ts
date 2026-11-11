@@ -25,6 +25,9 @@ const HELP = `
                                          pa ledger <id> (before, who, why) and pins the card against re-distillation
                                          --due: friday, tomorrow 3pm, 2d, 2026-11-20 (not a past date)
                                          --note: appended to the details as a dated line
+    pa cardplan list|show <id>           the card changes waiting for your yes (one set, approved once; dashboard: Proposed card changes)
+    pa cardplan apply <id> [--skip 1,3]  run the plan's changes in order (as you); --skip leaves those item numbers out
+    pa cardplan discard <id>             drop the plan; nothing changes
     pa policy                            which sources may create tasks (PA_COMMITMENT_SOURCES)
     pa policy close [--teams] [--apply]  close open cards the policy would not have created
                                          (dry run without --apply; cards you acted on are kept;
@@ -93,6 +96,32 @@ function make(out: any, fail: any) {
       if (!r.changed.length) return out(`#${r.id} unchanged · ${r.card.summary}`);
       out(`#${r.id} edited (${r.changed.join(', ')}) · ${r.card.summary}`);
       for (const [k, v] of Object.entries(r.before)) out(`  ${k}: ${v == null ? '(none)' : String(v).replace(/\s+/g, ' ').slice(0, 100)} -> ${r.after[k] == null ? '(none)' : String(r.after[k]).replace(/\s+/g, ' ').slice(0, 100)}`);
+    },
+
+    async cardplan(args: any, flags: any) {
+      const sub = String(args[0] || 'list').toLowerCase();
+      const plans = require('../cardplans.ts');
+      const MARK: Record<string, string> = { applied: '✓', failed: '✗', skipped: '-', pending: ' ', running: '…' };
+      const print = (p: Json) => {
+        out(`plan #${p.id} · ${p.status} · ${p.title}${p.items.length ? ` · ${p.items.length} change${p.items.length === 1 ? '' : 's'}` : ''}`);
+        if (p.rationale) out(`  ${p.rationale}`);
+        for (const s of p.sources || []) out(`  source: ${s}`);
+        for (const i of p.items) out(`  ${i.n}. [${MARK[i.status] || '?'}] ${i.enabled ? '' : '(unticked) '}${i.line}${i.error ? ` — ${i.error}` : ''}`);
+      };
+      if (sub === 'list') {
+        const all = await plans.list({});
+        if (!all.length) return out('no card plans waiting');
+        for (const p of all) print(p);
+        return;
+      }
+      const id = Number(args[1]);
+      if (!['show', 'apply', 'discard'].includes(sub) || !id) return fail('usage: pa cardplan list | show <id> | apply <id> [--skip 1,3] | discard <id>');
+      if (sub === 'show') return print(await plans.show(id));
+      if (sub === 'discard') return print(await plans.discard(id));
+      if (flags.skip === true) return fail('--skip needs item numbers, e.g. --skip 1,3');
+      const r = await plans.apply(id, { skip: typeof flags.skip === 'string' ? flags.skip : [] });
+      print(r);
+      out(`${r.applied} applied · ${r.failed} failed · ${r.skipped} skipped${r.ran === 0 ? ' (nothing left to run)' : ''}`);
     },
 
     async policy(args: any, flags: any) {

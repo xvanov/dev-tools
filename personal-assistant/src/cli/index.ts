@@ -57,6 +57,8 @@ const HELP = `pa — your context layer
                      [--preview]  print the job, end state and the brief that would be sent; start nothing
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa task add "<what>" [--due when] [--for person] [--owed-to-me]  a task because you asked for it
+    pa cardplan list|show <id>|apply <id> [--skip 1,3]|discard <id>
+                                     card changes proposed together, approved once (pa help task)
     pa card edit <id> [--title "…"] [--details "…"] [--due when|--no-due] [--project name] [--note "…"] [--reason "…"]
                                      change a card in place (keeps its id, source and history; pa help task)
     pa policy [close [--teams] [--apply]]  which sources create tasks; close cards the policy would not have made
@@ -1825,7 +1827,7 @@ Object.assign(commands, require('./audit.ts').make(out, fail));
 // only literal requires, and Node never adds `.ts`).
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
-  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
 };
 
 async function main(argv: string[]) {

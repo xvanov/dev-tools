@@ -98,6 +98,11 @@ function askTool(name: string, input: Json = {}) {
     case 'factory_cancel': q = `Cancel factory job ${job(i.job)}`; break;
     case 'factory_approve': q = `Approve the direction factory job ${job(i.job)} is waiting on`; break;
     case 'session_start': q = `Start a Claude session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}${i.mode === 'plan' ? ', read only,' : ''} to ${shorten(i.prompt, 70)}`; break;
+    case 'card_plan_apply': {
+      const skip = Array.isArray(i.skip) ? i.skip.length : 0;
+      q = `Apply card plan ${shorten(i.plan, 12)}${skip ? `, leaving out ${skip} item${skip === 1 ? '' : 's'}` : ''}, in one go (see the plan on the dashboard)`;
+      break;
+    }
     case 'card_edit': {
       const bits = [];
       if (i.title !== undefined) bits.push(`title to "${shorten(i.title, 50)}"`);
@@ -143,6 +148,8 @@ function describeTool(name: string, input: Json = {}) {
       case 'factory_resume': return `resuming factory job ${shorten(i.job, 40)}…`;
       case 'factory_cancel': return `cancelling factory job ${shorten(i.job, 40)}…`;
       case 'factory_approve': return `approving factory job ${shorten(i.job, 40)}…`;
+      case 'card_plan_apply': return `applying card plan ${shorten(i.plan, 12)}…`;
+      case 'card_plan_propose': return `writing up ${Array.isArray(i.items) ? i.items.length : ''} card changes…`;
       case 'card_edit': return `editing card ${shorten(i.card, 12)}…`;
       case 'session_start': return `starting a session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}: ${shorten(i.prompt, 50)}…`;
       default: return `using ${(tool ?? '').replace(/_/g, ' ')}…`;

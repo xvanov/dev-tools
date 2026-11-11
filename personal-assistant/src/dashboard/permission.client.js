@@ -68,7 +68,7 @@
     const what = String(current.ask || current.text || 'an action').replace(/…$/, '');
     c.append(el('h2', { textContent: 'Waiting for your yes' }), el('p', { className: 'what', textContent: `Jarvis: ${what}` }));
     // A generic prompt (SDK engine): the call's whole input, so the yes is to exactly what runs.
-    if (current.generic && current.detail) c.append(el('pre', { className: 'detail', textContent: String(current.detail) }));
+    if (current.detail) c.append(el('pre', { className: 'detail', textContent: String(current.detail) }));
     const row = el('div', { className: 'row' });
     if (current.approvable) {
       const yes = el('button', { type: 'button', className: 'yes', textContent: current.generic ? 'Allow once' : 'Approve' });

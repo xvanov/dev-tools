@@ -410,6 +410,7 @@ function createSdkFeed({
   function pendingView(p: any) {
     const v = { toolUseId: p.toolUseId, text: p.text, approvable: true, ask: p.ask || null };
     if (p.generic) Object.assign(v, { generic: true, detail: p.detail, voice: p.voice });
+    else if (p.detail) Object.assign(v, { detail: p.detail });
     return v;
   }
 
@@ -443,6 +444,14 @@ function createSdkFeed({
 
   // canUseTool: Claude Code's permission prompt, as a callback.
   function canUseTool(toolName: any, toolInput: any, opts: any = {}) {
+    // One yes for a whole card plan: the card names every change in it, so the yes is to exactly those.
+    if (/^mcp__pa-chat__card_plan_apply$/.test(String(toolName))) {
+      return require('../cardplans.ts').approvalText(toolInput).catch(() => null).then((extra: any) => askUser(toolName, toolInput, opts, extra));
+    }
+    return askUser(toolName, toolInput, opts, null);
+  }
+
+  function askUser(toolName: any, toolInput: any, opts: any, extra: { ask: string; detail: string } | null) {
     const toolUseId = String(opts.toolUseID || '');
     if (!toolUseId) return Promise.resolve({ behavior: 'deny', message: 'a permission request without a tool_use id cannot be answered' });
     // The chat's own actions keep their spoken question; anything else (a shell
@@ -465,9 +474,9 @@ function createSdkFeed({
         input: toolInput || {},
         text: T.describeTool(toolName, toolInput),
         // Heard by voice, the question carries the exact input (a description is the model's words).
-        ask: generic ? genericAsk(toolName, toolInput, opts.title).replace(/\. Allow once\?$/, voice ? ` — ${genericSpoken(toolName, toolInput)}. Allow once?` : '. Allow once?') : T.askTool(toolName, toolInput),
+        ask: extra?.ask ?? (generic ? genericAsk(toolName, toolInput, opts.title).replace(/\. Allow once\?$/, voice ? ` — ${genericSpoken(toolName, toolInput)}. Allow once?` : '. Allow once?') : T.askTool(toolName, toolInput)),
         generic,
-        detail: generic ? genericDetail(toolName, toolInput) : null,
+        detail: generic ? genericDetail(toolName, toolInput) : (extra?.detail ?? null),
         voice,
         resolve,
         timer: null,

@@ -486,6 +486,24 @@ const ROUTES: Route[] = [
       return c.send(c.res, 200, await setStatus(Number(c.m?.[1]), String(body.status)));
     },
   },
+  // The "Proposed card changes" card (cardplan.client.js): card plans waiting for one yes, src/cardplans.ts.
+  { method: 'GET', path: '/cardplan.js', handle: file('cardplan.client.js', JS) },
+  { method: 'GET', path: '/api/cardplans', handle: async (c) => c.send(c.res, 200, { plans: await require('../cardplans.ts').list({ status: c.url.searchParams.get('status') || null }) }) },
+  {
+    method: 'POST',
+    path: /^\/api\/cardplans\/(\d+)\/(apply|discard)$/,
+    handle: async (c) => {
+      const plans = require('../cardplans.ts');
+      const body = await c.body();
+      try {
+        const id = Number(c.m?.[1]);
+        return c.send(c.res, 200, c.m?.[2] === 'apply' ? await plans.apply(id, { skip: Array.isArray(body.skip) ? body.skip : [] }) : await plans.discard(id));
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return c.send(c.res, err.status || 500, { error: err.message });
+      }
+    },
+  },
   // A card edited in place (title, due date, a note, details, project): src/commitments.ts editCard.
   {
     method: 'POST',
