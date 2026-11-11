@@ -57,6 +57,9 @@
     '.pg svg.edges text{font-size:10.5px;fill:var(--pg-muted);paint-order:stroke;stroke:var(--pg-panel);stroke-width:3px;}',
     '.pg .map.dim svg.edges .e:not(.on){opacity:.08;}',
     '.pg .map.dim svg.edges .e.on path{stroke-width:3;}',
+    // Labels only on a highlighted flow or node: all of them at once overlap into noise.
+    '.pg svg.edges text{display:none;}',
+    '.pg .map.dim svg.edges .e.on text{display:inline;fill:var(--pg-ink);}',
     '.pg .legend{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0;}',
     '.pg .flow{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--pg-line);background:var(--pg-panel);color:var(--pg-ink);border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;}',
     '.pg .flow i{width:10px;height:10px;border-radius:50%;display:inline-block;}',
