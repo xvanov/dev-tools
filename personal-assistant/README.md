@@ -586,6 +586,7 @@ pa search <words>               hybrid search over everything captured
 pa who Sam                      identities, threads, open commitments
 
 pa done 42 [--dismiss|--reopen] close a commitment yourself
+pa card edit 42 --title "…" --due friday --note "…"   change a card in place (also --details, --project, --no-due, --reason); recorded in `pa ledger 42`
 pa task add "Send the deck" --due friday --for Sam   a task because you asked for it
 pa policy [close [--apply]]     which sources create tasks; close cards the policy would not have made
 pa ledger 42                    every status change of #42, who made it and why
@@ -1059,7 +1060,7 @@ subscription-equivalent, report excerpt, follow link) and `sessions` (termhub). 
 call: `factory_start` (from a card and/or your words; the brief is composed server-side from the
 card's context; runtime `claude_session` unless you ask for the API or name an API model; the end state
 from your words), `factory_continue` (a new job on an existing `--branch` / `--pr`), `factory_resume`,
-`factory_cancel`, `factory_approve` and `session_start` (Claude Code briefed with your prompt: a
+`factory_cancel`, `factory_approve`, `card_edit` (change a card's title, details, due date, project or add a note in place, instead of dismissing and recreating it) and `session_start` (Claude Code briefed with your prompt: a
 `claude_session` factory job like any other, `mode: plan` a read-only plan job). They
 are `pa do` / `pa factory …` in-process — an end state that merges or pushes to main still becomes a
 card. "What are my tasks today?" → `board`; "start on that one, PR ready to merge, CI green" →

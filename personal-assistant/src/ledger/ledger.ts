@@ -77,6 +77,13 @@ async function undo(transitionId: any) {
       return row;
     }
     const cur = await r.ledger.lockCommitment(row.commitment_id);
+    const edit = typeof row.before === 'string' ? JSON.parse(row.before) : row.before;
+    if (edit && edit.edit) {
+      // A card edit (src/commitments.ts editCard), not a status change: its
+      // `before` holds the replaced wording, not status columns. Edit again.
+      result = 'a card edit; edit the card again to change it';
+      return row;
+    }
     const after = {
       status: row.to_status,
       closed_reason: L.CLOSED.has(row.to_status) ? row.reason : null,

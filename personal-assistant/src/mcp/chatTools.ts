@@ -15,7 +15,7 @@
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
 //   actions  factory_start, factory_continue, factory_resume, factory_cancel,
-//            factory_approve, session_start, build_start, build_set_idle, build_reply, build_send, build_stop
+//            factory_approve, session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.ts start,
@@ -44,7 +44,7 @@ type Json = Record<string, any>;
 const repository = require('../repo');
 
 const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions', 'build_runs', 'build_run'];
-const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop'];
+const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit'];
 
 // The user's rule: a factory job runs on Claude Code (their subscription)
 // unless they ask for the API ("with DeepSeek", "use the API", a model id).
@@ -169,6 +169,25 @@ const READ_TOOLS = [
 ];
 
 const ACTION_TOOLS = [
+  {
+    name: 'card_edit',
+    description:
+      "Edit a board card in place instead of dismissing it and making a new one (the user approves each call). Change any of: `title` (the one-line summary), `details` (the longer description; replaces it), `due` (\"friday\", \"tomorrow 3pm\", \"2d\", \"2026-11-20\"; null clears it; not a date in the past), `project` (a name from `pa projects`; null clears it), `note` (appended to the details as a dated line, keeping what is there). Give only the fields to change. The card keeps its id, source and history; the edit is recorded in its ledger with `reason`, and the card is then left as the user set it. To close a card use `pa done`, not this. Returns what changed (before and after).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card: { type: 'string', maxLength: 20, description: 'A board card id (commitment), from board.' },
+        title: { type: 'string', maxLength: 200 },
+        details: { type: ['string', 'null'], maxLength: 8000 },
+        due: { type: ['string', 'null'], maxLength: 80, description: 'A date in the words when.ts reads, or null to clear.' },
+        project: { type: ['string', 'null'], maxLength: 120 },
+        note: { type: 'string', maxLength: 2000 },
+        reason: { type: 'string', maxLength: 200, description: 'Why, in a few words (the ledger keeps it).' },
+      },
+      required: ['card'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'build_reply',
     description:
@@ -850,6 +869,15 @@ async function handle(name: string, args: Json = {}) {
     case 'build_send': {
       await require('../build/messages.ts').send(Number(args.run), args.text);
       return { run: Number(args.run), sent: true };
+    }
+    case 'card_edit': {
+      const card = parseCardId(args.card);
+      if (card.proposal) throw new Error(`p${card.proposal} is an offer, not a card`);
+      const { editCard } = require('../commitments.ts');
+      const edit: Json = {};
+      for (const k of ['title', 'details', 'due', 'project', 'note', 'reason']) if (args[k] !== undefined) edit[k] = args[k];
+      const r = await editCard(card.commitment, edit);
+      return { card: r.id, changed: r.changed, before: r.before, after: r.after, summary: r.card?.summary ?? null };
     }
     case 'build_stop': {
       const r = await require('../build/index.ts').stop(Number(args.run), 'stopped from the chat');

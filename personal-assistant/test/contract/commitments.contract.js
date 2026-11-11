@@ -35,6 +35,33 @@ async function thread({ seed }, uniq, { mine = 'me@example.com' } = {}) {
 }
 
 module.exports = {
+  'setCard: writes summary, detail and due_at (other keys ignored), stamps touched_at on request': async (t) => {
+    const { repos, seed, db, assert } = t;
+    const c = await ask(t, { summary: 'setcard before' });
+    const due = new Date('2026-12-01T09:00:00Z');
+    await repos.commitments.setCard(c, { summary: 'setcard after', detail: 'more', due_at: due, status: 'done' }, false);
+    let row = await repos.commitments.byId(c);
+    assert.deepStrictEqual([row.summary, row.detail, new Date(row.due_at).toISOString(), row.status, row.touched_at], ['setcard after', 'more', due.toISOString(), 'open', null]);
+    await repos.commitments.setCard(c, { due_at: null }, true);
+    row = await repos.commitments.byId(c);
+    assert.strictEqual(row.due_at, null);
+    assert.ok(row.touched_at, 'touched');
+    void seed; void db;
+  },
+
+  'liveForItem: orig_summary is the wording a card was edited from, from its first edit row': async (t) => {
+    const { repos, seed, assert } = t;
+    const item = await seed.item({ body: 'live for item orig' });
+    const edited = await seed.commitment({ sourceItemId: item, summary: 'new wording' });
+    const plain = await seed.commitment({ sourceItemId: item, summary: 'plain' });
+    await repos.ledger.insertTransition({ commitmentId: edited, from: 'open', to: 'open', actor: 'you', reason: 'edited title', evidenceId: null, before: { edit: { summary: 'first wording' } }, at: new Date().toISOString() });
+    await repos.ledger.insertTransition({ commitmentId: edited, from: 'open', to: 'open', actor: 'you', reason: 'edited title', evidenceId: null, before: { edit: { summary: 'new wording' } }, at: new Date().toISOString() });
+    const rows = await repos.commitments.liveForItem(item);
+    const by = (id) => rows.find((r) => Number(r.id) === id);
+    assert.strictEqual(by(edited).orig_summary, 'first wording');
+    assert.ok(by(plain).orig_summary == null);
+  },
+
   'openForBrief: open asks of mine apart from notes to myself; closed and superseded left out': async (t) => {
     const { repos, seed, assert } = t;
     const tag = `brief-${Math.random()}`;
@@ -284,7 +311,7 @@ module.exports = {
   // --- src/commitments/blocks.js
 
   'blockTasks: an e2e card is not one of your tasks': async ({ repos, seed, assert }) => {
-    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const mark = 'e2e-abcdef01-abcd-abcd-abcd-abcdef012345';
     const real = await seed.commitment({ direction: 'owed_by_me', summary: 'Ship the sync' });
     const card = await seed.commitment({ direction: 'owed_by_me', summary: `Add a pa version verb that prints the served commit (${mark})` });
     const askOnly = await seed.commitment({ direction: 'owed_by_me', summary: 'Ship the field list' });
@@ -308,7 +335,7 @@ module.exports = {
   },
 
   'blockCandidates: an e2e card is not judged': async ({ repos, seed, assert }) => {
-    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const mark = 'e2e-abcdef01-abcd-abcd-abcd-abcdef012345';
     const real = await seed.commitment({ direction: 'owed_to_me', summary: 'Send the field list' });
     const card = await seed.commitment({ direction: 'owed_to_me', summary: `Add a pa version verb (${mark})` });
     const got = idsOf(await repos.commitments.blockCandidates(ALL));
@@ -390,7 +417,7 @@ module.exports = {
   },
 
   'blocksForBoard: a verdict that cites an e2e card is not read': async ({ repos, seed, assert }) => {
-    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const mark = 'e2e-abcdef01-abcd-abcd-abcd-abcdef012345';
     const dummy = await seed.commitment({ summary: `Add a pa version verb that prints the served commit (${mark})` });
     const realTask = await seed.commitment({ summary: 'Build the HubSpot sync' });
     const cited = await seed.commitment({ direction: 'owed_to_me', summary: 'ArgoCD sync' });
@@ -508,7 +535,7 @@ module.exports = {
 
   'dueForContext: an e2e card is not written up': async ({ repos, seed, assert }) => {
     const SELF = `si.source = 'claude_session'`;
-    const mark = 'e2e-12345678-1234-1234-1234-123456789abc';
+    const mark = 'e2e-abcdef01-abcd-abcd-abcd-abcdef012345';
     const real = await seed.commitment({ summary: 'write the context' });
     const card = await seed.commitment({ summary: `Add a pa version verb (${mark})` });
     const due = idsOf(await repos.commitments.dueForContext(500, 'v1 model', 30, SELF));

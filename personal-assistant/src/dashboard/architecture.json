@@ -375,7 +375,8 @@
           "build_set_idle",
           "build_reply",
           "build_send",
-          "build_stop"
+          "build_stop",
+          "card_edit"
         ]
       },
       "pa_verbs": {
@@ -412,6 +413,7 @@
           "drop",
           "say",
           "done",
+          "card edit",
           "remember",
           "forget",
           "routine add",
@@ -514,7 +516,8 @@
           "build_set_idle",
           "build_reply",
           "build_send",
-          "build_stop"
+          "build_stop",
+          "card_edit"
         ]
       },
       "code": [

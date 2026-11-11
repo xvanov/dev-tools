@@ -486,6 +486,22 @@ const ROUTES: Route[] = [
       return c.send(c.res, 200, await setStatus(Number(c.m?.[1]), String(body.status)));
     },
   },
+  // A card edited in place (title, due date, a note, details, project): src/commitments.ts editCard.
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/edit$/,
+    handle: async (c) => {
+      const body = await c.body();
+      const edit: Row = {};
+      for (const k of ['title', 'details', 'due', 'project', 'note', 'reason']) if (body[k] !== undefined) edit[k] = body[k];
+      try {
+        return c.send(c.res, 200, await require('../commitments.ts').editCard(Number(c.m?.[1]), edit));
+      } catch (e) {
+        const msg = (e as Error).message;
+        return c.send(c.res, /^no commitment/.test(msg) ? 404 : 400, { error: msg });
+      }
+    },
+  },
   // A proposal answered: yes/no, or the option picked for a question.
   {
     method: 'POST',

@@ -41,7 +41,7 @@ function same(a: any, b: any) {
 }
 
 /**
- * @param {Array} existing   [{id, status, summary, touched: boolean, refs: boolean}] the item's commitments
+ * @param {Array} existing   [{id, status, summary, orig_summary?, touched: boolean, refs: boolean}] the item's commitments
  * @param {Array} extracted  [{summary, ...}] the new extraction
  * @returns {{remove: Array<id>, insert: Array, keep: Array<id>}}
  */
@@ -51,7 +51,10 @@ function plan(existing: any, extracted: any) {
   const keep = new Set(acted.map((c: any) => c.id));
   const insert: any[] = [];
   for (const n of extracted) {
-    if (acted.some((c: any) => same(c.summary, n.summary))) continue;
+    // A card you retitled still answers to the wording it was extracted with
+    // (`orig_summary`, from its edit's ledger row), or the item's next
+    // distillation would add the original back as a second card.
+    if (acted.some((c: any) => same(c.summary, n.summary) || (c.orig_summary && same(c.orig_summary, n.summary)))) continue;
     const again = untouched.find((c: any) => !keep.has(c.id) && same(c.summary, n.summary));
     if (again) keep.add(again.id);
     else insert.push(n);

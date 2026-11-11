@@ -755,6 +755,30 @@ function commitmentCard(c) {
   const dropBtn = c.chase
     ? el('button', { title: 'They do not owe you this any more: close it as dismissed — nothing is chased. It moves to "Closed recently", where Reopen brings it back.' }, 'Not needed — close it')
     : el('button', { title: 'Not mine, not real, or no longer needed: close it as dismissed. It moves to "Closed recently", where Reopen brings it back.' }, 'Dismiss');
+  // Edit in place: title, due date, a note (the details are not on the card payload, so they are added to, not shown).
+  const editBtn = el('button', { title: 'Change the title or due date, or add a note, without dismissing and recreating the card' }, 'Edit');
+  const editForm = el('div', { class: 'confirm', hidden: true });
+  const fTitle = el('input', { type: 'text', value: c.summary, maxlength: '200', style: 'width:100%' });
+  const fDue = el('input', { type: 'text', placeholder: 'due: friday, tomorrow 3pm, 2026-11-20 (empty: unchanged; "none": clear)' });
+  const fNote = el('input', { type: 'text', placeholder: 'add a note (appended to the details)', style: 'width:100%' });
+  const fSave = el('button', { class: 'primary' }, 'Save');
+  const fCancel = el('button', {}, 'Cancel');
+  for (const i of [fTitle, fDue, fNote]) {
+    i.addEventListener('focus', () => { editing = true; });
+    i.addEventListener('blur', () => { editing = false; });
+  }
+  editBtn.addEventListener('click', () => { editForm.hidden = !editForm.hidden; if (!editForm.hidden) fTitle.focus(); });
+  fCancel.addEventListener('click', () => { editForm.hidden = true; editing = false; });
+  fSave.addEventListener('click', act(fSave, async () => {
+    const body = {};
+    if (fTitle.value.trim() && fTitle.value.trim() !== c.summary) body.title = fTitle.value.trim();
+    if (fDue.value.trim()) body.due = /^(none|no|clear)$/i.test(fDue.value.trim()) ? null : fDue.value.trim();
+    if (fNote.value.trim()) body.note = fNote.value.trim();
+    if (!Object.keys(body).length) { toast('nothing to change'); return; }
+    const r = await post(`api/commitments/${c.id}/edit`, body);
+    toast(r.changed.length ? `#${c.id} edited (${r.changed.join(', ')})` : `#${c.id} unchanged`);
+  }));
+  editForm.append(fTitle, fDue, fNote, el('div', { class: 'actions' }, fSave, fCancel));
   doBtn.addEventListener('click', act(doBtn, async () => {
     // Do starts the job and stays on this page: no tab, no navigation. The
     // run shows on the card (Context → "follow job") and on Build; opening
@@ -821,7 +845,8 @@ function commitmentCard(c) {
     dm ? dm.line : null,
     settledOnly ? null : el('div', { class: 'actions' },
       canDo ? doBtn : null, dm ? dm.button : null,
-      canReply ? replyBtn : null, doneBtn, blockBtn, dropBtn),
+      canReply ? replyBtn : null, doneBtn, editBtn, blockBtn, dropBtn),
+    editForm,
     ctx);
 }
 

@@ -98,6 +98,16 @@ function askTool(name: string, input: Json = {}) {
     case 'factory_cancel': q = `Cancel factory job ${job(i.job)}`; break;
     case 'factory_approve': q = `Approve the direction factory job ${job(i.job)} is waiting on`; break;
     case 'session_start': q = `Start a Claude session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}${i.mode === 'plan' ? ', read only,' : ''} to ${shorten(i.prompt, 70)}`; break;
+    case 'card_edit': {
+      const bits = [];
+      if (i.title !== undefined) bits.push(`title to "${shorten(i.title, 50)}"`);
+      if (i.due !== undefined) bits.push(i.due === null ? 'no due date' : `due ${shorten(i.due, 30)}`);
+      if (i.details !== undefined) bits.push('the details');
+      if (i.project !== undefined) bits.push(i.project === null ? 'no project' : `project ${shorten(i.project, 30)}`);
+      if (i.note !== undefined) bits.push(`a note "${shorten(i.note, 50)}"`);
+      q = `Change card ${shorten(i.card, 12)}: ${bits.join(', ') || 'edit it'}`;
+      break;
+    }
     default: return null;
   }
   return `${q.replace(/\s+/g, ' ').trim()}. Shall I?`;
@@ -133,6 +143,7 @@ function describeTool(name: string, input: Json = {}) {
       case 'factory_resume': return `resuming factory job ${shorten(i.job, 40)}…`;
       case 'factory_cancel': return `cancelling factory job ${shorten(i.job, 40)}…`;
       case 'factory_approve': return `approving factory job ${shorten(i.job, 40)}…`;
+      case 'card_edit': return `editing card ${shorten(i.card, 12)}…`;
       case 'session_start': return `starting a session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}: ${shorten(i.prompt, 50)}…`;
       default: return `using ${(tool ?? '').replace(/_/g, ' ')}…`;
     }

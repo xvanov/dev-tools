@@ -18,6 +18,13 @@ const HELP = `
                                          a task on your board because you asked for it
                                          --due: friday, tomorrow 3pm, 2d, 2026-11-20
                                          --for: who it is for (or, with --owed-to-me, who owes it to you)
+    pa card edit <id> [--title "…"] [--details "…"] [--due <when>|--no-due] [--project <name>|--no-project]
+                      [--note "…"] [--reason "…"]
+                                         change a card in place instead of dismissing and recreating it:
+                                         keeps its id, source link, runs and history; each edit is a row in
+                                         pa ledger <id> (before, who, why) and pins the card against re-distillation
+                                         --due: friday, tomorrow 3pm, 2d, 2026-11-20 (not a past date)
+                                         --note: appended to the details as a dated line
     pa policy                            which sources may create tasks (PA_COMMITMENT_SOURCES)
     pa policy close [--teams] [--apply]  close open cards the policy would not have created
                                          (dry run without --apply; cards you acted on are kept;
@@ -41,6 +48,31 @@ function addOptions(args: any, flags: any) {
   return { text: words.join(' '), due: str('due'), for: str('for'), owedToMe, project: str('project'), via: 'cli' };
 }
 
+const CARD_USAGE = 'usage: pa card edit <id> [--title "…"] [--details "…"] [--due <when>|--no-due] [--project <name>|--no-project] [--note "…"] [--reason "…"]';
+
+/**
+ * Pure. `pa card edit <id> …` flags → editCard's edit, or an error string.
+ * `--no-due` / `--no-project` arrive as `due: false` / `project: false` (parseArgs).
+ */
+function editOptions(flags: any): { edit: Json } | { error: string } {
+  const edit: Json = {};
+  const text = (name: string) => (typeof flags[name] === 'string' ? flags[name] : undefined);
+  for (const name of ['title', 'details', 'note', 'reason']) {
+    if (flags[name] === true) return { error: `--${name} needs a value. ${CARD_USAGE}` };
+  }
+  if (text('title') !== undefined) edit.title = text('title');
+  if (text('details') !== undefined) edit.details = text('details');
+  if (text('note') !== undefined) edit.note = text('note');
+  if (text('reason') !== undefined) edit.reason = text('reason');
+  if (flags.due === false) edit.due = null;
+  else if (flags.due === true) return { error: `--due needs a date. ${CARD_USAGE}` };
+  else if (text('due') !== undefined) edit.due = text('due');
+  if (flags.project === false) edit.project = null;
+  else if (flags.project === true) return { error: `--project needs a name. ${CARD_USAGE}` };
+  else if (text('project') !== undefined) edit.project = text('project');
+  return { edit };
+}
+
 function make(out: any, fail: any) {
   return {
     async task(args: any, flags: any) {
@@ -49,6 +81,18 @@ function make(out: any, fail: any) {
       const request = require('../commitments/request.ts');
       const r = await request.add(addOptions(args, flags));
       out(request.describe(r));
+    },
+
+    async card(args: any, flags: any) {
+      if (String(args[0] || '').toLowerCase() !== 'edit') return fail(CARD_USAGE);
+      const id = Number(args[1]);
+      if (!id) return fail(CARD_USAGE);
+      const o = editOptions(flags);
+      if ('error' in o) return fail(o.error);
+      const r = await require('../commitments.ts').editCard(id, o.edit);
+      if (!r.changed.length) return out(`#${r.id} unchanged · ${r.card.summary}`);
+      out(`#${r.id} edited (${r.changed.join(', ')}) · ${r.card.summary}`);
+      for (const [k, v] of Object.entries(r.before)) out(`  ${k}: ${v == null ? '(none)' : String(v).replace(/\s+/g, ' ').slice(0, 100)} -> ${r.after[k] == null ? '(none)' : String(r.after[k]).replace(/\s+/g, ' ').slice(0, 100)}`);
     },
 
     async policy(args: any, flags: any) {
@@ -73,4 +117,4 @@ function make(out: any, fail: any) {
   };
 }
 
-module.exports = { make, HELP, addOptions };
+module.exports = { make, HELP, addOptions, editOptions };

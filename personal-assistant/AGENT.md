@@ -139,7 +139,7 @@ command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memor
 (a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
 chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, factory_jobs,
 factory_job, sessions) are allowed; the actions (`CHAT_ACTION_TOOLS`: factory_start, factory_continue,
-factory_resume, factory_cancel, factory_approve, session_start) are on no allow list, so every call asks,
+factory_resume, factory_cancel, factory_approve, session_start, build_*, card_edit) are on no allow list, so every call asks,
 and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
 the dispatch paths themselves (`dispatch.start`, `factory.cancelJob|approve|resume`), never a second
 implementation, and an unattended end state from them becomes a card (`suggested by the chat`), as
@@ -397,7 +397,11 @@ judged, so a reopened commitment is not closed again by the same reply.
 writer of `commitment.status`, `closed_at` and `closed_reason`: you (`pa done`, the dashboard),
 reply-close, GitHub reconcile, self-note expiry, the dispatcher and the reconciler all call it,
 and each call leaves a `ledger_transition` row with its actor, reason and the columns it replaced,
-so any change can be undone unless the row moved since. The assistant may close things on its
+so any change can be undone unless the row moved since. `editCard` (`pa card edit`, the chat's `card_edit`,
+the dashboard's Edit) changes a card's title, details, due date, project or notes in place and writes a
+same-status ledger row (`before.edit` holds the replaced values; `ledger.undo` refuses such a row). It also stamps
+`touched_at`, so re-distillation keeps the card as edited, and `keep.plan` matches a re-extraction of the
+original wording to it through that row (`orig_summary`) instead of adding a duplicate. The assistant may close things on its
 own (DURABLE.md), but never silently and never without that row. A new closer calls
 `transition`; it does not run `update commitment set status`. (The debrief predates this and
 keeps its own reversible log in `meeting_debrief.applied`.)

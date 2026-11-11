@@ -65,7 +65,10 @@ const EXISTING = `
           or exists (select 1 from run r where r.commitment_id = c.id)
           or exists (select 1 from ledger_transition t where t.commitment_id = c.id)
           or exists (select 1 from ledger_evidence e where e.commitment_id = c.id)
-          or exists (select 1 from reply_close rc where rc.commitment_id = c.id)) as refs
+          or exists (select 1 from reply_close rc where rc.commitment_id = c.id)) as refs,
+         (select t.before->'edit'->>'summary' from ledger_transition t
+           where t.commitment_id = c.id and t.before->'edit'->>'summary' is not null
+           order by t.id limit 1) as orig_summary
     from commitment c
    where c.source_item_id = $1 and c.superseded_by is null`;
 
@@ -1035,6 +1038,19 @@ function create(db: Db) {
       where id = $1`,
         [id, projectId, repoPath, confidence, rationale]
       );
+    },
+
+    /**
+     * Writes the fields of a card edit (summary, detail, due_at: only the keys
+     * of `set` that are those), stamping touched_at when `touch` (a person's
+     * edit pins the card against re-distillation: src/distill/keep.ts).
+     */
+    async setCard(id: number | string, set: Row, touch = true) {
+      const cols = Object.keys(set).filter((k) => ['summary', 'detail', 'due_at'].includes(k));
+      const sets = cols.map((c, i) => `${c} = $${i + 2}`);
+      if (touch) sets.push(`touched_at = now()`);
+      if (!sets.length) return;
+      await db.query(`update commitment set ${sets.join(', ')} where id = $1`, [id, ...cols.map((c) => set[c])]);
     },
 
     /**

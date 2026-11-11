@@ -108,6 +108,9 @@ Actions — each asks the user to approve the call, so just make the call (no ne
 - \`build_start {card?, task?, repo?, model?, idle_after_s?}\` starts a Build agent (one Claude Code agent; prefer it to \`factory_start\` for "do this task"); \`build_set_idle <run> <seconds>\` changes its silence limit.
 - \`build_reply <run> <text>\` answers a Build agent's question; \`build_send <run> <text>\` types at its session;
   \`build_stop <run>\` kills it.
+- \`card_edit {card, title?, details?, due?, project?, note?, reason?}\` changes a card in place (title, details,
+  due date, project, or a dated note appended to the details). Use it when the user says "change the title /
+  move the due date / add a note to card 412" — never dismiss and recreate a card to change it.
 
 - \`factory_start\` — start work from a card (\`card\`: its context becomes the brief, composed server-side)
   and/or the user's words (\`ask\`). kind code (default) | research | report. **Runtime: claude_session
@@ -246,7 +249,7 @@ const ALLOW_COMMANDS = [
   // Reading the feed.
   'notify list', 'notify weights', 'notify digest',
 ];
-const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
+const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'card edit', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
   // Accepting a card starts work; a repo default changes what every later run delivers.
   'answer', 'delivery set', 'delivery clear', 'factory add',
   // A factory job: code becomes a card, research/report may start (pa factory
