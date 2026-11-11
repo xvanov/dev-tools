@@ -130,6 +130,20 @@ async function main() {
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(kept, 'messages.json'), 'utf8'))[0].body, 'hi');
     assert.deepStrictEqual(T.exportSummaries().map((s) => s.run), [long.id]);
     assert.deepStrictEqual(T.exportSummaries('2999-01-01'), []);
+
+    // A run that ends takes its "needs you" and "gone quiet" notices with it (they kept
+    // the chat re-announcing finished runs, 2026-11-10); another run's stay unread.
+    const ended = await mk('ends', 's9', 120);
+    const ask = await repo.buildRuns.addMsg({ runId: ended.id, dir: 'agent', kind: 'ask', body: 'which branch?' });
+    const ins = (key) => repo.notifications.insert({ kind: 'info', title: key, body: '', dedupeKey: key, priority: 'urgent', delivery: 'toast' });
+    await ins(`build-ask:${ask.id}`);
+    await ins(`build-idle:${ended.id}:2026-11-10T19:00:00Z`);
+    await ins(`build-idle:${ended.id}0:2026-11-10T19:00:00Z`); // run #<id>0, a different run
+    await B.finish(ended.id, 'done', { result: 'ok' });
+    const unread = async (key) => (await db.one('select read_at from notification where dedupe_key = $1', [key])).read_at == null;
+    assert.strictEqual(await unread(`build-ask:${ask.id}`), false, 'the ask notice is read');
+    assert.strictEqual(await unread(`build-idle:${ended.id}:2026-11-10T19:00:00Z`), false, 'the idle notice is read');
+    assert.strictEqual(await unread(`build-idle:${ended.id}0:2026-11-10T19:00:00Z`), true, 'another run keeps its notice');
   } finally {
     await db.close?.().catch?.(() => {});
     fs.rmSync(dir, { recursive: true, force: true });

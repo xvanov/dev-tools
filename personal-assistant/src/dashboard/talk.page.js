@@ -786,6 +786,17 @@
       // "Jarvis, sleep" / "stop listening" / "go to sleep" (and the other stop
       // phrases when nothing is being asked): back to wake-word-only, said.
       const sleepNow = conv.wake && (C.isSleepPhrase(text) || (!voiceAsk.pending && C.isStopPhrase(text)));
+      // Without the wake word there is no asleep to go back to: "sleep" / "shut down"
+      // turns the mic off (it used to go to the chat as a question).
+      if (!conv.wake && C.isSleepPhrase(text)) {
+        heard(text);
+        speaker.cancel();
+        cancelFastTurn();
+        voiceAsk.clear();
+        stopMic();
+        speaker.say(['Mic off. Tap the face when you need me.']);
+        return;
+      }
       if (sleepNow) {
         heard(text);
         speaker.cancel();

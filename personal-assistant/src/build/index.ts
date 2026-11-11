@@ -260,7 +260,24 @@ async function finish(id: number | string, state: 'done' | 'failed' | 'stopped',
   if (!r) return null;
   if (!LIVE.includes(r.state)) return r;
   await repo().update(id, { state, result: result ?? r.result, error, ended_at: new Date().toISOString() });
+  await settleNotices(id);
   return repo().byId(id);
+}
+
+/**
+ * An ended run's "needs you" and "has gone quiet" notices are no longer true:
+ * mark them read, so they leave the feed and the chat's INBOX.md. (They stayed
+ * unread, and every later push had the chat re-announce them, 2026-11-10.) A
+ * failure notice is raised after this and stays.
+ */
+async function settleNotices(id: number | string): Promise<void> {
+  try {
+    const asks = ((await repo().msgs(id)) as Row[]).filter((m) => m.kind === 'ask').map((m) => `build-ask:${m.id}`);
+    const n = await require('../repo').notifications.markReadByKeys(asks, [`build-idle:${id}:`]);
+    if (n) await require('../notify/chat.ts').writeInbox().catch(() => {});
+  } catch (err) {
+    log.warn('could not settle the run notices', { run: id, message: (err as Error).message });
+  }
 }
 
 /** The agent's last word: the result line (a PR url, a report path, one line) and the run is done. */

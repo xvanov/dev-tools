@@ -920,7 +920,7 @@
   const STOP_RE = /^(?:(?:ok(?:ay)?|alright|no)[,.!]?\s+)?(?:stop(?: it| talking| listening)?|shush|be quiet|quiet|cancel|never ?mind|that'?s (?:all|it)(?: for now)?|(?:thanks?|thank you|cheers),? jarvis|(?:good ?bye|bye|goodnight|good night|sleep),? jarvis|(?:go (?:back )?to )?sleep(?: now)?|that will be all)(?:,? jarvis)?[\s.!]*$/i;
 
   function isStopPhrase(text) {
-    return STOP_RE.test(String(text || '').trim());
+    return STOP_RE.test(stripWakeWord(String(text || '')).trim());
   }
 
   // ---- A spoken yes or no to the chat's "shall I?" ------------------------------------
@@ -1018,9 +1018,10 @@
     };
   }
 
-  // "Jarvis, sleep", "stop listening", "go to sleep": back to wake-word-only.
+  // "Jarvis, sleep", "stop listening", "go to sleep", "shut down": back to wake-word-only
+  // (or, with the wake word off, the mic off).
   function isSleepPhrase(text) {
-    return /^(?:(?:ok(?:ay)?|alright)[,.!]?\s+)?(?:(?:go (?:back )?to )?sleep(?: now)?|stop listening|(?:good ?night|good ?bye|bye)(?:,? jarvis)?)(?:,? jarvis)?[\s.!]*$/i.test(stripWakeWord(String(text || '')).trim());
+    return /^(?:(?:ok(?:ay)?|alright)[,.!]?\s+)?(?:(?:go (?:back )?to )?sleep(?: now)?|stop listening|shut ?(?:it )?down(?: now)?|power (?:down|off)|turn off|(?:good ?night|good ?bye|bye)(?:,? jarvis)?)(?:,? jarvis)?[\s.!]*$/i.test(stripWakeWord(String(text || '')).trim());
   }
 
   // whisper hears the tail of the wake word in the request ("Jarvis, what's

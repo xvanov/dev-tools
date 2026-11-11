@@ -1536,8 +1536,8 @@ same through termhub's `/pa/` proxy from a phone.
   the session's screen, checks it really is Claude Code's permission prompt for that call, and presses
   Enter on "Yes" (once — never "don't ask again") or Esc. Talk has no buttons; the dashboard shows the
   same prompt as a "Waiting for your yes" card with Approve and Deny. Any other prompt (a shell command,
-  an edit) is answered in termhub. "Jarvis, sleep", "stop listening" or "go to sleep" puts it back to
-  waiting for the wake word.
+  an edit) is answered in termhub. "Jarvis, sleep", "stop listening", "go to sleep" or "shut down" puts it
+  back to waiting for the wake word; with the wake word off, the same phrases turn the mic off.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
   (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama) that sees a compact snapshot of your day

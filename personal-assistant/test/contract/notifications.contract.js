@@ -79,6 +79,22 @@ module.exports = {
     assert.strictEqual(second.getTime(), first.getTime());
   },
 
+  'markReadByKeys: exact keys and key prefixes, unread only, a count': async ({ repos, assert }) => {
+    const tag = `mrk-${Date.now()}`;
+    const ins = (k) => repos.notifications.insert({ kind: 'info', title: k, body: '', url: null, dedupeKey: k, priority: 'normal', delivery: 'feed' });
+    const a = await ins(`${tag}:ask:1`);
+    const b = await ins(`${tag}:idle:7:t1`);
+    const c = await ins(`${tag}:idle:70:t1`);
+    const d = await ins(`${tag}:other`);
+    assert.strictEqual(await repos.notifications.markReadByKeys([], []), 0);
+    const n = await repos.notifications.markReadByKeys([`${tag}:ask:1`], [`${tag}:idle:7:`]);
+    assert.strictEqual(n, 2);
+    const read = new Set((await repos.notifications.feed({ limit: 500 })).filter((r) => r.read_at).map((r) => String(r.id)));
+    assert.ok(read.has(String(a.id)) && read.has(String(b.id)));
+    assert.ok(!read.has(String(c.id)) && !read.has(String(d.id)), 'prefix stops at the colon; other keys untouched');
+    assert.strictEqual(await repos.notifications.markReadByKeys([`${tag}:ask:1`], []), 0, 'already read: not counted again');
+  },
+
   'lockById: the row inside a transaction, null when missing': async ({ repos, assert }) => {
     const n = await repos.notifications.insert({ kind: 'info', title: 'l', body: '', url: null, dedupeKey: null, priority: 'normal', delivery: 'feed' });
     const got = await repos.withTx((r) => r.notifications.lockById(n.id));

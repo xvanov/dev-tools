@@ -62,6 +62,18 @@ function create(db: Db) {
       await db.query(`update notification set read_at = coalesce(read_at, ${NOW}) where id = $1`, [id]);
     },
 
+    /** Marks read every notification whose dedupe key is one of `keys` or starts with one of `prefixes`; returns how many. */
+    async markReadByKeys(keys: string[], prefixes: string[] = []) {
+      const conds: string[] = [];
+      const args: unknown[] = [];
+      for (const k of keys) { args.push(k); conds.push(`dedupe_key = ${'$'}${args.length}`); }
+      // Prefixes are fixed strings of ours (build-idle:12:), never user text; `_` in LIKE matching any one character is harmless here.
+      for (const p of prefixes) { args.push(`${p}%`); conds.push(`dedupe_key like ${'$'}${args.length}`); }
+      if (!conds.length) return 0;
+      const r = await db.query(`update notification set read_at = ${NOW} where read_at is null and (${conds.join(' or ')})`, args);
+      return Number((r && r.rowCount) || 0);
+    },
+
     /** One notification (inside withTx the transaction holds the write lock). */
     async lockById(id: number | string) {
       return db.one('select * from notification where id = $1', [id]);

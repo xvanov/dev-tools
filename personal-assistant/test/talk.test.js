@@ -562,6 +562,10 @@ const C = require('../src/dashboard/talk.core');
 
   for (const s of ['Stop.', 'stop', 'Thanks, Jarvis.', 'thank you jarvis', "That's all.", 'okay, stop talking', 'Never mind.', 'Goodbye Jarvis!']) assert.ok(C.isStopPhrase(s), s);
   for (const s of ['Stop the build on main.', 'Thanks for the summary, what else is due?', 'Tell Jarvis to stop', 'what is on today']) assert.ok(!C.isStopPhrase(s), s);
+  // 2026-11-10: "Jarvis, shut down" did nothing, and "Jarvis, stop" (wake word still in the text) was not a stop.
+  for (const s of ['Jarvis, shut down.', 'Jarvis shutdown', 'Shut it down.', 'Jarvis, power off.', 'Jarvis sleep', 'Hey Jarvis, go to sleep.']) assert.ok(C.isSleepPhrase(s), s);
+  for (const s of ['Shut down the VM tonight.', 'Turn off the build for raven', 'sleep on it and tell me tomorrow']) assert.ok(!C.isSleepPhrase(s), s);
+  assert.ok(C.isStopPhrase('Jarvis, stop.'));
 
   assert.strictEqual(C.stripWakeWord("Jarvis, what's on today?"), "what's on today?");
   assert.strictEqual(C.stripWakeWord('Hey Jarvis. Check my mail.'), 'Check my mail.');
