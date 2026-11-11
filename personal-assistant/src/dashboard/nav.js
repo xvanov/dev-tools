@@ -299,7 +299,12 @@
   // the next time it is safe: when the tab is hidden, or when you switch to it.
   var latest = {};      // host -> the commit it serves now
   var loadedWith = {};  // host -> the commit the shell page itself loaded with
-  function versionUrl(host) { return host === 'pa' ? paBase + 'api/version' : termhubBase() + '/api/version'; }
+  // termhub sends no CORS headers, so from the PA's origin its read-only checks go through
+  // the PA (api/termhub/version, api/termhub/update-check), which asks termhub server side.
+  function termhubCheck(name) {
+    return sameOrigin ? termhubBase() + '/api/' + (name === 'update-check' ? 'update/check' : name) : paBase + 'api/termhub/' + name;
+  }
+  function versionUrl(host) { return host === 'pa' ? paBase + 'api/version' : termhubCheck('version'); }
   function hostsInUse() {
     var used = {};
     used[dest(current).host] = true;
@@ -453,7 +458,7 @@
   }
   function checkUpdate() {
     if (framed) return;
-    fetch(termhubBase() + '/api/update/check', { cache: 'no-store', credentials: 'include' })
+    fetch(termhubCheck('update-check'), { cache: 'no-store', credentials: 'include' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (info) { if (info) { updateInfo = info; updateBtns.forEach(paintUpdate); } }, function () { /* not reachable from here */ });
   }

@@ -299,6 +299,22 @@ const ROUTES: Route[] = [
     },
   },
   { method: 'GET', path: '/api/version', handle: ({ res, send }) => send(res, 200, { commit: servedCommit() }) },
+  // termhub's two read-only version checks, for nav.js on the PA's own origin (termhub
+  // sends no CORS headers, so the browser cannot read them cross-origin). Fixed paths only.
+  ...([['/api/termhub/version', '/api/version'], ['/api/termhub/update-check', '/api/update/check']] as [string, string][]).map(([path, target]) => ({
+    method: 'GET',
+    path,
+    handle: async ({ res, send }: { res: any; send: any }) => {
+      try {
+        const r = await fetch(String(config.termhub.url).replace(/[/]$/, '') + target, { signal: AbortSignal.timeout(5000) });
+        const body = await r.text();
+        res.writeHead(r.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(body);
+      } catch {
+        return send(res, 502, { error: 'termhub unreachable' });
+      }
+    },
+  })),
   // What a typed follow-up time means, before it is set: the card previews it
   // with the same parser the chase uses (src/util/when.ts via chaseCore).
   {

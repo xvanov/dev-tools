@@ -11,9 +11,11 @@
  * holds the navigation only.
  *
  * The page itself shows only its one thing. A small » toggle in the top-left corner
- * opens the panel: closed by default, remembered per destination (localStorage
- * jarvis.settings.<id>) on wide screens; on a phone the panel slides over the page and
- * always starts closed. State: <html data-settings="open|closed">; each change fires
+ * opens the panel: closed by default, remembered once for every destination
+ * (localStorage jarvis.settings) on wide screens, so moving between pages keeps it as
+ * you left it; every open page follows a change at once (the storage event reaches the
+ * other destinations' iframes). On a phone the panel slides over the page and always
+ * starts closed. State: <html data-settings="open|closed">; each change fires
  * `jarvis:settings` ({detail: {open}}) on window (termhub drives its drawer from it).
  *
  * Switching is instant. The page you loaded is the shell: every other destination
@@ -83,10 +85,17 @@
   }
   applyTheme(readTheme());
 
-  // ---- the settings panel: closed until opened; remembered per destination, wide only --
+  // ---- the settings panel: closed until opened; one remembered state for all pages, wide only --
   var NARROW = window.matchMedia ? matchMedia('(max-width: 760px)') : { matches: false };
-  var settingsKey = 'jarvis.settings.' + current;
-  function readSettings() { try { return localStorage.getItem(settingsKey) === '1'; } catch (e) { return false; } }
+  var settingsKey = 'jarvis.settings';
+  function readSettings() {
+    try {
+      var v = localStorage.getItem(settingsKey);
+      // Before it was one setting, each page kept its own (jarvis.settings.<id>).
+      if (v === null) v = localStorage.getItem(settingsKey + '.' + current);
+      return v === '1';
+    } catch (e) { return false; }
+  }
   var settingsOpen = !NARROW.matches && readSettings();
   root.setAttribute('data-settings', settingsOpen ? 'open' : 'closed');
 
@@ -290,7 +299,12 @@
   // the next time it is safe: when the tab is hidden, or when you switch to it.
   var latest = {};      // host -> the commit it serves now
   var loadedWith = {};  // host -> the commit the shell page itself loaded with
-  function versionUrl(host) { return host === 'pa' ? paBase + 'api/version' : termhubBase() + '/api/version'; }
+  // termhub sends no CORS headers, so from the PA's origin its read-only checks go through
+  // the PA (api/termhub/version, api/termhub/update-check), which asks termhub server side.
+  function termhubCheck(name) {
+    return sameOrigin ? termhubBase() + '/api/' + (name === 'update-check' ? 'update/check' : name) : paBase + 'api/termhub/' + name;
+  }
+  function versionUrl(host) { return host === 'pa' ? paBase + 'api/version' : termhubCheck('version'); }
   function hostsInUse() {
     var used = {};
     used[dest(current).host] = true;
@@ -406,6 +420,12 @@
     try { window.dispatchEvent(new CustomEvent('jarvis:settings', { detail: { open: open } })); } catch (e) { /* old browser */ }
   }
 
+  // Another page (an iframe of this shell, or the shell itself) changed it: follow.
+  window.addEventListener('storage', function (e) {
+    if (e.key !== settingsKey || NARROW.matches) return;
+    setSettings(e.newValue === '1', { persist: false });
+  });
+
   // ---- Update: one for the whole system ---------------------------------------------
   // The stack (Ask, Plan, Build, Run, Meter, Map) is one repo and one version, so the
   // update control is the system's, in every page's panel, not termhub's. termhub
@@ -438,7 +458,7 @@
   }
   function checkUpdate() {
     if (framed) return;
-    fetch(termhubBase() + '/api/update/check', { cache: 'no-store', credentials: 'include' })
+    fetch(termhubCheck('update-check'), { cache: 'no-store', credentials: 'include' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (info) { if (info) { updateInfo = info; updateBtns.forEach(paintUpdate); } }, function () { /* not reachable from here */ });
   }
