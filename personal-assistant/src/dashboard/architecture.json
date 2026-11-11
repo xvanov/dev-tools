@@ -320,6 +320,7 @@
           "settings.json: defaultMode default, bypass mode disabled; verifyClaudeHome reads them back (and settings.local.json) before starting",
           "no `pa` shell command is allowed: every one asks",
           "the Microsoft 365 connector's read-only tools (mail, calendar and chat search, Teams lists, people, SharePoint; M365_READ_TOOLS in src/chat/index.ts) are allowed by name; any other M365 tool asks",
+          "shared Claude pages: the Claude Docs read tools (guide, read, query; DOCS_READ_TOOLS) are allowed by name, and the PreToolUse hook allows the Artifact tool's list and read actions only (artifactRead in src/chat/sdkFeed.ts); publishing, deleting or any Docs write asks. The chat is told that a claude.ai share notice is hidden from mail search by the M365 connector, so it lists shared artifacts instead",
           "the caveman plugin is off for this session only",
           "its action-tool prompts can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.ts checks the screen first"
         ],

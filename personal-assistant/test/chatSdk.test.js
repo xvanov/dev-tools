@@ -169,6 +169,13 @@ const sdkMsg = {
   assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', { decision: 'deny', rule: 'voice-no-merge' }).decision, 'deny');
   assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', { decision: 'allow', rule: 'oops' }).decision, 'ask', 'no rule makes an action run unasked');
   assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', null).decision, 'ask', 'without a policy an action still asks');
+  // Shared Claude pages: listing and reading run unasked; publishing, deleting, pinning still ask.
+  assert.strictEqual(S.artifactRead('Artifact', { action: 'list', scope: 'shared' }), true);
+  assert.strictEqual(S.artifactRead('Artifact', { action: 'read', url: 'https://claude.ai/artifact/x' }), true);
+  assert.strictEqual(S.artifactRead('Artifact', { file_path: 'page.html' }), false, 'publish (no action) asks');
+  assert.strictEqual(S.artifactRead('Artifact', { action: 'delete', url: 'u' }), false);
+  assert.strictEqual(S.artifactRead('Artifact', { action: 'read', file_path: 'x' }), false, 'a read that carries a file is not a plain read');
+  assert.strictEqual(S.artifactRead('Read', { action: 'read' }), false);
   assert.strictEqual(S.hookDecision('mcp__pa-chat__board', { decision: 'allow', rule: 'chat-reads' }).decision, 'allow');
   assert.strictEqual(S.hookDecision('Read', { decision: 'ask', rule: 'default' }), null, 'no matching rule: Claude Code\'s settings decide');
   assert.strictEqual(S.hookDecision('Bash', null), null);

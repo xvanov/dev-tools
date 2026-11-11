@@ -251,6 +251,8 @@ async function main() {
     for (const t of T.CHAT_ACTION_TOOL_NAMES) assert.ok(!s.permissions.allow.some((r) => r.endsWith(`__${t}`)), `${t} asks`);
     // Microsoft 365 reads run unasked, one by one; no wildcard that would let a send through.
     assert.ok(s.permissions.allow.includes('mcp__claude_ai_Microsoft_365__outlook_email_search'));
+    assert.ok(s.permissions.allow.includes('mcp__claude_ai_Claude_Docs__read'), 'reading a shared Claude doc runs unasked');
+    assert.ok(!s.permissions.allow.some((r) => /Claude_Docs__(batch|update|create|delete)/.test(r)), 'no Docs write is allowed');
     assert.ok(!s.permissions.allow.some((r) => /Microsoft_365(__\*)?$/.test(r)), 'no server-wide M365 rule');
     assert.ok(!s.permissions.allow.some((r) => /Microsoft_365__.*(send|create|update|delete|reply)/i.test(r)), 'no M365 write is allowed');
     const cmd = 'claude --permission-mode default';

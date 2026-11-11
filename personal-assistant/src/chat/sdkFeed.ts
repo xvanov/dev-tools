@@ -118,6 +118,17 @@ function hookDecision(toolName: any, res: any) {
 }
 
 const READ_TOOLS = ['Read', 'Grep', 'Glob'];
+
+/**
+ * Pure. The Artifact tool's look-ups (list what was shared, read a page) change
+ * nothing; its publish/delete/pin share one tool name, so a settings rule cannot
+ * split them: the hook allows list and read and leaves the rest to ask.
+ */
+function artifactRead(toolName: any, input: any) {
+  if (toolName !== 'Artifact') return false;
+  const a = String((input && input.action) || 'publish');
+  return (a === 'list' || a === 'read') && !(input && (input.file_path || input.file_paths || input.edits || input.files));
+}
 const DETAIL_MAX = 2000;
 const VOICE_MAX = 160;
 
@@ -513,6 +524,7 @@ function createSdkFeed({
       log.warn('policy unavailable for a chat tool call; Claude Code\'s settings decide', { message: err.message, tool: name });
     }
     let d = hookDecision(name, res);
+    if (!d && artifactRead(name, hookInput?.tool_input)) d = { decision: 'allow', reason: 'reading or listing shared artifacts changes nothing' };
     // A policy allow for a built-in read holds inside pa-home only (rules cannot match paths).
     if (d && d.decision === 'allow' && READ_TOOLS.includes(name) && !insideHome(home || stateDir(), hookInput?.tool_input)) d = null;
     if (!d) return { continue: true };
@@ -818,4 +830,4 @@ function createSdkFeed({
   return { send, history, subscribe, session, open, doorbell, answerPermission, drain, undrain, stop, canUseTool, preToolUse, onMessage };
 }
 
-module.exports = { createSdkFeed, claudeExecutable, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };
+module.exports = { createSdkFeed, claudeExecutable, subscriptionEnv, splitTool, hookDecision, artifactRead, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };

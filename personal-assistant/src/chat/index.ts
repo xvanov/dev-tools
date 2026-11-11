@@ -103,6 +103,17 @@ Prefer these over \`pa\` commands, files or the shell — they answer in one cal
 - \`build_runs\`, \`build_run <run>\` — Build agents (Do starts one Claude Code agent per task): state, cost, steps and the
   notes/questions they sent. \`needs_you\` lists agents blocked on a question (answer with \`build_reply\`) and idle ones, silent past their idle_after_s, with last tool call, last output and how long (look with \`build_run\`, nudge with \`build_send\`, lengthen with \`build_set_idle\`, or \`build_stop\`); a dead session fails the run at once. Tell the user.
 
+Mail, Teams and shared Claude pages (all read without asking):
+
+- Microsoft 365 search: \`outlook_email_search\` etc. Start broad — \`query\` alone, or \`sender\` alone, or
+  \`order: newest\` — then narrow; an empty result from a combined query is not proof the mail does not exist.
+- **Something someone "shared with us from Claude" (an artifact, a Claude doc, a claude.ai link) is not findable
+  in mail:** the share notice comes from Anthropic's no-reply address, and the connector hides Anthropic's automated
+  mail ("1 e-mail was left out…"). Look it up where it lives instead: \`Artifact\` with \`action: list, scope:
+  shared\` lists what was shared with the user (title, link), then \`Artifact\` \`action: read\` on its URL. A page
+  whose read shows only "Claude Docs" is a Claude doc: read it with the Claude Docs tools (\`guide\` topic.index,
+  then \`read\`/\`query\` on its id). Only list and read run unasked; publishing or deleting asks.
+
 Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
 
 - \`build_start {card?, task?, repo?, model?, idle_after_s?}\` starts a Build agent (one Claude Code agent; prefer it to \`factory_start\` for "do this task"); \`build_set_idle <run> <seconds>\` changes its silence limit.
@@ -295,6 +306,8 @@ const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTI
 // every search asked, and parallel searches asked again after each yes
 // (2026-11-10: "it keeps asking me about outlook search").
 const M365 = 'mcp__claude_ai_Microsoft_365__';
+// Claude Docs: reading a doc someone shared (guide, read, query) changes nothing.
+const DOCS_READ_TOOLS = ['mcp__claude_ai_Claude_Docs__guide', 'mcp__claude_ai_Claude_Docs__read', 'mcp__claude_ai_Claude_Docs__query'];
 const M365_READ_TOOLS = [
   'outlook_email_search', 'outlook_calendar_search', 'outlook_find_available_time', 'find_meeting_availability',
   'chat_message_search', 'teams_list_chats', 'teams_list_teams', 'teams_list_channels', 'teams_list_channel_messages',
@@ -329,7 +342,7 @@ function settingsJson() {
       // Reads through MCP tools only. A Bash prefix rule cannot tell `pa memory`
       // from `pa memory run`, so no `pa` shell command is allowed — every one asks.
       allow: [...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__${CHAT_MCP}__${t}`), `mcp__${CHAT_MCP}__pa`, `mcp__${CHAT_MCP}__${TASK_TOOL}`,
-        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`), ...M365_READ_TOOLS.map((t) => `${M365}${t}`)],
+        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`), ...M365_READ_TOOLS.map((t) => `${M365}${t}`), ...DOCS_READ_TOOLS],
       ask: [`Bash(${pa}:*)`, `Bash(${pa} *)`, ...[...ASK_COMMANDS, ...ALLOW_COMMANDS, ...CARD_COMMANDS].map((c) => `Bash(${pa} ${c}:*)`)],
     },
   };
@@ -437,4 +450,4 @@ async function ensureSession() {
   return { sessionId: created.id, created: true };
 }
 
-module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS, M365_READ_TOOLS };
+module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS, M365_READ_TOOLS, DOCS_READ_TOOLS };
