@@ -671,7 +671,8 @@
           "/ (board)",
           "/talk",
           "/factory",
-          "/architecture"
+          "/architecture",
+          "/pages/<slug> (Jarvis pages)"
         ],
         "Guards": [
           "binds loopback only and rejects a non-loopback Host (DNS rebinding)",
@@ -784,6 +785,7 @@
         "durable",
         "planner",
         "card-context",
+        "pages",
         "health",
         "memory-extract",
         "memory-consolidate",
@@ -931,6 +933,54 @@
         "personal-assistant/src/memory/prune.ts",
         "personal-assistant/src/ledger",
         "personal-assistant/src/dashboard/board.ts"
+      ]
+    },
+    {
+      "id": "pages",
+      "layer": "dashboard",
+      "name": "Pages",
+      "role": "A plan as one JSON file — a map of components and flows, short sections, and a task list whose status comes live from the cards — shown on the dashboard and exported as one self-contained HTML file that can be published to claude.ai.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "<data dir>/pages/<slug>.json (PA_PAGES_DIR); dashboard /pages/<slug>",
+        "personal": "<data dir>/pages/<slug>.json (PA_PAGES_DIR); dashboard /pages/<slug>"
+      },
+      "details": {
+        "Source of truth": "<slug>.json under PA_PAGES_DIR (default <data dir>/pages): version, title, summary, links, map {layers, nodes, edges, flows}, sections, tasks [{card, group, blockedOn, nodes, doing}], publish {url, publishedAt, hash} (src/pages/core.ts validates it)",
+        "Progress": "a task's title and status come from its card: done counts, dropped or folded cards and missing ones leave the total; a card with a live build run, or doing: true, is 'working on'",
+        "One renderer": "src/dashboard/page.client.js draws the dashboard page and the export alike: textContent only, its own light/dark tokens, nothing loaded from elsewhere",
+        "Routes": "/pages/<slug>, /page.client.js, /pages.list.js (the Plan tab's Pages card), GET /api/pages, GET /api/pages/<slug>; read-only",
+        "Verbs": "pa page list | show | import | export | doing | publish",
+        "Publish": "pa page publish exports <slug>.html and runs claude -p headless with CLAUDE_CODE_ARTIFACT=1 and only the Artifact and Read tools, on the machine's Claude login; the link is stored in the page and later publishes update it in place",
+        "Sync": "the worker's pages pass (PA_PAGES_SYNC_SECONDS) re-exports a page whose snapshot hash changed and republishes a published one at most every 10 minutes; PA_PAGES_REPUBLISH=off stops the republish"
+      },
+      "env": [
+        {
+          "name": "PA_PAGES_DIR",
+          "default": null,
+          "note": "where pages live; unset: <data dir>/pages"
+        },
+        {
+          "name": "PA_PAGES_SYNC_SECONDS",
+          "default": "300",
+          "note": "how often the worker re-exports changed pages"
+        },
+        {
+          "name": "PA_PAGES_REPUBLISH",
+          "default": "on",
+          "note": "off: the worker never republishes to claude.ai"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/pages/core.ts",
+        "personal-assistant/src/pages/index.ts",
+        "personal-assistant/src/dashboard/pages.ts",
+        "personal-assistant/src/dashboard/page.client.js",
+        "personal-assistant/src/dashboard/pages.list.client.js",
+        "personal-assistant/src/cli/page.ts"
       ]
     },
     {
@@ -2276,6 +2326,16 @@
       "from": "build-agent",
       "to": "termhub",
       "label": "POST /api/sessions; input; DELETE (Stop)"
+    },
+    {
+      "from": "worker",
+      "to": "pages",
+      "label": "pages pass: re-export, republish"
+    },
+    {
+      "from": "pages",
+      "to": "commitments",
+      "label": "task status from cards"
     }
   ],
   "examples": [

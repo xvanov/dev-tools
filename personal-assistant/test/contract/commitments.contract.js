@@ -285,6 +285,14 @@ module.exports = {
     assert.strictEqual(await repos.commitments.summaryRow(0), null);
   },
 
+  'forPage: the named cards with status and fold; unknown ids absent': async ({ repos, seed, assert }) => {
+    const a = await seed.commitment({ summary: 'page task a' });
+    const b = await seed.commitment({ summary: 'page task b', status: 'done' });
+    const rows = await repos.commitments.forPage([a, b, 999999999, 'x']);
+    assert.deepStrictEqual(rows.map((r) => [Number(r.id), r.status, r.summary]), [[a, 'open', 'page task a'], [b, 'done', 'page task b']]);
+    assert.deepStrictEqual(await repos.commitments.forPage([]), []);
+  },
+
   'openDuplicatesOf: the open rest of the duplicate group, closed ones left out': async ({ repos, seed, assert }) => {
     const a = await seed.commitment();
     const b = await seed.commitment();

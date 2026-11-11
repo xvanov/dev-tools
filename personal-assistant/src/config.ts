@@ -660,6 +660,17 @@ const config = {
     model: env('PA_CARD_CONTEXT_MODEL') || reconcileModel,
   },
 
+  // Jarvis pages (src/pages): one JSON file per page under PA_PAGES_DIR, rendered
+  // in the dashboard and exported as one HTML file. The worker's `pages` pass
+  // re-exports a page whose cards changed every PA_PAGES_SYNC_SECONDS and
+  // republishes a published one (claude CLI, Artifact tool) at most every
+  // 10 minutes; PA_PAGES_REPUBLISH=off keeps the claude.ai copy as it is.
+  pages: {
+    dir: env('PA_PAGES_DIR', path.join(dataDir, 'pages')),
+    syncSeconds: envInt('PA_PAGES_SYNC_SECONDS', 300),
+    republish: env('PA_PAGES_REPUBLISH', 'on') !== 'off',
+  },
+
   // The repo registry (src/repos): `pa repos sync` and the hourly worker pass.
   // The model only writes a profile for a repo that is new or whose README or
   // manifests changed, a handful of repos per call, on the cheap pass model.

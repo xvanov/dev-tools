@@ -295,6 +295,14 @@ function create(db: Db) {
       return db.one('select id, status, summary from commitment where id = $1', [id]);
     },
 
+    /** The cards a Jarvis page lists (src/pages); ids that name no card are absent. */
+    async forPage(ids: Array<number | string>) {
+      const list = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      if (!list.length) return [];
+      const ph = list.map((_, i) => `$${i + 1}`).join(',');
+      return db.rows(`select id, status, summary, superseded_by, closed_at, due_at from commitment where id in (${ph}) order by id`, list);
+    },
+
     /** The open rest of `id`'s duplicate group, `id` itself excluded. */
     async openDuplicatesOf(id: number | string) {
       return db.rows(DUPLICATE_SET_SQL, [Number(id)]);

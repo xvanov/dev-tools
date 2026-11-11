@@ -416,6 +416,14 @@ own (DURABLE.md), but never silently and never without that row. A new closer ca
 `transition`; it does not run `update commitment set status`. (The debrief predates this and
 keeps its own reversible log in `meeting_debrief.applied`.)
 
+**A page's JSON file is its only source; everything else is drawn from it.** A Jarvis page (`src/pages`,
+README "Pages") lives in `<PA_PAGES_DIR>/<slug>.json`, outside the repo (pages hold private plans; this repo is
+public, so tests and fixtures use made-up data). The dashboard's `/pages/<slug>` and the exported `<slug>.html`
+are drawn by the same `page.client.js` (textContent only, nothing loaded from elsewhere: `test/pages.test.js`);
+the claude.ai Artifact is a copy of the export, never edited there. Task status is read from the cards at
+render time and never written back into the page. Pages change no card: the routes are read-only, and
+`pa page publish` / the `pages` pass reach the network only through `claude -p` with only the Artifact tool (and Read, which it needs).
+
 **Durable tasks act through checkpointed steps and re-read before acting.** Work that waits (a
 chase waiting on a reply, a run waiting to end) is an Absurd task (`src/durable`, schema vendored
 unchanged in `vendor/absurd/` at the version `absurd-sdk` is pinned to — upgrade it with a new

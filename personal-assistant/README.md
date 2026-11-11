@@ -1127,6 +1127,52 @@ connector in `/mcp`, `gh auth refresh -s read:project`) are the same kind of req
 command to copy and a **Done** button; `pa doctor` opens them for failing checks and closes them
 when the check passes.
 
+### Pages: a plan with a map and live progress
+
+A page is one JSON file — the source of truth — that the dashboard shows at `/pages/<slug>`
+(listed under **Pages** on Plan) and that exports to one self-contained HTML file, which can be
+published to claude.ai as an Artifact for sharing. Both are drawn by the same renderer
+(`src/dashboard/page.client.js`), so they look the same; the claude.ai copy is a copy.
+
+```bash
+pa page import plan.json            # validate and store it (PA_PAGES_DIR, default <data dir>/pages)
+pa page list                        # every page: percent done, what is being worked on, where published
+pa page show <slug>                 # its tasks, read live from their cards
+pa page export <slug> [--out f]     # <pages dir>/<slug>.html
+pa page doing <slug> <card> [--off] # mark the task being worked on
+pa page publish <slug>              # export, then publish with the claude CLI (Artifact tool)
+```
+
+The format (version 1; `src/pages/core.ts` validates it and reports every problem at once):
+
+```json
+{ "version": 1, "slug": "my-plan", "title": "…", "summary": "…", "project": "optional",
+  "links": [{ "label": "spec", "url": "https://…" }],
+  "map": { "layers": [{ "id": "apps", "label": "Apps" }],
+           "nodes": [{ "id": "app", "label": "App", "layer": "apps", "kind": "service", "status": "live", "detail": "…" }],
+           "edges": [{ "from": "app", "to": "db", "label": "writes", "flows": ["save"], "style": "solid" }],
+           "flows": [{ "id": "save", "label": "Save", "color": "#2f6fde", "description": "…" }] },
+  "sections": [{ "heading": "Why", "body": "Paragraphs split by blank lines.\n\n- and bullets" }],
+  "tasks": [{ "card": 123, "group": "Now", "blockedOn": "who or what", "nodes": ["app"], "doing": false }],
+  "publish": { "url": null, "publishedAt": null, "hash": null } }
+```
+
+`kind` is service, job, data, external, identity or person; `status` is live, planned, retiring or
+blocked. A task's title and status come from its card: a done card counts as done, a dropped or
+folded card and a card that does not exist leave the total (shown struck through), and a card
+with a live build run or `doing: true` is "working on". Hover or click a flow in the legend to
+light up its arrows; click a box for its detail and its tasks.
+
+**Publishing** runs `claude -p` headless with `CLAUDE_CODE_ARTIFACT=1` and only the Artifact tool (plus Read,
+which it needs to read the file) allowed, on the machine's Claude login (API keys are dropped, as for the PA chat). The link is
+stored in the page; the next publish reads that artifact and updates it in place. If the CLI
+returns no link, the command says why and where the export is, so it can be published by hand.
+
+**Sync.** The worker's `pages` pass (every `PA_PAGES_SYNC_SECONDS`, default 300) hashes each page
+with its cards' current status; when the hash changed it rewrites `<slug>.html`, and a published
+page whose hash differs from the published one is republished, at most every 10 minutes.
+`PA_PAGES_REPUBLISH=off` keeps the claude.ai copy as it is (local exports still update).
+
 ### Routines
 
 Recurring actions you describe in plain words. Unlike memory, which only stores beliefs, a routine

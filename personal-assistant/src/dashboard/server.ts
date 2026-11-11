@@ -265,6 +265,9 @@ const ROUTES: Route[] = [
     path: oneOf('/architecture', '/architecture.client.js', '/api/architecture'),
     handle: (c) => require('./architecture.ts').route(c.req, c.res, c.url, c),
   },
+  // Jarvis pages (dashboard/pages.ts, src/pages): /pages/<slug>, its renderer,
+  // the Plan tab's list, and GET /api/pages[/<slug>]. Read-only.
+  { path: (url) => require('./pages.ts').matches(url), handle: (c) => require('./pages.ts').route(c.req, c.res, c.url, c) },
   // Meter's data (dashboard/meter.ts): GET /api/meter, POST /api/telemetry.
   { path: oneOf('/api/meter', '/api/telemetry'), handle: (c) => require('./meter.ts').route(c.req, c.res, c.url, c) },
 

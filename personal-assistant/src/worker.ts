@@ -389,6 +389,12 @@ async function main() {
     });
   }
 
+  // Jarvis pages (src/pages): re-export a page whose cards changed, and
+  // republish a published one (PA_PAGES_REPUBLISH=off stops that half).
+  every(config.pages.syncSeconds, 'pages', async () => {
+    await require('./pages/index.ts').pass();
+  });
+
   // A source that keeps failing blinds the reconciler: one toast per outage,
   // and a banner on the dashboard (src/ingest/health.js).
   every(600, 'health', async () => {

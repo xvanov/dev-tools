@@ -61,6 +61,8 @@ const HELP = `pa — your context layer
                                      card changes proposed together, approved once (pa help task)
     pa card edit <id> [--title "…"] [--details "…"] [--due when|--no-due] [--project name] [--note "…"] [--reason "…"]
                                      change a card in place (keeps its id, source and history; pa help task)
+    pa page list|show|import|export|doing|publish  a plan with a map and tasks, one JSON file; on the
+                                     dashboard at /pages/<slug>, publishable to claude.ai (pa help page)
     pa policy [close [--teams] [--apply]]  which sources create tasks; close cards the policy would not have made
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
@@ -1821,13 +1823,14 @@ Object.assign(commands, require('./run.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./page.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
 // only literal requires, and Node never adds `.ts`).
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
-  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts', page: './page.ts', pages: './page.ts',
 };
 
 async function main(argv: string[]) {
