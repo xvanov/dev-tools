@@ -67,7 +67,9 @@ const norm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g,
 function isMe(speaker: string, me: string | null) {
   const a = norm(speaker);
   const b = norm(me || '');
-  return !!a && !!b && (a === b || (b.includes(' ') && (a.includes(b) || b.includes(a))));
+  // Whole words only: "Ivan" is not "Kalin Ivanov", "Al" is not "Alan Lee".
+  const inside = (x: string, y: string) => ` ${y} `.includes(` ${x} `);
+  return !!a && !!b && (a === b || (b.includes(' ') && (inside(b, a) || inside(a, b))));
 }
 
 function secondsOf(stamp: string) {

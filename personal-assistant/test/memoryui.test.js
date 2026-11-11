@@ -201,6 +201,20 @@ const { duplicatePairs, pairKey, handleOf, route, clean } = require('../src/dash
   assert.deepStrictEqual(calls.at(-1), ['remember', 'Quill prefers async review', { subject: 'Quill', kind: null }]);
   assert.deepStrictEqual(clean(null), null);
 
+  // "Not the same" saves the pair as JSON text (a bare array breaks pg's jsonb parameter).
+  {
+    const repo = require('../src/repo');
+    const saved = [];
+    const sys = repo.system;
+    const orig = [sys.setting, sys.setSetting];
+    sys.setting = async () => null;
+    sys.setSetting = async (k, v) => { saved.push([k, v]); };
+    try {
+      await call('POST', '/api/memory/people/distinct', { a: 9, b: 4 });
+    } finally { [sys.setting, sys.setSetting] = orig; }
+    assert.deepStrictEqual(saved, [['memory.people_distinct', '["4:9"]']]);
+  }
+
   // ------------------------------------------------------- the page -----
   // The page's script must parse, and must never assign HTML: everything
   // shown came from someone else's mail or chat.

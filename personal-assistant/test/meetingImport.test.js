@@ -28,6 +28,7 @@ const I = require('../src/meetings/import.ts');
 
 assert.deepStrictEqual([I.kindOf('Show and Tell.MP4'), I.kindOf('a.vtt'), I.kindOf('a.txt'), I.kindOf('a.docx'), I.kindOf('noext')], ['audio', 'text', 'text', null, null]);
 assert.ok(I.isMe('Quinn Marlow', 'Quinn Marlow') && I.isMe('Quinn Marlow (Guest)', 'Quinn Marlow') && !I.isMe('Quinton Marlowe', 'Quinn Marlow') && !I.isMe('', 'Quinn Marlow'));
+assert.ok(!I.isMe('Quin', 'Quinn Marlow') && !I.isMe('Marl', 'Quinn Marlow') && I.isMe('Marlow', 'Quinn Marlow'), 'a speaker is you by whole words, not by letters inside your name');
 
 {
   // Teams: <v Name> tags, consecutive cues of one speaker merged, you labelled Me, the length from the last cue.

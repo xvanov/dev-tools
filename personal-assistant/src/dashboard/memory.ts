@@ -186,6 +186,8 @@ function pairKey(a: unknown, b: unknown) {
 }
 
 // Pairs you said are two different people (the dashboard's "Not the same").
+// Saved as JSON text: node-postgres turns a bare JS array parameter into a
+// Postgres array literal ({"1:2"}), which a jsonb column rejects.
 const DISTINCT_SETTING = 'memory.people_distinct';
 async function distinctPairs(): Promise<string[]> {
   const row = await require('../repo').system.setting(DISTINCT_SETTING).catch(() => null);
@@ -330,7 +332,7 @@ async function route(method: string, url: URL, body: Row = {}, memory: Module = 
       if (a === b) throw httpError(400, 'pick two different people');
       const key = pairKey(a, b);
       const list = await distinctPairs();
-      if (!list.includes(key)) await require('../repo').system.setSetting(DISTINCT_SETTING, [...list, key]);
+      if (!list.includes(key)) await require('../repo').system.setSetting(DISTINCT_SETTING, JSON.stringify([...list, key]));
       return { distinct: key };
     }
     if (p === '/people/merge') {
