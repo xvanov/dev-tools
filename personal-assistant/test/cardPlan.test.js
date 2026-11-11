@@ -142,6 +142,8 @@ const { available } = require('../src/db/sqlite.ts');
   assert.match(hb.at(-1).reason, /edited title, details, due — card plan #1: deadline moved/);
   assert.strictEqual((await repo.cardPlans.planById(good.plan)).status, 'applied');
   assert.strictEqual((await plans.list({})).length, 0, 'an applied plan is no longer waiting');
+  const unreadNotice = async (planId) => (await require('../src/notify/notify.ts').feed({ limit: 50 })).find((n) => n.title.startsWith('Card changes waiting') && n.url.endsWith(`#cardplan-${planId}`));
+  assert.ok((await unreadNotice(good.plan)).read_at, 'applying the plan reads its notice');
 
   // Re-apply is a no-op: nothing runs twice (no second created card, no new ledger rows).
   const before = (await ledger.history(b)).length;
@@ -177,6 +179,9 @@ const { available } = require('../src/db/sqlite.ts');
   const p3 = await plans.propose({ title: 'Third set', items: [{ op: 'close', card: String(g), reason: 'meh' }] });
   const dis = await plans.discard(p3.id);
   assert.strictEqual(dis.status, 'discarded');
+  assert.ok((await unreadNotice(p3.id)).read_at, 'discarding the plan reads its notice');
+  const partlyNotice = await unreadNotice(p2.id);
+  assert.ok(partlyNotice && !partlyNotice.read_at, 'a partly applied plan still waits, so its notice stays');
   assert.strictEqual((await row(g)).status, 'open', 'discard changed no card');
   await assert.rejects(() => plans.apply(p3.id), /was discarded/);
   await assert.rejects(() => plans.apply(999), /no card plan #999/);

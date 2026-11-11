@@ -175,6 +175,14 @@ async function announce(id: number, title: string, n: number) {
   } catch { /* a missed notice never fails the proposal */ }
 }
 
+/** The plan is settled (applied, or discarded): its "waiting for your yes" notice is read, so it leaves the feed and INBOX.md. */
+async function settle(id: number) {
+  try {
+    const n = await repo.notifications.byKey(`card-plan:${id}`);
+    if (n) await require('./notify/notify.ts').markRead(n.id);
+  } catch { /* a stale notice never fails the apply */ }
+}
+
 function link(id: number): string {
   try { return `${require('./notify/notify.ts').dashboardUrl('')}#cardplan-${id}`; } catch { return `#cardplan-${id}`; }
 }
@@ -318,6 +326,7 @@ async function apply(id: number | string, { skip = [], actor = 'you' }: { skip?:
   const applied = count('applied');
   const status = failed ? 'partly' : applied ? 'applied' : 'discarded';
   if (ran || plan.status === 'pending') await repo.cardPlans.setPlanStatus(planId, status, applied ? new Date().toISOString() : null);
+  if (status !== 'partly') await settle(planId);
   const shown = await show(planId);
   return { ...shown, applied, failed, skipped: count('skipped'), ran, actor };
 }
@@ -349,6 +358,7 @@ async function discard(id: number | string) {
     for (const it of await repo.cardPlans.items(id)) if (it.status === 'pending' || it.status === 'failed') await repo.cardPlans.updateItem(it.id, { status: 'skipped', enabled: 0 });
     await repo.cardPlans.setPlanStatus(Number(plan.id), 'discarded');
   }
+  await settle(Number(plan.id));
   return show(id);
 }
 
