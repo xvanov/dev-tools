@@ -17,7 +17,7 @@
 #cardplans { margin-bottom: 14px; }
 #cardplans[hidden] { display: none; }
 #cardplans .plan { border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-soft); padding: 10px 14px; margin-bottom: 10px; }
-#cardplans h2 { margin: 0 0 6px; }
+#cardplans h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
 #cardplans h3 { margin: 0 0 4px; font-size: 1em; }
 #cardplans .why, #cardplans .src { margin: 0 0 6px; opacity: 0.85; }
 #cardplans ul { list-style: none; margin: 0 0 8px; padding: 0; }

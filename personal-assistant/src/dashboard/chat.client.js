@@ -99,6 +99,14 @@
     if (text === 'offline') link(null);
   }
 
+  // "connecting…" is only true until the stream opens or the history loads; after that, show the last
+  // status the stream reported, or nothing (no status event has come, so there is nothing to say).
+  function connected() {
+    const state = $('chat-state');
+    if (chat.status) { state.textContent = STATE[chat.status] || chat.status; state.className = `chat-state ${chat.status}`; }
+    else if (/connecting|reconnecting/.test(state.textContent)) state.textContent = '';
+  }
+
   function link(url) {
     chat.url = url;
     const open = $('chat-open');
@@ -121,6 +129,7 @@
       if (!list.length && !chat.ids.size) log.replaceChildren(el('div', { class: 'empty' }, 'No messages yet. Say hello.'));
       for (const m of list) add(m);
       log.scrollTop = log.scrollHeight;
+      connected();
     } catch (err) {
       $('chat-log').replaceChildren(el('div', { class: 'empty' }, `Could not load the conversation: ${err.message}`));
     }
@@ -137,7 +146,7 @@
       else add(e);
     };
     // EventSource reconnects by itself; fill what was missed while it was down.
-    const onopen = () => { if (dropped) history(); dropped = false; };
+    const onopen = () => { connected(); if (dropped) history(); dropped = false; };
     const onerror = () => { dropped = true; $('chat-state').textContent = 'reconnecting…'; };
     // The tab's one chat stream (nav.js), shared with Ask's voice page.
     if (window.JarvisNav && window.JarvisNav.streams) {
