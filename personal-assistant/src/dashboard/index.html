@@ -352,7 +352,7 @@
   <section id="mtg-upcoming"><h2>Upcoming · what to say<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="mtg-past"><h2>Recorded &amp; past meetings<span class="n"></span></h2>
     <details class="mtg-import" id="mtg-import"><summary>Import a recording or transcript</summary>
-      <form id="mtg-import-form" autocomplete="off">
+      <form id="mtg-import-form" autocomplete="off" novalidate>
         <label>Audio, video, or a transcript (.txt, .vtt, .srt)<input type="file" id="imp-file" accept="audio/*,video/*,.txt,.vtt,.srt,.mkv" required></label>
         <label>Calendar event (the meeting it was)<select id="imp-event"><option value="">Match by time, or use the title below</option></select></label>
         <label>Title (when there is no calendar event)<input type="text" id="imp-title" maxlength="160" placeholder="Mainsail webinar"></label>
@@ -758,27 +758,45 @@ function commitmentCard(c) {
   // Edit in place: title, due date, a note (the details are not on the card payload, so they are added to, not shown).
   const editBtn = el('button', { title: 'Change the title or due date, or add a note, without dismissing and recreating the card' }, 'Edit');
   const editForm = el('div', { class: 'confirm', hidden: true });
+  // The card's current due date, as the date parser accepts it (YYYY-MM-DD, local). Saved only when changed:
+  // an unchanged overdue date would otherwise be refused as a date in the past.
+  const dueNow = (() => {
+    const d = c.due_at ? new Date(c.due_at) : null;
+    if (!d || Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const field = (label, input) => el('label', { style: 'display:flex;flex-direction:column;gap:2px;flex:1 1 100%;font-size:12px;color:var(--ink-2)' }, label, input);
   const fTitle = el('input', { type: 'text', value: c.summary, maxlength: '200', style: 'width:100%' });
-  const fDue = el('input', { type: 'text', placeholder: 'due: friday, tomorrow 3pm, 2026-11-20 (empty: unchanged; "none": clear)' });
-  const fNote = el('input', { type: 'text', placeholder: 'add a note (appended to the details)', style: 'width:100%' });
+  const fDue = el('input', { type: 'text', value: dueNow, placeholder: 'friday, tomorrow 3pm, 2026-11-20', style: 'width:100%', title: 'Empty or "none" clears the due date.' });
+  const fNote = el('input', { type: 'text', placeholder: 'appended to the details', style: 'width:100%' });
+  const fErr = el('div', { class: 'meta', role: 'alert', style: 'color:var(--warn);flex:1 1 100%', hidden: true });
   const fSave = el('button', { class: 'primary' }, 'Save');
   const fCancel = el('button', {}, 'Cancel');
   for (const i of [fTitle, fDue, fNote]) {
     i.addEventListener('focus', () => { editing = true; });
     i.addEventListener('blur', () => { editing = false; });
+    i.addEventListener('input', () => { fErr.hidden = true; });
   }
   editBtn.addEventListener('click', () => { editForm.hidden = !editForm.hidden; if (!editForm.hidden) fTitle.focus(); });
-  fCancel.addEventListener('click', () => { editForm.hidden = true; editing = false; });
+  fCancel.addEventListener('click', () => { editForm.hidden = true; editing = false; fErr.hidden = true; });
   fSave.addEventListener('click', act(fSave, async () => {
     const body = {};
     if (fTitle.value.trim() && fTitle.value.trim() !== c.summary) body.title = fTitle.value.trim();
-    if (fDue.value.trim()) body.due = /^(none|no|clear)$/i.test(fDue.value.trim()) ? null : fDue.value.trim();
+    const dv = fDue.value.trim();
+    if (dv !== dueNow) body.due = !dv || /^(none|no|clear)$/i.test(dv) ? null : dv;
     if (fNote.value.trim()) body.note = fNote.value.trim();
     if (!Object.keys(body).length) { toast('nothing to change'); return; }
-    const r = await post(`api/commitments/${c.id}/edit`, body);
-    toast(r.changed.length ? `#${c.id} edited (${r.changed.join(', ')})` : `#${c.id} unchanged`);
+    try {
+      const r = await post(`api/commitments/${c.id}/edit`, body);
+      fErr.hidden = true;
+      toast(r.changed.length ? `#${c.id} edited (${r.changed.join(', ')})` : `#${c.id} unchanged`);
+    } catch (err) {
+      fErr.textContent = err.message;
+      fErr.hidden = false;
+      throw err;
+    }
   }));
-  editForm.append(fTitle, fDue, fNote, el('div', { class: 'actions' }, fSave, fCancel));
+  editForm.append(field('Title', fTitle), field('Due', fDue), field('Note', fNote), fErr, el('div', { class: 'actions' }, fSave, fCancel));
   doBtn.addEventListener('click', act(doBtn, async () => {
     // Do starts the job and stays on this page: no tab, no navigation. The
     // run shows on the card (Context → "follow job") and on Build; opening
@@ -2111,7 +2129,7 @@ async function watchImport(id) {
 document.getElementById('mtg-import-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const file = document.getElementById('imp-file').files[0];
-  if (!file) return;
+  if (!file) { importStatus({ name: 'Import', state: 'error', error: 'choose an audio, video or transcript file first' }); return; }
   const go = document.getElementById('imp-go');
   const q = new URLSearchParams({ name: file.name });
   const eventId = document.getElementById('imp-event').value;
