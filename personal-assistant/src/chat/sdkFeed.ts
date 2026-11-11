@@ -94,6 +94,11 @@ function subscriptionEnv(base: any = process.env) {
   delete env.ANTHROPIC_AUTH_TOKEN;
   env.PA_CHAT_SESSION = '1';
   env.CLAUDE_AGENT_SDK_CLIENT_APP = 'personal-assistant/pa-chat';
+  // Claude Code leaves its Artifact tool off under the SDK ("sdk_default_off");
+  // this turns it on, so a voice ask like "open the doc Drew shared" can list
+  // what was shared and read it with no link to paste. The PreToolUse hook
+  // lets only its list/read through unasked (artifactRead).
+  env.CLAUDE_CODE_ARTIFACT = '1';
   return env;
 }
 

@@ -160,6 +160,7 @@ const sdkMsg = {
   assert.ok(!('ANTHROPIC_API_KEY' in env) && !('ANTHROPIC_AUTH_TOKEN' in env), 'the SDK never sees API credentials: it runs on the Claude login');
   assert.strictEqual(env.OTHER, '1');
   assert.strictEqual(env.PA_CHAT_SESSION, '1');
+  assert.strictEqual(env.CLAUDE_CODE_ARTIFACT, '1', 'the Artifact tool is on: shared Claude pages are found by voice, no link pasted');
 
   assert.deepStrictEqual(S.splitTool('mcp__pa-chat__factory_start'), { server: 'pa-chat', tool: 'factory_start' });
   assert.deepStrictEqual(S.splitTool('mcp__personal-assistant__recall'), { server: 'personal-assistant', tool: 'recall' });

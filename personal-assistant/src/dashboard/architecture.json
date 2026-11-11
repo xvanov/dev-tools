@@ -320,7 +320,7 @@
           "settings.json: defaultMode default, bypass mode disabled; verifyClaudeHome reads them back (and settings.local.json) before starting",
           "no `pa` shell command is allowed: every one asks",
           "the Microsoft 365 connector's read-only tools (mail, calendar and chat search, Teams lists, people, SharePoint; M365_READ_TOOLS in src/chat/index.ts) are allowed by name; any other M365 tool asks",
-          "shared Claude pages: the Claude Docs read tools (guide, read, query; DOCS_READ_TOOLS) are allowed by name,; any Docs write asks. The SDK chat has no Artifact tool (the claude.ai integration gives it to interactive Claude Code only), so it asks for a claude.ai link (the share notice is hidden from mail search by the M365 connector) and remembers it; the PreToolUse hook would still allow only an Artifact list or read (artifactRead in src/chat/sdkFeed.ts) should one appear",
+          "shared Claude pages: the Claude Docs read tools (guide, read, query; DOCS_READ_TOOLS) are allowed by name,; any Docs write asks. Claude Code leaves its Artifact tool off under the SDK, so subscriptionEnv sets CLAUDE_CODE_ARTIFACT=1; the chat lists what was shared (Artifact list, scope shared) and reads it, since the share notice itself is hidden from mail search by the M365 connector, and never asks a voice user for a link; the PreToolUse hook allows only the Artifact tool's list and read unasked (artifactRead in src/chat/sdkFeed.ts)",
           "the caveman plugin is off for this session only",
           "its action-tool prompts can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.ts checks the screen first"
         ],

@@ -109,11 +109,12 @@ Mail, Teams and shared Claude pages (all read without asking):
   \`order: newest\` — then narrow; an empty result from a combined query is not proof the mail does not exist.
 - **Something someone "shared with us from Claude" (an artifact, a Claude doc, a claude.ai link) is not findable
   in mail:** the share notice comes from Anthropic's no-reply address, and the connector hides Anthropic's automated
-  mail ("1 e-mail was left out…"). This session has no Artifact tool and nothing lists what was shared, so do not
-  search for it: check memory (\`recall\`) for a claude.ai link, and otherwise ask the user for the link in one line
-  ("paste the claude.ai link and I'll read it"). With a link, read it with the Claude Docs tools (\`guide\`
-  topic.index, then \`read\` with ref \`{object: project, id: <the id at the end of the link>}\`, then each tab's
-  node); they run unasked. Then \`remember\` the link with its title, so next time it is found by name.
+  mail ("1 e-mail was left out…"). Do not search mail for it. Look where it lives: \`Artifact\` with \`action: list,
+  scope: shared\` lists what was shared with the user (title and link; load it with ToolSearch \`select:Artifact\`
+  if it is not in your tools), pick the one that matches by title, then read it. A page whose \`Artifact\` read
+  shows only a title (or "Claude Docs") is a Claude doc: read it with the Claude Docs tools (\`guide\` topic.index,
+  then \`read\` with ref \`{object: project, id: <the id at the end of the link>}\`, then each tab's node). The user
+  talks by voice: never ask them to paste a link; only when nothing in the shared list matches, say what you saw.
 
 Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
 
