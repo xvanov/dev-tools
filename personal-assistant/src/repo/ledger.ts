@@ -189,7 +189,7 @@ function create(db: Db) {
     async reopenedByYou(ids: unknown[]) {
       const list = await db.rows(
         `select distinct commitment_id from ledger_transition
-      where commitment_id = any($1::bigint[]) and actor = 'you' and to_status = 'open' and undone_at is null`,
+      where commitment_id = any($1::bigint[]) and actor = 'you' and to_status = 'open' and from_status <> to_status and undone_at is null`,
         [ids]
       );
       return new Set(list.map((r) => String(r.commitment_id)));

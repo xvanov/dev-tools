@@ -189,6 +189,29 @@ const { available } = require('../src/db/sqlite.ts');
   assert.deepStrictEqual([none.status, none.applied, none.skipped], ['discarded', 0, 1]);
   assert.strictEqual((await row(h)).status, 'open');
 
+  // A due date is stored as the moment shown at propose time, not as words re-read at apply time.
+  const j = await card('Book the venue');
+  const p5 = await plans.propose({ title: 'Fifth set', items: [{ op: 'edit', card: String(j), due: '2d' }, { op: 'edit', card: String(j), note: 'x' }] });
+  const stored = JSON.parse((await repo.cardPlans.items(p5.id))[0].fields);
+  assert.match(stored.due, /^at:[0-9]{4}-[0-9]{2}-[0-9]{2}T/, 'due is canonical');
+
+  // An edit whose card was closed after the proposal is skipped, as a close is, not applied to the closed card.
+  await require('../src/commitments.ts').setStatus(j, 'dropped');
+  const r5 = await plans.apply(p5.id);
+  assert.deepStrictEqual(r5.items.map((i) => i.status), ['skipped', 'skipped']);
+  assert.strictEqual((await row(j)).due_at, null);
+
+  // Retrying a create whose details step failed adopts the card it already made: no second card.
+  const p6 = await plans.propose({ title: 'Sixth set', items: [{ op: 'create', title: 'Print the badges', details: 'two hundred' }] });
+  const madeBadges = await card('Print the badges');
+  const [it6] = await repo.cardPlans.items(p6.id);
+  await repo.cardPlans.updateItem(it6.id, { status: 'failed', error: 'boom', result: JSON.stringify({ created: madeBadges }) });
+  const r6 = await plans.apply(p6.id);
+  assert.strictEqual(r6.items[0].status, 'applied');
+  assert.strictEqual(r6.items[0].result.created, madeBadges);
+  assert.strictEqual((await db.rows(`select id from commitment where summary = 'Print the badges'`)).length, 1);
+  assert.match((await row(madeBadges)).detail, /two hundred/);
+
   console.log('cardPlan: ok');
 })().catch((err) => {
   console.error(err);

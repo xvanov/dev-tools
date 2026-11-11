@@ -46,7 +46,9 @@ function readDue(due: unknown, now: Date): { text: string | null; label: string 
   const { parseWhen } = require('./util/when.ts');
   const w = parseWhen(String(due).trim().replace(/^by\s+/i, ''), now);
   if (!w) throw new Error(`cannot read the due date "${clip(due, 60)}" — try friday, tomorrow 3pm, 2d or 2026-11-20 (a date in the past is not accepted)`);
-  return { text: String(due).trim(), label: dueLabel(w.at) };
+  // Stored as the moment itself: "friday" or "2d" read again at apply time would land on another day than the
+  // label the user was shown (and approved).
+  return { text: `at:${w.at.toISOString()}`, label: dueLabel(w.at) };
 }
 
 type NewItem = {
@@ -239,6 +241,9 @@ async function runItem(it: Row, planId: number): Promise<Row> {
   const f = parseJson(it.fields);
   const reason = `card plan #${planId}${it.reason ? `: ${clip(it.reason, 180)}` : ''}`;
   if (it.op === 'edit') {
+    const cur = await repo.commitments.byId(Number(it.commitment_id));
+    if (!cur) throw new Error(`no commitment #${it.commitment_id}`);
+    if (cur.status !== 'open') return { skipped: `already ${cur.status}` };
     const { editCard } = require('./commitments.ts');
     const edit: Row = { reason };
     for (const k of ['title', 'details', 'due', 'project', 'note']) if (f[k] !== undefined) edit[k] = f[k];
@@ -257,10 +262,15 @@ async function runItem(it: Row, planId: number): Promise<Row> {
     const group = await require('./commitments.ts').closeGroup(id, to, reason);
     return { closed: to, with: group };
   }
-  const request = require('./commitments/request.ts');
-  const r = await request.add({ text: f.title, due: f.due ?? null, project: f.project ?? null, via: 'chat' });
-  if (f.details) await require('./commitments.ts').editCard(r.id, { details: f.details, reason }, { actor: 'you' });
-  return { created: r.id };
+  // A retry after the details step failed must not create the card a second time: the id is kept on the item.
+  let created = Number(parseJson(it.result).created) || 0;
+  if (!created) {
+    const request = require('./commitments/request.ts');
+    created = (await request.add({ text: f.title, due: f.due ?? null, project: f.project ?? null, via: 'chat' })).id;
+    await repo.cardPlans.updateItem(it.id, { result: JSON.stringify({ created }) });
+  }
+  if (f.details) await require('./commitments.ts').editCard(created, { details: f.details, reason }, { actor: 'you' });
+  return { created };
 }
 
 /**

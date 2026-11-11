@@ -108,7 +108,10 @@ module.exports = {
     await seed.transition(a, { actor: 'you', from: 'done', to: 'open' });
     await seed.transition(b, { actor: 'you', from: 'done', to: 'open', undoneAt: new Date() });
     await seed.transition(c, { actor: 'reconciler', from: 'done', to: 'open' });
-    const s = await repos.ledger.reopenedByYou([a, b, c]);
+    // A card edit (src/commitments.ts editCard) is a same-status row by you: not a reopen.
+    const d = await seed.commitment();
+    await seed.transition(d, { actor: 'you', from: 'open', to: 'open' });
+    const s = await repos.ledger.reopenedByYou([a, b, c, d]);
     assert.deepStrictEqual([...s], [String(a)]);
   },
 
