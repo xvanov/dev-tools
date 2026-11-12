@@ -312,14 +312,14 @@ function create(db: Db) {
     },
 
     /**
-     * The cards a Jarvis page lists (src/pages): id, status, summary, the card it
+     * The cards a Jarvis page lists (src/pages): id, status, summary, details (the URLs noted on a card show on the page), the card it
      * was folded into and when it closed. Ids that name no card are simply absent.
      * @param {Array<number|string>} ids
      */
     async forPage(ids: Array<number | string>) {
       const list = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
       if (!list.length) return [];
-      return db.rows('select id, status, summary, superseded_by, closed_at, due_at from commitment where id = any($1::bigint[]) order by id', [list]);
+      return db.rows('select id, status, summary, detail, superseded_by, closed_at, due_at from commitment where id = any($1::bigint[]) order by id', [list]);
     },
 
     /**

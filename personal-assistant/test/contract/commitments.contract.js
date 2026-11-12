@@ -288,8 +288,10 @@ module.exports = {
   'forPage: the named cards with status and fold; unknown ids absent': async ({ repos, seed, assert }) => {
     const a = await seed.commitment({ summary: 'page task a' });
     const b = await seed.commitment({ summary: 'page task b', status: 'done' });
+    await seed.commitmentSet(a, { detail: 'see https://example.com/pr' });
     const rows = await repos.commitments.forPage([a, b, 999999999, 'x']);
     assert.deepStrictEqual(rows.map((r) => [Number(r.id), r.status, r.summary]), [[a, 'open', 'page task a'], [b, 'done', 'page task b']]);
+    assert.strictEqual(rows[0].detail, 'see https://example.com/pr', 'details: the URLs noted on a card show on its page');
     assert.deepStrictEqual(await repos.commitments.forPage([]), []);
   },
 

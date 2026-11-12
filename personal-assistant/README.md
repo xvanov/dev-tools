@@ -1153,7 +1153,8 @@ The format (version 1; `src/pages/core.ts` validates it and reports every proble
            "edges": [{ "from": "app", "to": "db", "label": "writes", "flows": ["save"], "style": "solid" }],
            "flows": [{ "id": "save", "label": "Save", "color": "#2f6fde", "description": "…" }] },
   "sections": [{ "heading": "Why", "body": "Paragraphs split by blank lines.\n\n- and bullets" }],
-  "tasks": [{ "card": 123, "group": "Now", "blockedOn": "who or what", "nodes": ["app"], "doing": false }],
+  "tasks": [{ "card": 123, "group": "Now", "owner": "Sam", "next": true, "blockedOn": "who or what",
+              "nodes": ["app"], "doing": false, "links": [{ "label": "spec", "url": "https://…" }] }],
   "publish": { "url": null, "publishedAt": null, "hash": null } }
 ```
 
@@ -1161,7 +1162,16 @@ The format (version 1; `src/pages/core.ts` validates it and reports every proble
 blocked. A task's title and status come from its card: a done card counts as done, a dropped card and a
 card that does not exist leave the total (shown struck through), an open card the dedupe pass folded
 into another follows that card, and a card
-with a live build run or `doing: true` is "working on". Hover or click a flow in the legend to
+with a live build run or `doing: true` is "working on".
+
+Each task shows one **status** badge: Done or Dropped from its card; an open card is Doing (a live
+build run or `doing: true`), else Blocked (`blockedOn` set), else Next (`next: true`), else To do.
+Inside a group the rows sort by status (Doing, Next, Blocked, To do, Done, Dropped), author order
+within one. `owner` (who is responsible) shows on the row. A task's **links** are its `links`, then
+every http(s) URL in its card's title and details (where `pa card edit --note` appends), each URL
+once, labelled "PR #211", "Issue #210", "owner/repo", "Page" (a claude.ai artifact) or the host: note a
+PR on the card and it is on the page at the next pass, no page edit. Page-level `links` and
+`sections` are optional and draw nothing when empty. Hover or click a flow in the legend to
 light up its arrows; click a box for its detail and its tasks.
 
 **Publishing** runs `claude -p` headless with `CLAUDE_CODE_ARTIFACT=1` and only the Artifact tool (plus Read,
@@ -1170,7 +1180,7 @@ stored in the page; the next publish reads that artifact and updates it in place
 returns no link, the command says why and where the export is, so it can be published by hand.
 
 **Sync.** The worker's `pages` pass (every `PA_PAGES_SYNC_SECONDS`, default 300) hashes each page
-with its cards' current status; when the hash changed it rewrites `<slug>.html`, and a published
+with its cards' current status, titles and the URLs noted on them; when the hash changed it rewrites `<slug>.html`, and a published
 page whose hash differs from the published one is republished, at most every 10 minutes.
 `PA_PAGES_REPUBLISH=off` keeps the claude.ai copy as it is (local exports still update).
 

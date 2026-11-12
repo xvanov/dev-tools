@@ -78,7 +78,12 @@ function make(out: (s: string) => void, fail: (s: string) => void) {
       out(`  ${progressLine(r)}`);
       for (const g of r.groups) {
         out(`\n  ${g.name}  (${g.done}/${g.total}, ${g.percent}%)`);
-        for (const t of g.tasks) out(`    [${t.state.padEnd(7)}] #${t.card} ${t.title}${t.blockedOn && (t.state === 'todo' || t.state === 'doing') ? `  — waiting on ${t.blockedOn}` : ''}`);
+        for (const t of g.tasks) {
+          const status = t.status || t.state;
+          const open = ['doing', 'next', 'blocked', 'todo'].includes(status);
+          out(`    [${status.padEnd(7)}] #${t.card} ${t.title}${t.owner ? `  (${t.owner})` : ''}${t.blockedOn && open ? `  — waiting on ${t.blockedOn}` : ''}`);
+          for (const l of t.links || []) out(`              ${l.label}: ${l.url}`);
+        }
       }
       if (r.publish.url) out(`\n  published ${r.publish.url} (${r.publish.publishedAt})`);
       return;

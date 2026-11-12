@@ -300,7 +300,7 @@ function create(db: Db) {
       const list = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
       if (!list.length) return [];
       const ph = list.map((_, i) => `$${i + 1}`).join(',');
-      return db.rows(`select id, status, summary, superseded_by, closed_at, due_at from commitment where id in (${ph}) order by id`, list);
+      return db.rows(`select id, status, summary, detail, superseded_by, closed_at, due_at from commitment where id in (${ph}) order by id`, list);
     },
 
     /** The open rest of `id`'s duplicate group, `id` itself excluded. */

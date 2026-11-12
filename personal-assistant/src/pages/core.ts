@@ -8,7 +8,10 @@
 //
 //   validate(page)                    every problem at once, [] when it is fine
 //   resolve(page, cards, opts)        the page with each task's title/status from its card,
+//                                     its links (the page's and every URL in the card's own text),
 //                                     overall and per-group progress, and what is being worked on
+//   taskStatus(state, task)           done | doing | blocked | next | todo | dropped | missing
+//   cardLinks(card) / linkLabel(url)  the http(s) URLs in a card's title and details, labelled
 //   snapshotHash(resolved)            what changed, ignoring when it was resolved
 //   exportHtml(resolved, parts)       one self-contained HTML file (no external script or font)
 //   parsePublishUrl(text)             the claude.ai artifact link in the CLI's answer
@@ -17,6 +20,14 @@
 // done, dropped leaves the total (it is shown, struck through). An open card
 // folded into another (superseded_by) follows that card. A card that does not
 // exist is shown as "card #N not found" and does not count either way.
+//
+// What a task SHOWS is its status: done and dropped come from the card; an open
+// card is doing (a live build run or `doing: true`), else blocked (`blockedOn`),
+// else next (`next: true`), else to do. Inside a group the rows sort by that
+// status (doing, next, blocked, to do, done, dropped), author order within one.
+// Its links are the page's `links` for it, then every URL in the card's title
+// and details (a `pa card edit --note` lands there), so noting a PR on a card
+// puts it on the page at the next export with no page edit.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -125,6 +136,14 @@ function validate(page: unknown): string[] {
     if (t.group != null) need(isStr(t.group), `tasks[${i}]: group is a string`);
     if (t.blockedOn != null) need(isStr(t.blockedOn), `tasks[${i}]: blockedOn is a string`);
     if (t.doing != null) need(typeof t.doing === 'boolean', `tasks[${i}]: doing is true or false`);
+    if (t.next != null) need(typeof t.next === 'boolean', `tasks[${i}]: next is true or false`);
+    if (t.owner != null) need(isStr(t.owner) && t.owner.trim().length > 0 && t.owner.length <= 80, `tasks[${i}]: owner is a name, at most 80 characters`);
+    if (t.links != null) {
+      need(Array.isArray(t.links), `tasks[${i}]: links is a list`);
+      for (const [j, l] of (Array.isArray(t.links) ? t.links : []).entries()) {
+        need(isObj(l) && isStr(l.label) && l.label.trim().length > 0 && httpUrl(l.url), `tasks[${i}].links[${j}]: {label, url} with an http(s) url`);
+      }
+    }
     for (const n of Array.isArray(t.nodes) ? t.nodes : []) need(nodeIds.has(n), `tasks[${i}] (card #${t.card}): unknown node ${n}`);
     if (t.nodes != null) need(Array.isArray(t.nodes), `tasks[${i}]: nodes is a list`);
   }
@@ -173,6 +192,84 @@ function taskState(card: Row | undefined, doing: boolean, byId: Map<number, Row>
   return doing ? 'doing' : 'todo';
 }
 
+/** What a task shows, from its card's state and the page's flags. Doing beats blocked beats next. */
+function taskStatus(state: string, t: Row = {}): string {
+  if (state === 'done' || state === 'dropped' || state === 'missing' || state === 'doing') return state;
+  if (t.blockedOn) return 'blocked';
+  if (t.next) return 'next';
+  return 'todo';
+}
+
+/** The order of rows inside a group. */
+const STATUS_ORDER = ['doing', 'next', 'blocked', 'todo', 'done', 'dropped', 'missing'];
+
+const URL_RE = /https?:\/\/[^\s<>"'`\]\[{}|\\^]+/gi;
+const MAX_CARD_LINKS = 8;
+
+/** The http(s) URLs in some text, trailing punctuation trimmed, in order, once each. */
+function urlsIn(text: unknown): string[] {
+  const out: string[] = [];
+  for (const m of String(text || '').match(URL_RE) || []) {
+    let u = m.replace(/[.,;:!?*_]+$/, '');
+    // a ")" closes the sentence's parenthesis unless the URL opened one itself
+    while (u.endsWith(')') && (u.match(/\(/g) || []).length < (u.match(/\)/g) || []).length) u = u.slice(0, -1).replace(/[.,;:!?]+$/, '');
+    if (httpUrl(u) && !out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
+/** A link's identity for de-duplication: case-blind host, no fragment, no trailing slash. */
+function linkKey(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/** A short label for a URL: "PR #211", "Issue #210", "owner/repo", "Page", "Doc", else the host. */
+function linkLabel(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (host === 'github.com' && parts.length >= 2) {
+    if (parts[2] === 'pull' && /^\d+$/.test(parts[3] || '')) return `PR #${parts[3]}`;
+    if (parts[2] === 'issues' && /^\d+$/.test(parts[3] || '')) return `Issue #${parts[3]}`;
+    return `${parts[0]}/${parts[1]}`;
+  }
+  if (host === 'claude.ai') {
+    if (parts.includes('artifact')) return 'Page';
+    if (parts.some((p) => /^docs?$/.test(p))) return 'Doc';
+  }
+  return host;
+}
+
+/** The URLs in a card's own text (title, then details and the notes appended to them), labelled. */
+function cardLinks(card: Row | undefined): Row[] {
+  if (!card) return [];
+  return urlsIn(`${card.summary || ''}\n${card.detail || ''}`).slice(0, MAX_CARD_LINKS).map((url) => ({ label: linkLabel(url), url }));
+}
+
+/** A task's links: the page's first (their labels win), then the card's, each URL once. */
+function mergeLinks(explicit: Row[], fromCard: Row[]): Row[] {
+  const seen = new Set<string>();
+  const out: Row[] = [];
+  for (const l of [...explicit, ...fromCard]) {
+    if (!l || !httpUrl(l.url)) continue;
+    const k = linkKey(l.url);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ label: String(l.label || linkLabel(l.url)), url: l.url });
+  }
+  return out;
+}
+
 function progressOf(tasks: Row[]) {
   const counted = tasks.filter((t) => t.counted);
   const done = counted.filter((t) => t.state === 'done').length;
@@ -195,9 +292,13 @@ function resolve(page: Row, cards: Row[], { runningCards = [], now = new Date() 
       card: t.card,
       group: t.group || 'Tasks',
       blockedOn: t.blockedOn || null,
+      owner: t.owner ? String(t.owner).trim() : null,
+      next: Boolean(t.next),
+      links: mergeLinks(Array.isArray(t.links) ? t.links : [], cardLinks(card)),
       nodes: t.nodes || [],
       title: card ? String(card.summary || '') : `card #${t.card} not found`,
       state,
+      status: taskStatus(state, t),
       counted: state !== 'dropped' && state !== 'missing',
       foldedInto: card && card.superseded_by != null ? Number(card.superseded_by) : null,
       due: card && card.due_at ? new Date(card.due_at).toISOString().slice(0, 10) : null,
@@ -209,12 +310,24 @@ function resolve(page: Row, cards: Row[], { runningCards = [], now = new Date() 
     if (!g) groups.push((g = { name: t.group, tasks: [] }));
     g.tasks.push(t);
   }
-  for (const g of groups) Object.assign(g, progressOf(g.tasks));
+  const rank = (t: Row) => STATUS_ORDER.indexOf(t.status);
+  for (const g of groups) {
+    g.tasks = g.tasks
+      .map((t: Row, i: number) => ({ t, i }))
+      .sort((a: Row, b: Row) => rank(a.t) - rank(b.t) || a.i - b.i)
+      .map((x: Row) => x.t);
+    Object.assign(g, progressOf(g.tasks));
+  }
   return {
     ...p,
     tasks,
     groups,
-    progress: { ...progressOf(tasks), doing: tasks.filter((t: Row) => t.state === 'doing').map((t: Row) => t.title) },
+    progress: {
+      ...progressOf(tasks),
+      doing: tasks.filter((t: Row) => t.status === 'doing').map((t: Row) => t.title),
+      next: tasks.filter((t: Row) => t.status === 'next').map((t: Row) => t.title),
+      blocked: tasks.filter((t: Row) => t.status === 'blocked').length,
+    },
     resolvedAt: now.toISOString(),
   };
 }
@@ -270,4 +383,4 @@ function parsePublishUrl(text: string): string | null {
   return m ? m[0] : null;
 }
 
-module.exports = { VERSION, validate, normalize, resolve, taskState, snapshotHash, shortTitle, exportHtml, scriptJson, parsePublishUrl, SLUG };
+module.exports = { VERSION, validate, normalize, resolve, taskState, taskStatus, STATUS_ORDER, urlsIn, linkLabel, cardLinks, mergeLinks, snapshotHash, shortTitle, exportHtml, scriptJson, parsePublishUrl, SLUG };

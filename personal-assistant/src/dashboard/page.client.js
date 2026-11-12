@@ -17,18 +17,18 @@
   var SVG = 'http://www.w3.org/2000/svg';
   var STYLE = [
     ':root{--pg-bg:#f7f7f5;--pg-panel:#ffffff;--pg-ink:#1d1f23;--pg-muted:#5f6670;--pg-line:#d9dce1;--pg-band:#eef0f3;',
-    '--pg-accent:#2f6fde;--pg-ok:#1f8a4c;--pg-warn:#b7791f;--pg-bad:#c53030;--pg-dim:0.18;--pg-chip:#eef2f8;}',
+    '--pg-accent:#2f6fde;--pg-ok:#1f8a4c;--pg-warn:#b7791f;--pg-bad:#c53030;--pg-next:#7c3aed;--pg-dim:0.18;--pg-chip:#eef2f8;}',
     '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--pg-bg:#14161a;--pg-panel:#1c1f25;--pg-ink:#e6e8eb;',
-    '--pg-muted:#9aa3ad;--pg-line:#323842;--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-chip:#262b33;}}',
+    '--pg-muted:#9aa3ad;--pg-line:#323842;--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;}}',
     ':root[data-theme="dark"]{--pg-bg:#14161a;--pg-panel:#1c1f25;--pg-ink:#e6e8eb;--pg-muted:#9aa3ad;--pg-line:#323842;',
-    '--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-chip:#262b33;}',
+    '--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;}',
     'body{margin:0;background:var(--pg-bg);color:var(--pg-ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}',
     '.pg{max-width:1100px;margin:0 auto;padding:20px 16px 40px;box-sizing:border-box;}',
     '.pg *{box-sizing:border-box;}',
-    '.pg h1{font-size:22px;margin:0 0 4px;line-height:1.25;}',
+    '.pg h1{font-size:22px;margin:0 0 4px;line-height:1.25;overflow-wrap:anywhere;}',
     '.pg h2{font-size:16px;margin:28px 0 10px;}',
     '.pg .sum{color:var(--pg-muted);margin:0 0 10px;max-width:70ch;}',
-    '.pg .links{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 12px;}',
+    '.pg .links{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 12px;overflow-wrap:anywhere;}',
     '.pg a{color:var(--pg-accent);}',
     '.pg .bar{height:8px;border-radius:4px;background:var(--pg-band);overflow:hidden;}',
     '.pg .bar>span{display:block;height:100%;background:var(--pg-ok);border-radius:4px;transition:width .3s;}',
@@ -75,20 +75,32 @@
     '.pg .group .gh{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-bottom:6px;}',
     '.pg .group .gh b{font-size:14px;}',
     '.pg .group .bar{margin-bottom:8px;}',
-    '.pg .task{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--pg-line);}',
+    // A task row: a status badge (colour AND word, so it reads without colour), a left rule in the
+    // same colour for the open states, the title with its owner, then meta and links. Wraps, never scrolls.
+    '.pg .task{--st:var(--pg-muted);display:flex;gap:10px;align-items:flex-start;padding:7px 0 7px 8px;border-top:1px solid var(--pg-line);border-left:3px solid transparent;}',
     '.pg .task:first-of-type{border-top:0;}',
-    '.pg .chip{flex:none;font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;margin-top:2px;background:var(--pg-chip);color:var(--pg-muted);white-space:nowrap;}',
-    '.pg .t-done .chip{background:color-mix(in srgb,var(--pg-ok) 18%,transparent);color:var(--pg-ok);}',
-    '.pg .t-doing .chip{background:color-mix(in srgb,var(--pg-accent) 18%,transparent);color:var(--pg-accent);}',
+    '.pg .t-doing{--st:var(--pg-accent);}.pg .t-next{--st:var(--pg-next);}.pg .t-blocked{--st:var(--pg-bad);}.pg .t-done{--st:var(--pg-ok);}',
+    '.pg .t-doing,.pg .t-next,.pg .t-blocked{border-left-color:var(--st);}',
+    '.pg .chip{flex:none;min-width:58px;text-align:center;font-size:11px;font-weight:650;border-radius:999px;padding:1px 8px;margin-top:2px;white-space:nowrap;',
+    'background:color-mix(in srgb,var(--st) 16%,transparent);color:var(--st);border:1px solid color-mix(in srgb,var(--st) 45%,transparent);}',
+    '.pg .t-doing .chip,.pg .t-next .chip,.pg .t-blocked .chip{background:var(--st);color:var(--pg-panel);border-color:var(--st);}',
+    '.pg .t-todo .chip{background:var(--pg-chip);color:var(--pg-ink);border-color:var(--pg-line);}',
+    '.pg .t-dropped .chip,.pg .t-missing .chip{background:transparent;border-style:dashed;}',
     '.pg .t-dropped .tt,.pg .t-missing .tt{text-decoration:line-through;color:var(--pg-muted);}',
     '.pg .t-done .tt{color:var(--pg-muted);}',
     '.pg .tb{flex:1;min-width:0;}',
+    '.pg .th{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;}',
+    '.pg .tt{flex:1 1 14em;min-width:0;overflow-wrap:anywhere;}',
+    '.pg .t-doing .tt,.pg .t-next .tt,.pg .t-blocked .tt{font-weight:600;}',
+    '.pg .ow{flex:none;max-width:100%;font-size:12px;color:var(--pg-ink);background:var(--pg-band);border-radius:4px;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '.pg .tm{font-size:12px;color:var(--pg-muted);display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:2px;}',
-    '.pg .tm .blk{color:var(--pg-warn);}',
+    '.pg .tm .blk{color:var(--pg-bad);font-weight:600;}',
+    '.pg .tl{font-size:12px;display:flex;flex-wrap:wrap;gap:2px 12px;margin-top:2px;}',
+    '.pg .tl a{overflow-wrap:anywhere;}',
     '.pg .nchip{border:1px solid var(--pg-line);border-radius:4px;padding:0 5px;font-size:11px;cursor:default;}',
     '.pg .foot{margin-top:28px;font-size:12px;color:var(--pg-muted);}',
     '@media (max-width:640px){.pg .band{flex-direction:column;gap:6px;margin-bottom:22px;}.pg .band .bl{width:auto;padding:0;}',
-    '.pg .node{max-width:none;flex:1 1 140px;}.pg h1{font-size:19px;}}',
+    '.pg .node{max-width:none;flex:1 1 140px;}.pg h1{font-size:19px;}.pg .group{padding:10px;}.pg .task{gap:8px;}}',
   ].join('');
 
   function el(tag, cls, text) {
@@ -116,7 +128,20 @@
   }
   function safeHref(u) { return /^https?:\/\//i.test(String(u || '')) ? String(u) : null; }
 
-  var STATE_LABEL = { todo: 'to do', doing: 'working on', done: 'done', dropped: 'dropped', missing: 'missing' };
+  var STATUS_LABEL = { doing: 'Doing', next: 'Next', blocked: 'Blocked', todo: 'To do', done: 'Done', dropped: 'Dropped', missing: 'Missing' };
+  var OPEN = { doing: 1, next: 1, blocked: 1, todo: 1 };
+  /** A task's status; a page resolved before statuses existed has only `state`. */
+  function statusOf(t) { return t.status || (t.state === 'todo' && t.blockedOn ? 'blocked' : t.state); }
+  function linkEl(l) {
+    var href = safeHref(l.url);
+    if (!href) return null;
+    var a = el('a', null, l.label || href);
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.title = href;
+    return a;
+  }
 
   /** Plain text: blank-line paragraphs, "- " bullets. */
   function textBlocks(body) {
@@ -152,27 +177,21 @@
     if (page.summary) wrap.appendChild(el('p', 'sum', page.summary));
     if (page.links && page.links.length) {
       var links = el('div', 'links');
-      page.links.forEach(function (l) {
-        var href = safeHref(l.url);
-        if (!href) return;
-        var a = el('a', null, l.label);
-        a.href = href;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        links.appendChild(a);
-      });
-      wrap.appendChild(links);
+      page.links.forEach(function (l) { var a = linkEl(l); if (a) links.appendChild(a); });
+      if (links.firstChild) wrap.appendChild(links);
     }
     var p = page.progress || { done: 0, total: 0, percent: 0, doing: [] };
     var prog = el('div', 'prog');
     var nums = el('div', 'nums');
     nums.appendChild(el('span', 'pct', p.percent + '%'));
     nums.appendChild(el('span', 'muted', p.done + ' of ' + p.total + ' tasks done'));
-    var open = (page.tasks || []).filter(function (t) { return t.state === 'todo' || t.state === 'doing'; }).length;
+    var open = (page.tasks || []).filter(function (t) { return OPEN[statusOf(t)]; }).length;
     if (open) nums.appendChild(el('span', 'muted', open + ' open'));
+    if (p.blocked) nums.appendChild(el('span', 'muted', p.blocked + ' blocked'));
     prog.appendChild(nums);
     prog.appendChild(bar(p.percent));
-    if (p.doing && p.doing.length) prog.appendChild(el('div', 'doing', 'Working on: ' + p.doing.join(' · ')));
+    if (p.doing && p.doing.length) prog.appendChild(el('div', 'doing', 'Doing: ' + p.doing.join(' · ')));
+    if (p.next && p.next.length) prog.appendChild(el('div', 'doing', 'Next: ' + p.next.join(' · ')));
     wrap.appendChild(prog);
 
     // ---- the map
@@ -231,7 +250,7 @@
       if (ts.length) {
         detail.appendChild(el('p', 'muted', 'Tasks here:'));
         var ul = el('ul');
-        ts.forEach(function (t) { ul.appendChild(el('li', null, '#' + t.card + ' ' + t.title + ' (' + STATE_LABEL[t.state] + ')')); });
+        ts.forEach(function (t) { ul.appendChild(el('li', null, '#' + t.card + ' ' + t.title + ' (' + (STATUS_LABEL[statusOf(t)] || t.state) + (t.owner ? ', ' + t.owner : '') + ')')); });
         detail.appendChild(ul);
       }
       detail.hidden = false;
@@ -313,7 +332,7 @@
           box.tabIndex = 0;
           box.appendChild(el('span', 'dot'));
           box.appendChild(el('div', 'nl', n.label));
-          var ts = nodeTasks(n.id).filter(function (t) { return t.state === 'todo' || t.state === 'doing'; });
+          var ts = nodeTasks(n.id).filter(function (t) { return OPEN[statusOf(t)]; });
           box.appendChild(el('div', 'nk', [n.kind, ts.length ? ts.length + ' open' : null].filter(Boolean).join(' · ')));
           box.title = n.detail || n.label;
           box.addEventListener('mouseenter', function () { if (!keep.flow && !keep.node) { keep.hover = n.id; boxes[n.id].classList.add('hot'); } });
@@ -387,15 +406,23 @@
         box.appendChild(gh);
         box.appendChild(bar(g.percent));
         g.tasks.forEach(function (t) {
-          var row = el('div', 'task t-' + t.state);
-          row.appendChild(el('span', 'chip', STATE_LABEL[t.state] || t.state));
+          var st = statusOf(t);
+          var row = el('div', 'task t-' + st);
+          row.appendChild(el('span', 'chip', STATUS_LABEL[st] || st));
           var tb = el('div', 'tb');
-          tb.appendChild(el('div', 'tt', t.title));
+          var th = el('div', 'th');
+          th.appendChild(el('span', 'tt', t.title));
+          if (t.owner) {
+            var ow = el('span', 'ow', t.owner);
+            ow.title = 'Owner: ' + t.owner;
+            th.appendChild(ow);
+          }
+          tb.appendChild(th);
           var tm = el('div', 'tm');
           tm.appendChild(el('span', null, '#' + t.card));
           if (t.due) tm.appendChild(el('span', null, 'due ' + t.due));
           if (t.foldedInto) tm.appendChild(el('span', null, 'folded into #' + t.foldedInto));
-          if (t.blockedOn && (t.state === 'todo' || t.state === 'doing')) tm.appendChild(el('span', 'blk', 'waiting on ' + t.blockedOn));
+          if (t.blockedOn && OPEN[st]) tm.appendChild(el('span', 'blk', 'waiting on ' + t.blockedOn));
           (t.nodes || []).forEach(function (id) {
             var n = (map.nodes || []).find(function (x) { return x.id === id; });
             var c = el('span', 'nchip', n ? n.label : id);
@@ -404,6 +431,9 @@
             tm.appendChild(c);
           });
           tb.appendChild(tm);
+          var tl = el('div', 'tl');
+          (t.links || []).forEach(function (l) { var a = linkEl(l); if (a) tl.appendChild(a); });
+          if (tl.firstChild) tb.appendChild(tl);
           row.appendChild(tb);
           box.appendChild(row);
         });

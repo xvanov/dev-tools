@@ -110,6 +110,109 @@ assert.deepStrictEqual(core.validate(sample()), []);
   assert.strictEqual(core.shortTitle('Ship'), 'Ship page');
 }
 
+// ------------------------------------------- owner, next, links: validation ----
+{
+  const ok = sample({ tasks: [{ card: 1, owner: 'Sam', next: true, links: [{ label: 'spec', url: 'https://example.com/a' }] }] });
+  assert.deepStrictEqual(core.validate(ok), []);
+  const bad = sample({
+    tasks: [
+      { card: 1, owner: '' },
+      { card: 2, owner: 7 },
+      { card: 3, next: 'yes' },
+      { card: 4, links: 'https://example.com' },
+      { card: 5, links: [{ label: 'x', url: 'javascript:alert(1)' }, { url: 'https://example.com' }] },
+      { card: 6, owner: 'x'.repeat(81) },
+    ],
+  });
+  const errs = core.validate(bad);
+  for (const want of ['tasks[0]: owner', 'tasks[1]: owner', 'tasks[2]: next is true or false', 'tasks[3]: links is a list', 'tasks[4].links[0]', 'tasks[4].links[1]', 'tasks[5]: owner']) {
+    assert.ok(errs.some((e) => e.includes(want)), `validate reports "${want}": ${errs.join(' | ')}`);
+  }
+}
+
+// --------------------------------------------------------- status per task ----
+{
+  // the card decides done/dropped; then doing > blocked > next > to do
+  assert.strictEqual(core.taskStatus('done', { blockedOn: 'x', next: true }), 'done');
+  assert.strictEqual(core.taskStatus('dropped', { next: true }), 'dropped');
+  assert.strictEqual(core.taskStatus('doing', { blockedOn: 'x' }), 'doing');
+  assert.strictEqual(core.taskStatus('todo', { blockedOn: 'x', next: true }), 'blocked');
+  assert.strictEqual(core.taskStatus('todo', { next: true }), 'next');
+  assert.strictEqual(core.taskStatus('todo', {}), 'todo');
+  assert.strictEqual(core.taskStatus('missing', { next: true }), 'missing');
+
+  const page = sample({
+    tasks: [
+      { card: 1, group: 'G' }, // done
+      { card: 2, group: 'G' }, // to do
+      { card: 3, group: 'G', blockedOn: 'a vendor' }, // blocked
+      { card: 4, group: 'G' }, // dropped
+      { card: 5, group: 'G', next: true, owner: '  Sam  ' }, // next
+      { card: 6, group: 'G', doing: true }, // doing
+      { card: 7, group: 'G', blockedOn: 'done anyway' }, // done: a done card is not blocked
+    ],
+  });
+  const cards = [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id, status: id === 1 || id === 7 ? 'done' : id === 4 ? 'dropped' : 'open', summary: `task ${id}` }));
+  const r = core.resolve(page, cards);
+  assert.deepStrictEqual(r.tasks.map((t) => t.status), ['done', 'todo', 'blocked', 'dropped', 'next', 'doing', 'done'], 'tasks keep the author order');
+  assert.deepStrictEqual(r.groups[0].tasks.map((t) => t.card), [6, 5, 3, 2, 1, 7, 4], 'a group sorts doing, next, blocked, to do, done, dropped');
+  assert.strictEqual(r.tasks[4].owner, 'Sam');
+  assert.strictEqual(r.tasks[0].owner, null);
+  assert.deepStrictEqual([r.progress.doing, r.progress.next, r.progress.blocked], [['task 6'], ['task 5'], 1]);
+  assert.deepStrictEqual([r.progress.done, r.progress.total], [2, 6], 'statuses do not change the progress math');
+}
+
+// ------------------------------------------------- links from the card text ----
+{
+  assert.strictEqual(core.linkLabel('https://github.com/acme/widget/pull/211'), 'PR #211');
+  assert.strictEqual(core.linkLabel('https://github.com/acme/widget/pull/211/files'), 'PR #211');
+  assert.strictEqual(core.linkLabel('https://github.com/acme/widget/issues/210'), 'Issue #210');
+  assert.strictEqual(core.linkLabel('https://github.com/acme/widget'), 'acme/widget');
+  assert.strictEqual(core.linkLabel('https://github.com/acme/widget/tree/main/src'), 'acme/widget');
+  assert.strictEqual(core.linkLabel('https://claude.ai/artifact/AbC'), 'Page');
+  assert.strictEqual(core.linkLabel('https://claude.ai/code/artifact/0b1c'), 'Page');
+  assert.strictEqual(core.linkLabel('https://www.example.com/x?y=1'), 'example.com');
+
+  assert.deepStrictEqual(
+    core.urlsIn('See (https://example.com/a), then https://example.com/b. And https://en.wikipedia.org/wiki/Foo_(bar) and https://example.com/a again; not ftp://x.'),
+    ['https://example.com/a', 'https://example.com/b', 'https://en.wikipedia.org/wiki/Foo_(bar)'],
+    'trailing punctuation and a closing parenthesis are not part of the URL; once each',
+  );
+  assert.deepStrictEqual(core.urlsIn(null), []);
+
+  const page = sample({
+    tasks: [{ card: 1, links: [{ label: 'the PR', url: 'https://github.com/acme/widget/pull/211' }] }, { card: 2 }],
+  });
+  const cards = [
+    {
+      id: 1,
+      status: 'open',
+      summary: 'Land https://github.com/acme/widget/pull/211',
+      detail: 'Context.\n[2026-11-10] note: tracked in https://github.com/acme/widget/issues/210 and https://GITHUB.com/acme/widget/pull/211/ — draft https://claude.ai/artifact/Doc1',
+    },
+    { id: 2, status: 'open', summary: 'No links here', detail: null },
+  ];
+  const r = core.resolve(page, cards);
+  assert.deepStrictEqual(
+    r.tasks[0].links,
+    [
+      { label: 'the PR', url: 'https://github.com/acme/widget/pull/211' },
+      { label: 'Issue #210', url: 'https://github.com/acme/widget/issues/210' },
+      { label: 'Page', url: 'https://claude.ai/artifact/Doc1' },
+    ],
+    'the page\'s links first with their labels; the card\'s after, the same URL once',
+  );
+  assert.deepStrictEqual(r.tasks[1].links, []);
+  assert.deepStrictEqual(core.cardLinks(undefined), []);
+
+  // noting a URL on a card changes what the page shows, so the worker re-exports and republishes
+  const noted = core.resolve(page, cards.map((c) => (c.id === 2 ? { ...c, detail: '[2026-11-12] note: https://github.com/acme/widget/pull/212' } : c)));
+  assert.deepStrictEqual(noted.tasks[1].links, [{ label: 'PR #212', url: 'https://github.com/acme/widget/pull/212' }]);
+  assert.notStrictEqual(core.snapshotHash(r), core.snapshotHash(noted), 'a URL noted on a card changes the snapshot hash');
+  // ...and so does an owner or next flag set on the page
+  assert.notStrictEqual(core.snapshotHash(r), core.snapshotHash(core.resolve({ ...page, tasks: [page.tasks[0], { card: 2, owner: 'Sam' }] }, cards)));
+}
+
 // --------------------------------------------------------- publish parsing ----
 assert.strictEqual(core.parsePublishUrl('done: https://claude.ai/artifact/AbC_12-x\n'), 'https://claude.ai/artifact/AbC_12-x');
 assert.strictEqual(core.parsePublishUrl('https://claude.ai/code/artifact/0b1c-2d'), 'https://claude.ai/code/artifact/0b1c-2d');
