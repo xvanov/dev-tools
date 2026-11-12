@@ -187,6 +187,18 @@
 # stops the next update from doing this again. Ruled out: cause 6 (ForceDaemon already true,
 # tray present), and `tailscale up` (it only re-mints the URL; see the 10-28 note). sessiond
 # (pid 30840, 1 session) and the loopback front (pid 23764) stayed healthy and were not touched.
+#
+# WHAT THE 2026-11-12 ESCALATION FOUND (LAP-US101): cause 7 a third time, same trigger. Tailscale
+# auto-updated to 1.104.7 at 18:18 (MsiInstaller 11707); outage at 18:20. NeedsLogin,
+# LoggedOut=false, ForceDaemon=true. This remedy MISSED NOTHING: the 11-10 update-event path fired
+# and printed the cause-7 diagnosis and the console fix, kept the loopback front (pid 23764)
+# healthy (/api/health ok, self.entry=front, sessiond ok), and exited 1 as it should, because only
+# a human can re-authenticate. No code change was warranted, and none was made, so that nothing
+# would pretend to repair it. Ruled out again: `tailscale up` (it re-mints the URL), cause 6, PATH.
+# The recurrence is the evidence that matters: each Tailscale auto-update re-registers the node,
+# and its daily-expiring key is found expired every time. The fix is to set 'Disable key expiry'
+# for this machine in the admin console. Until a human does that, expect this escalation after
+# every Tailscale update.
 
 param(
   [string]$Signature,
