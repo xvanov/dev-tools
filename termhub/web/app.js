@@ -1504,7 +1504,9 @@ function makeCombobox(input, listEl, opts) {
   let active = -1;
   let token = 0;                           // guards against out-of-order async results
 
-  function close() { listEl.hidden = true; active = -1; }
+  // Bumping `token` cancels any lookup still in flight, so a slow /api/dirs
+  // answer can't reopen the list after Enter/Tab/blur dismissed it.
+  function close() { token++; listEl.hidden = true; active = -1; }
 
   function render() {
     listEl.innerHTML = '';
@@ -1552,11 +1554,23 @@ function makeCombobox(input, listEl, opts) {
   input.addEventListener('keydown', (e) => {
     if (listEl.hidden || !items.length) {
       if (e.key === 'ArrowDown') update();
+      else if (e.key === 'Enter' || e.key === 'Tab') close(); // cancel a lookup still in flight
       return;                              // let Enter/Escape bubble (submit/close dialog)
     }
     if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); }
     else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopPropagation(); pick(items[active]); }
+    else if (e.key === 'Enter') { close(); } // nothing highlighted: dismiss, let Enter bubble to submit
+    else if (e.key === 'Tab') {
+      // Accept the highlighted suggestion (if any), close the list and let the
+      // browser move focus on. Dirs get their separator, as a click would.
+      if (active >= 0 && !e.shiftKey) {
+        const val = items[active];
+        const sep = val.includes('\\') ? '\\' : '/';
+        input.value = keepOpenOnPick && !val.endsWith(sep) ? val + sep : val;
+      }
+      close();
+    }
     else if (e.key === 'Escape') { e.stopPropagation(); close(); } // close list, not dialog
   });
 
@@ -1617,11 +1631,23 @@ function closeDialog() {
   if (cmdCombo) cmdCombo.close();
 }
 
+// True from the first submit until the POST settles. A second click or Enter in
+// that window is ignored, so impatience can't mint several terminals.
+let creating = false;
+
 async function submitDialog() {
+  if (creating) return;
+  creating = true;
+  if (cwdCombo) cwdCombo.close();
+  if (cmdCombo) cmdCombo.close();
   const cwd = $('#dlg-cwd').value.trim();
   const title = $('#dlg-title').value.trim();
   const command = $('#dlg-cmd').value.trim();
-  $('#dlg-open').disabled = true;
+  const openBtn = $('#dlg-open');
+  const label = openBtn.textContent;
+  openBtn.disabled = true;
+  openBtn.textContent = 'Creating…';
+  $('#dlg-error').textContent = '';
   try {
     const body = { cols: 80, rows: 24 };
     if (cwd) body.cwd = cwd;
@@ -1631,13 +1657,19 @@ async function submitDialog() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     closeDialog();
-    await refresh();
+    // Open the terminal now; the sidebar list catches up in the background.
+    // Awaiting refresh() here put a whole GET /api/sessions round trip (or an
+    // already-in-flight poll) between the 201 and anything appearing.
     openTerminal(session.id, session.title, session.kind);
     if (isMobile()) closeDrawer();
+    // A poll already in flight predates the new session, so run one more after it.
+    (refreshing || Promise.resolve()).then(refresh);
   } catch (e) {
     $('#dlg-error').textContent = e.message;
   } finally {
-    $('#dlg-open').disabled = false;
+    creating = false;
+    openBtn.disabled = false;
+    openBtn.textContent = label;
   }
 }
 
