@@ -28,9 +28,11 @@ import io
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import time
+import urllib.request
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -383,6 +385,29 @@ def make_handler(state, log):
     return Handler
 
 
+class VoiceHTTPServer(ThreadingHTTPServer):
+    """One owner of the port, on every OS. http.server sets SO_REUSEADDR, which on Windows
+    (unlike POSIX) lets a second process bind and LISTEN on a port that is already listening:
+    two services ran side by side, the stale one holding 1.3 GB of VRAM and answering some
+    requests. Windows gets SO_EXCLUSIVEADDRUSE instead (and no SO_REUSEADDR), so the second
+    bind fails with EADDRINUSE; POSIX keeps SO_REUSEADDR, which there only skips TIME_WAIT."""
+    allow_reuse_address = os.name != 'nt'
+
+    def server_bind(self):
+        if os.name == 'nt':
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def health_answers(host, port, timeout=2.0):
+    """True when a pa-voice already answers /health on host:port (loading or ready)."""
+    try:
+        with urllib.request.urlopen(f'http://{host}:{port}/health', timeout=timeout) as r:
+            return 'ok' in json.loads(r.read().decode('utf8'))
+    except Exception:
+        return False
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--host', default='127.0.0.1')
@@ -399,7 +424,14 @@ def main(argv=None):
 
     state = State()
     state.throttle_off = no_throttle()
-    srv = ThreadingHTTPServer((args.host, args.port), make_handler(state, log))
+    if health_answers(args.host, args.port):
+        log(f'pa-voice is already running on http://{args.host}:{args.port}; not starting a second one')
+        sys.exit(0)
+    try:
+        srv = VoiceHTTPServer((args.host, args.port), make_handler(state, log))
+    except OSError as e:
+        log(f'cannot bind {args.host}:{args.port} ({e}): another process owns the port; exiting')
+        sys.exit(1)
     srv.daemon_threads = True
     log(f'pa-voice listening on http://{args.host}:{args.port} (loading models)')
 

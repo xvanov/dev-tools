@@ -226,7 +226,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "127.0.0.1:47830, loopback only, refuses any request with an Origin header",
+        "work": "127.0.0.1:47830, loopback only, refuses any request with an Origin header, sole owner of the port (SO_EXCLUSIVEADDRUSE on Windows; a second start exits, 0 if one already answers /health)",
         "personal": "127.0.0.1:47830 on k-911-x17, Kokoro on the CPU (systemd user unit pa-voice)"
       },
       "health": "voice",
