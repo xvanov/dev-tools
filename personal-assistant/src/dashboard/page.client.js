@@ -7,7 +7,8 @@
  *                   refreshed every 30 s
  *   the export      one HTML file with this script inlined and the page in
  *                   <script type="application/json" id="page-data">; also what is
- *                   published as a claude.ai Artifact
+ *                   published as a claude.ai Artifact. The export strips this file's
+ *                   comments (core.stripComments), so notes here stay in the repo.
  *
  * Self-contained: its own CSS tokens (light and dark), no fonts or scripts from
  * anywhere. textContent and createElement only: no HTML sink. */
@@ -442,7 +443,7 @@
     }
 
     var when = page.resolvedAt ? String(page.resolvedAt).replace('T', ' ').slice(0, 16) + ' UTC' : '';
-    wrap.appendChild(el('div', 'foot', opts.live ? 'Live from the board · refreshed ' + when : 'Snapshot ' + (page.resolvedAt || '') + ' · source: Jarvis'));
+    wrap.appendChild(el('div', 'foot', opts.live ? 'Live from the board · refreshed ' + when : 'Snapshot ' + when));
 
     root.__pg = keep;
     var redraw = function () { drawEdges(); };
@@ -452,7 +453,7 @@
     requestAnimationFrame(function () { drawEdges(); if (keep.node) showDetail(keep.node); });
   }
 
-  window.JarvisPage = { render: render };
+  window.PlanPage = { render: render };
 
   function boot() {
     var root = document.getElementById('page-root');

@@ -1174,6 +1174,10 @@ PR on the card and it is on the page at the next pass, no page edit. Page-level 
 `sections` are optional and draw nothing when empty. Hover or click a flow in the legend to
 light up its arrows; click a box for its detail and its tasks.
 
+The export inlines the renderer **without its comments** (`stripComments`, a small tokenizer that
+leaves strings, templates and regex literals alone), so the published page's source carries no note
+from this repo; the dashboard serves the file as it is.
+
 **Publishing** runs `claude -p` headless with `CLAUDE_CODE_ARTIFACT=1` and only the Artifact tool (plus Read,
 which it needs to read the file) allowed, on the machine's Claude login (API keys are dropped, as for the PA chat). The link is
 stored in the page; the next publish reads that artifact and updates it in place. If the CLI

@@ -20,6 +20,70 @@ const cli = require('../src/cli/page.ts');
 const { parseArgs } = require('../src/cli/parseArgs.ts');
 
 const PA = path.join(__dirname, '..');
+let exportedJs = '';
+
+/**
+ * Just enough DOM to run page.client.js as the export inlines it: elements with classes,
+ * attributes, style and listeners, a class/tag/attribute selector, and one animation frame
+ * run by hand (`frame()`). Not a browser: layout is a fixed box per element.
+ */
+function fakeDom(page) {
+  const nodes = [];
+  function make(tag) {
+    const n = {
+      tag, attrs: {}, style: {}, children: [], parent: null, listeners: {}, hidden: false, _text: '',
+      get className() { return this.attrs.class || ''; },
+      set className(v) { this.attrs.class = String(v); },
+      get classList() {
+        const self = this;
+        const list = () => self.className.split(/\s+/).filter(Boolean);
+        return {
+          contains: (c) => list().includes(c),
+          add: (c) => { if (!list().includes(c)) self.className = [...list(), c].join(' '); },
+          remove: (c) => { self.className = list().filter((x) => x !== c).join(' '); },
+          toggle: (c, on) => { const want = on === undefined ? !list().includes(c) : !!on; if (want) self.classList.add(c); else self.classList.remove(c); return want; },
+        };
+      },
+      get firstChild() { return this.children[0] || null; },
+      set textContent(v) { this.children = []; this._text = String(v); },
+      get textContent() { return this.text(); },
+      text() { return this._text + this.children.map((c) => c.text()).join(''); },
+      appendChild(c) { if (c.tag === '#frag') { c.children.slice().forEach((x) => this.appendChild(x)); return c; } c.parent = this; this.children.push(c); return c; },
+      removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parent = null; return c; },
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      removeAttribute(k) { delete this.attrs[k]; },
+      addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+      fire(t) { (this.listeners[t] || []).forEach((f) => f({ key: '', preventDefault() {} })); },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 30 }; },
+      descendants() { return this.children.flatMap((c) => [c, ...c.descendants()]); },
+      querySelectorAll(sel) { return this.descendants().filter((d) => (sel[0] === '.' ? d.classList.contains(sel.slice(1)) : d.tag === sel)); },
+      querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+    };
+    nodes.push(n);
+    return n;
+  }
+  const root = make('div');
+  const data = make('script');
+  data._text = JSON.stringify(page);
+  const head = make('head');
+  let frames = [];
+  const document = {
+    readyState: 'complete', title: '', head,
+    createElement: make, createElementNS: (_ns, tag) => make(tag),
+    createTextNode: (t) => { const n = make('#text'); n._text = String(t); return n; },
+    createDocumentFragment: () => make('#frag'),
+    getElementById: (id) => (id === 'page-root' ? root : id === 'page-data' ? data : head.children.find((c) => c.id === id) || null),
+    addEventListener() {},
+  };
+  const window = { addEventListener() {}, removeEventListener() {} };
+  const globals = { window, document, requestAnimationFrame: (f) => frames.push(f), setInterval() {}, fetch() {} };
+  return {
+    globals,
+    frame() { const fs_ = frames; frames = []; fs_.forEach((f) => f()); },
+    all: (pred) => root.descendants().filter(pred),
+  };
+}
 
 function sample(over = {}) {
   return {
@@ -108,6 +172,52 @@ assert.deepStrictEqual(core.validate(sample()), []);
   assert.strictEqual(JSON.parse(json[1]).title, evil.title, 'and reads back exactly');
   assert.match(html, /<title>A script script alert<\/title>/, 'a short, escaped title');
   assert.strictEqual(core.shortTitle('Ship'), 'Ship page');
+  assert.strictEqual(core.shortTitle(''), 'Plan page');
+
+  // The published file carries no note from this repo: the renderer's comments are stripped and
+  // nothing in it names the tool. The stripped renderer still parses and runs (renderInFakeDom).
+  const plain = core.exportHtml(core.resolve(sample(), cards), { clientJs: client });
+  assert.ok(!/jarvis/i.test(plain), 'the export never says Jarvis');
+  assert.ok(!plain.includes('/*'), 'no block comment from the renderer');
+  assert.ok(!/^\s*\/\//m.test(plain), 'no line comment from the renderer');
+  assert.ok(plain.includes("'http://www.w3.org/2000/svg'"), 'a URL in a string survives');
+  exportedJs = /<script>([\s\S]*?)<\/script>/.exec(plain.replace(/<script type="application\/json"[\s\S]*?<\/script>/, ''))[1];
+}
+
+// ------------------------------------------------ stripComments is careful ----
+{
+  const src = [
+    '/* header',
+    ' * more */',
+    "var a = 'http://x/*not a comment*/'; // trailing",
+    'var b = "say // no";',
+    '  // a whole line',
+    'var r = /\\/\\*[/]x/g, s = /a\\/\\/b/;',
+    'var t = `//kept ${1} /*kept*/`;',
+    'var d = a.length / 2 / 1;',
+    'function f(z) { return /re\\//.test(z); }',
+    'var k = [1] / 2; /* inline */ var m = 3;',
+  ].join('\n');
+  const out = core.stripComments(src);
+  assert.ok(!out.includes('header') && !out.includes('trailing') && !out.includes('a whole line') && !out.includes('inline'), out);
+  for (const keep of ["'http://x/*not a comment*/'", '"say // no"', '/\\/\\*[/]x/g', '/a\\/\\/b/', '`//kept ${1} /*kept*/`', 'a.length / 2 / 1', '/re\\//.test(z)', 'var m = 3;']) {
+    assert.ok(out.includes(keep), `stripComments keeps ${keep}:\n${out}`);
+  }
+  const vm = require('vm');
+  const ctx = { r: 0 };
+  vm.runInNewContext(out + '\n;r = [a, b, r.source, s.source, t, d, f("re/"), k, m];', ctx);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.r)), ['http://x/*not a comment*/', 'say // no', '\\/\\*[/]x', 'a\\/\\/b', '//kept 1 /*kept*/', 12.5, true, 0.5, 3]);
+}
+
+// --------------------------------------------- the stripped renderer runs ----
+{
+  const vm = require('vm');
+  const dom = fakeDom(core.resolve(sample(), []));
+  vm.runInNewContext(exportedJs, dom.globals);
+  assert.ok(dom.globals.window.PlanPage && typeof dom.globals.window.PlanPage.render === 'function', 'the stripped renderer ran');
+  dom.frame();
+  assert.ok(dom.all((n) => n.tag === 'h1')[0].text().startsWith('Sample rollout plan'), 'and drew the page');
+  assert.ok(dom.all((n) => n.tag === 'path').length > 0, 'and its arrows');
 }
 
 // ------------------------------------------- owner, next, links: validation ----

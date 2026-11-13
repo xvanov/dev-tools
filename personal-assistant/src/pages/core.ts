@@ -13,7 +13,8 @@
 //   taskStatus(state, task)           done | doing | blocked | next | todo | dropped | missing
 //   cardLinks(card) / linkLabel(url)  the http(s) URLs in a card's title and details, labelled
 //   snapshotHash(resolved)            what changed, ignoring when it was resolved
-//   exportHtml(resolved, parts)       one self-contained HTML file (no external script or font)
+//   exportHtml(resolved, parts)       one self-contained HTML file (no external script or font),
+//                                     the renderer inlined without its comments (stripComments)
 //   parsePublishUrl(text)             the claude.ai artifact link in the CLI's answer
 //
 // A task's card comes from the board: open/dispatched counts as to do, done as
@@ -342,7 +343,7 @@ function snapshotHash(resolved: Row): string {
 function shortTitle(title: string): string {
   const words = String(title || '').replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter(Boolean);
   const pick = words.slice(0, 4);
-  while (pick.length < 2) pick.push(pick.length ? 'page' : 'Jarvis');
+  while (pick.length < 2) pick.push(pick.length ? 'page' : 'Plan');
   return pick.join(' ');
 }
 
@@ -353,12 +354,88 @@ function scriptJson(v: unknown): string {
   return JSON.stringify(v).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
+/** Words after which a `/` starts a regex literal, not a division. */
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+/** Punctuation after which a `/` starts a regex literal. */
+const REGEX_AFTER_PUNCT = '(,=:[!&|?{};+-*%<>~^';
+const WORD_CHAR = /[A-Za-z0-9_$]/;
+
 /**
- * One self-contained HTML file: the renderer inlined, the resolved page as
- * JSON, nothing loaded from elsewhere. The same client draws it in the dashboard.
+ * JavaScript without its comments, for the export: the renderer's notes are for
+ * this repo, not for whoever reads the published page's source. A small tokenizer,
+ * so a `//` or a block-comment opener inside a string, a template or a regex literal
+ * is kept: a `/` starts a regex when the token before it cannot end an expression.
+ * A comment that spanned lines becomes a newline (ASI sees what it saw), and lines
+ * left blank go. A template whose `${…}` holds another backtick is not supported;
+ * the renderer has none.
+ */
+function stripComments(src: string): string {
+  const s = String(src);
+  const n = s.length;
+  let out = '';
+  let prev = ''; // the last significant punctuation or word, for the regex test
+  let i = 0;
+  while (i < n) {
+    const c = s[i];
+    const d = s[i + 1];
+    if (c === '/' && d === '*') {
+      const end = s.indexOf('*/', i + 2);
+      const stop = end < 0 ? n : end + 2;
+      out += s.slice(i, stop).includes('\n') ? '\n' : ' ';
+      i = stop;
+      continue;
+    }
+    if (c === '/' && d === '/') {
+      while (i < n && s[i] !== '\n') i++;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < n && s[j] !== c) j += s[j] === '\\' ? 2 : 1;
+      out += s.slice(i, j + 1);
+      i = j + 1;
+      prev = c;
+      continue;
+    }
+    if (c === '/' && (prev === '' || REGEX_AFTER_PUNCT.includes(prev) || REGEX_AFTER_WORD.has(prev))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < n && s[j] !== '\n') {
+        if (s[j] === '\\') { j += 2; continue; }
+        if (s[j] === '[') inClass = true;
+        else if (s[j] === ']') inClass = false;
+        else if (s[j] === '/' && !inClass) break;
+        j++;
+      }
+      j++;
+      while (j < n && /[a-z]/i.test(s[j])) j++; // its flags
+      out += s.slice(i, j);
+      i = j;
+      prev = ')'; // a regex ends an expression
+      continue;
+    }
+    if (WORD_CHAR.test(c)) {
+      let j = i;
+      while (j < n && WORD_CHAR.test(s[j])) j++;
+      prev = s.slice(i, j);
+      out += prev;
+      i = j;
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out.split('\n').map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0).join('\n');
+}
+
+/**
+ * One self-contained HTML file: the renderer inlined without its comments, the
+ * resolved page as JSON, nothing loaded from elsewhere. The dashboard serves the
+ * same renderer as it is.
  */
 function exportHtml(resolved: Row, { clientJs }: { clientJs: string }): string {
-  const js = String(clientJs).replace(/<\/script/gi, '<\\/script');
+  const js = stripComments(String(clientJs)).replace(/<\/script/gi, '<\\/script');
   return [
     '<!doctype html>',
     '<html lang="en">',
@@ -383,4 +460,4 @@ function parsePublishUrl(text: string): string | null {
   return m ? m[0] : null;
 }
 
-module.exports = { VERSION, validate, normalize, resolve, taskState, taskStatus, STATUS_ORDER, urlsIn, linkLabel, cardLinks, mergeLinks, snapshotHash, shortTitle, exportHtml, scriptJson, parsePublishUrl, SLUG };
+module.exports = { VERSION, validate, normalize, resolve, taskState, taskStatus, STATUS_ORDER, urlsIn, linkLabel, cardLinks, mergeLinks, snapshotHash, shortTitle, stripComments, exportHtml, scriptJson, parsePublishUrl, SLUG };
