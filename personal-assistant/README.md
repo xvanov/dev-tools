@@ -1150,7 +1150,7 @@ The format (version 1; `src/pages/core.ts` validates it and reports every proble
   "links": [{ "label": "spec", "url": "https://…" }],
   "map": { "layers": [{ "id": "apps", "label": "Apps" }],
            "nodes": [{ "id": "app", "label": "App", "layer": "apps", "kind": "service", "status": "live", "detail": "…" }],
-           "edges": [{ "from": "app", "to": "db", "label": "writes", "flows": ["save"], "style": "solid" }],
+           "edges": [{ "from": "app", "to": "db", "label": "writes", "flows": ["save"], "status": "live" }],
            "flows": [{ "id": "save", "label": "Save", "color": "#2f6fde", "description": "…" }] },
   "sections": [{ "heading": "Why", "body": "Paragraphs split by blank lines.\n\n- and bullets" }],
   "tasks": [{ "card": 123, "group": "Now", "owner": "Sam", "next": true, "blockedOn": "who or what",
@@ -1158,8 +1158,10 @@ The format (version 1; `src/pages/core.ts` validates it and reports every proble
   "publish": { "url": null, "publishedAt": null, "hash": null } }
 ```
 
-`kind` is service, job, data, external, identity or person; `status` is live, planned, retiring or
-blocked. A task's title and status come from its card: a done card counts as done, a dropped card and a
+`kind` is service, job, data, external, identity or person; a node's `status` is live, planned, off
+(built, switched off: dashed like planned, with an amber dot), retiring or blocked. An edge's `status` is
+live, planned, off or blocked; unset, it follows the older `style` (solid is live, dashed is planned).
+A task's title and status come from its card: a done card counts as done, a dropped card and a
 card that does not exist leave the total (shown struck through), an open card the dedupe pass folded
 into another follows that card, and a card
 with a live build run or `doing: true` is "working on".
@@ -1171,8 +1173,12 @@ within one. `owner` (who is responsible) shows on the row. A task's **links** ar
 every http(s) URL in its card's title and details (where `pa card edit --note` appends), each URL
 once, labelled "PR #211", "Issue #210", "owner/repo", "Page" (a claude.ai artifact) or the host: note a
 PR on the card and it is on the page at the next pass, no page edit. Page-level `links` and
-`sections` are optional and draw nothing when empty. Hover or click a flow in the legend to
-light up its arrows; click a box for its detail and its tasks.
+`sections` are optional and draw nothing when empty.
+
+**Arrows.** At rest an arrow's colour and line say its status: live is a solid strong neutral, planned
+dashed grey, off (built, switched off) dashed amber, blocked dashed red; a key under the flow chips
+says so. Hover or click a flow chip to trace it: its arrows take the flow's colour (its chip's dot)
+and the rest dim. Click a box for its detail and its tasks; its arrows keep their status colours.
 
 The export inlines the renderer **without its comments** (`stripComments`, a small tokenizer that
 leaves strings, templates and regex literals alone), so the published page's source carries no note

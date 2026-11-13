@@ -10,6 +10,10 @@
  *                   published as a claude.ai Artifact. The export strips this file's
  *                   comments (core.stripComments), so notes here stay in the repo.
  *
+ * Map arrows: at rest an arrow shows its status (live solid, planned / switched off /
+ * blocked dashed, each its own colour; the key under the flow chips says so); a picked
+ * flow repaints its arrows in the flow's colour and dims the rest.
+ *
  * Self-contained: its own CSS tokens (light and dark), no fonts or scripts from
  * anywhere. textContent and createElement only: no HTML sink. */
 (function () {
@@ -18,11 +22,11 @@
   var SVG = 'http://www.w3.org/2000/svg';
   var STYLE = [
     ':root{--pg-bg:#f7f7f5;--pg-panel:#ffffff;--pg-ink:#1d1f23;--pg-muted:#5f6670;--pg-line:#d9dce1;--pg-band:#eef0f3;',
-    '--pg-accent:#2f6fde;--pg-ok:#1f8a4c;--pg-warn:#b7791f;--pg-bad:#c53030;--pg-next:#7c3aed;--pg-dim:0.18;--pg-chip:#eef2f8;}',
+    '--pg-accent:#2f6fde;--pg-ok:#1f8a4c;--pg-warn:#b7791f;--pg-bad:#c53030;--pg-next:#7c3aed;--pg-dim:0.18;--pg-chip:#eef2f8;--pg-edge:#3a4250;--pg-plan:#868d98;}',
     '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--pg-bg:#14161a;--pg-panel:#1c1f25;--pg-ink:#e6e8eb;',
-    '--pg-muted:#9aa3ad;--pg-line:#323842;--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;}}',
+    '--pg-muted:#9aa3ad;--pg-line:#323842;--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;--pg-edge:#c9d0d8;--pg-plan:#6c7480;}}',
     ':root[data-theme="dark"]{--pg-bg:#14161a;--pg-panel:#1c1f25;--pg-ink:#e6e8eb;--pg-muted:#9aa3ad;--pg-line:#323842;',
-    '--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;}',
+    '--pg-band:#20242b;--pg-accent:#6ea0ff;--pg-ok:#4cc382;--pg-warn:#e0a948;--pg-bad:#f07070;--pg-next:#b69cff;--pg-chip:#262b33;--pg-edge:#c9d0d8;--pg-plan:#6c7480;}',
     'body{margin:0;background:var(--pg-bg);color:var(--pg-ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}',
     '.pg{max-width:1100px;margin:0 auto;padding:20px 16px 40px;box-sizing:border-box;}',
     '.pg *{box-sizing:border-box;}',
@@ -46,11 +50,11 @@
     '.pg .node{position:relative;background:var(--pg-panel);border:1.5px solid var(--pg-line);border-radius:8px;padding:6px 10px;min-width:110px;max-width:220px;cursor:pointer;transition:opacity .15s,border-color .15s,box-shadow .15s;}',
     '.pg .node .nl{font-weight:600;font-size:13px;line-height:1.3;}',
     '.pg .node .nk{font-size:11px;color:var(--pg-muted);}',
-    '.pg .node.s-planned{border-style:dashed;}',
+    '.pg .node.s-planned,.pg .node.s-off{border-style:dashed;}',
     '.pg .node.s-retiring{opacity:.75;}',
     '.pg .node.s-blocked{border-color:var(--pg-bad);}',
     '.pg .node .dot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--pg-ok);}',
-    '.pg .node.s-planned .dot{background:var(--pg-muted);}.pg .node.s-retiring .dot{background:var(--pg-warn);}.pg .node.s-blocked .dot{background:var(--pg-bad);}',
+    '.pg .node.s-planned .dot{background:var(--pg-muted);}.pg .node.s-retiring .dot,.pg .node.s-off .dot{background:var(--pg-warn);}.pg .node.s-blocked .dot{background:var(--pg-bad);}',
     '.pg .node.hot{border-color:var(--pg-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pg-accent) 25%,transparent);}',
     '.pg .map.dim .node:not(.on){opacity:var(--pg-dim);}',
     '.pg svg.edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;overflow:visible;}',
@@ -66,6 +70,12 @@
     '.pg .flow i{width:10px;height:10px;border-radius:50%;display:inline-block;}',
     '.pg .flow.on{border-color:var(--pg-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--pg-accent) 25%,transparent);}',
     '.pg .flowdesc{margin:6px 0 0;color:var(--pg-muted);min-height:1.5em;}',
+    // The line key: what an arrow's colour and dash mean when no flow is picked.
+    '.pg .lkey{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;margin:8px 0 0;font-size:12px;color:var(--pg-muted);}',
+    '.pg .lkey span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}',
+    '.pg .lkey svg{width:24px;height:8px;flex:none;overflow:visible;}',
+    '.pg .lkey svg line{stroke-width:2;}',
+    '.pg .lkey .hint{font-style:italic;}',
     '.pg .detail{margin-top:10px;background:var(--pg-panel);border:1px solid var(--pg-line);border-radius:10px;padding:10px 14px;}',
     '.pg .detail[hidden]{display:none;}',
     '.pg .detail h3{margin:0 0 4px;font-size:15px;}',
@@ -129,6 +139,27 @@
   }
   function safeHref(u) { return /^https?:\/\//i.test(String(u || '')) ? String(u) : null; }
 
+  // An arrow at rest says what state the link is in; a picked flow repaints its own arrows in the
+  // flow's colour (its chip's dot). Dashed is anything not live, so it reads without colour too.
+  var EDGE_LOOK = {
+    live: { color: 'var(--pg-edge)', dash: null, label: 'live' },
+    planned: { color: 'var(--pg-plan)', dash: '5 4', label: 'planned' },
+    off: { color: 'var(--pg-warn)', dash: '5 4', label: 'switched off' },
+    blocked: { color: 'var(--pg-bad)', dash: '5 4', label: 'blocked' },
+  };
+  var EDGE_ORDER = ['live', 'planned', 'off', 'blocked'];
+  /** An edge's status; one from before statuses existed has only `style` (dashed was planned). */
+  function edgeStatus(e) { return EDGE_LOOK[e && e.status] ? e.status : (e && e.style === 'dashed' ? 'planned' : 'live'); }
+  function flowColor(f) { return (f && f.color) || 'var(--pg-accent)'; }
+  /** How an edge is drawn: its status's look, in the picked flow's colour when it is on that flow. */
+  function edgeLook(e, flow, flowsById) {
+    var status = edgeStatus(e);
+    var look = EDGE_LOOK[status];
+    var onFlow = !!flow && (e.flows || []).indexOf(flow) >= 0;
+    return { status: status, color: onFlow ? flowColor(flowsById[flow]) : look.color, dash: look.dash };
+  }
+  var NODE_STATUS_LABEL = { off: 'switched off' };
+
   var STATUS_LABEL = { doing: 'Doing', next: 'Next', blocked: 'Blocked', todo: 'To do', done: 'Done', dropped: 'Dropped', missing: 'Missing' };
   var OPEN = { doing: 1, next: 1, blocked: 1, todo: 1 };
   /** A task's status; a page resolved before statuses existed has only `state`. */
@@ -157,6 +188,25 @@
       } else frag.appendChild(el('p', null, lines.join(' ')));
     });
     return frag;
+  }
+
+  /** The always-visible key: a short line sample per edge status, then how to trace a flow. */
+  function lineKey(withHint) {
+    var key = el('div', 'lkey');
+    EDGE_ORDER.forEach(function (status) {
+      var look = EDGE_LOOK[status];
+      var item = el('span');
+      var s = sv('svg', { viewBox: '0 0 24 8', 'aria-hidden': 'true' });
+      var ln = sv('line', { x1: 1, y1: 4, x2: 23, y2: 4 });
+      ln.style.stroke = look.color;
+      if (look.dash) ln.setAttribute('stroke-dasharray', '4 3');
+      s.appendChild(ln);
+      item.appendChild(s);
+      item.appendChild(document.createTextNode(look.label));
+      key.appendChild(item);
+    });
+    if (withHint) key.appendChild(el('span', 'hint', 'Pick a flow to trace it'));
+    return key;
   }
 
   function render(root, page, opts) {
@@ -206,9 +256,17 @@
     (map.flows || []).forEach(function (f) { flowsById[f.id] = f; });
 
     function nodeTasks(id) { return (page.tasks || []).filter(function (t) { return (t.nodes || []).indexOf(id) >= 0; }); }
-    function edgeColor(e) {
-      var f = (e.flows || [])[0] && flowsById[e.flows[0]];
-      return (f && f.color) || 'var(--pg-muted)';
+    var edgeMarker = null; // set by drawEdges: an arrowhead in a colour, made once per colour
+
+    /** Stroke, dash and arrowhead for one drawn edge, for what is picked now. */
+    function paintEdge(g, e, flow) {
+      var path = g.querySelector('path');
+      if (!path) return;
+      var look = edgeLook(e, flow, flowsById);
+      path.style.stroke = look.color;
+      if (look.dash) path.setAttribute('stroke-dasharray', look.dash);
+      else path.removeAttribute('stroke-dasharray');
+      if (edgeMarker) path.setAttribute('marker-end', edgeMarker(look.color));
     }
 
     function applyHighlight() {
@@ -223,6 +281,7 @@
         if (flow) on = (e.flows || []).indexOf(flow) >= 0;
         else if (node) on = e.from === node || e.to === node;
         g.classList.toggle('on', on);
+        paintEdge(g, e, flow);
         if (on) { onNodes[e.from] = 1; onNodes[e.to] = 1; any = true; }
       });
       if (node) { onNodes[node] = 1; any = true; }
@@ -245,7 +304,7 @@
       x.onclick = function () { keep.node = null; root.__pg = keep; detail.hidden = true; applyHighlight(); };
       detail.appendChild(x);
       detail.appendChild(el('h3', null, n.label));
-      detail.appendChild(el('div', 'muted', [n.kind, n.status].filter(Boolean).join(' · ')));
+      detail.appendChild(el('div', 'muted', [n.kind, NODE_STATUS_LABEL[n.status] || n.status].filter(Boolean).join(' · ')));
       if (n.detail) detail.appendChild(textBlocks(n.detail));
       var ts = nodeTasks(id);
       if (ts.length) {
@@ -274,6 +333,7 @@
         markers[key] = 1;
         return 'url(#pgm-' + key + ')';
       }
+      edgeMarker = marker;
       var base = mapEl.getBoundingClientRect();
       (map.edges || []).forEach(function (e, i) {
         var a = boxes[e.from], b = boxes[e.to];
@@ -299,20 +359,16 @@
           p1 = [p1[0], lift + 6];
           p2 = [p2[0], lift + 6];
         }
-        var color = edgeColor(e);
-        var g = sv('g', { class: 'e', 'data-i': i });
-        var path = sv('path', { d: d });
-        path.style.stroke = color;
-        if (e.style === 'dashed') path.setAttribute('stroke-dasharray', '5 4');
-        path.setAttribute('marker-end', marker(color));
-        g.appendChild(path);
+        var g = sv('g', { class: 'e s-' + edgeStatus(e), 'data-i': i });
+        g.appendChild(sv('path', { d: d }));
+        paintEdge(g, e, keep.flow);
         if (e.label) {
           var t = sv('text', { x: (p1[0] + p2[0]) / 2, y: (p1[1] + p2[1]) / 2 - 3, 'text-anchor': 'middle' });
           t.textContent = e.label;
           g.appendChild(t);
         }
         var title = sv('title', {});
-        title.textContent = e.label || (e.from + ' → ' + e.to);
+        title.textContent = (e.label || (e.from + ' → ' + e.to)) + ' (' + EDGE_LOOK[edgeStatus(e)].label + ')';
         g.appendChild(title);
         svg.appendChild(g);
       });
@@ -363,7 +419,7 @@
           b.type = 'button';
           b.setAttribute('data-flow', f.id);
           var dot = el('i');
-          dot.style.background = f.color || 'var(--pg-muted)';
+          dot.style.background = flowColor(f);
           b.appendChild(dot);
           b.appendChild(document.createTextNode(f.label));
           b.title = f.description || f.label;
@@ -380,6 +436,9 @@
           legend.appendChild(b);
         });
         wrap.appendChild(legend);
+      }
+      if ((map.edges || []).length) wrap.appendChild(lineKey((map.flows || []).length > 0));
+      if ((map.flows || []).length) {
         flowDesc = el('p', 'flowdesc');
         wrap.appendChild(flowDesc);
       }
@@ -453,7 +512,7 @@
     requestAnimationFrame(function () { drawEdges(); if (keep.node) showDetail(keep.node); });
   }
 
-  window.PlanPage = { render: render };
+  window.PlanPage = { render: render, edgeStatus: edgeStatus, edgeLook: edgeLook };
 
   function boot() {
     var root = document.getElementById('page-root');

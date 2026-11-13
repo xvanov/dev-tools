@@ -39,8 +39,11 @@ const crypto = require('crypto');
 
 const VERSION = 1;
 const KINDS = ['service', 'job', 'data', 'external', 'identity', 'person'];
-const NODE_STATUSES = ['live', 'planned', 'retiring', 'blocked'];
+const NODE_STATUSES = ['live', 'planned', 'off', 'retiring', 'blocked'];
 const EDGE_STYLES = ['solid', 'dashed'];
+// An arrow's status sets its look at rest: live solid, planned / off (built, switched off) / blocked
+// dashed. Unset, it follows the older `style`: solid is live, dashed is planned.
+const EDGE_STATUSES = ['live', 'planned', 'off', 'blocked'];
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -112,6 +115,7 @@ function validate(page: unknown): string[] {
         need(nodeIds.has(e.to), `map.edges[${i}]: unknown to ${e.to}`);
         if (e.label != null) need(isStr(e.label), `map.edges[${i}]: label is a string`);
         if (e.style != null) need(EDGE_STYLES.includes(e.style), `map.edges[${i}]: style is solid or dashed`);
+        if (e.status != null) need(EDGE_STATUSES.includes(e.status), `map.edges[${i}]: status is one of ${EDGE_STATUSES.join(', ')}`);
         for (const f of Array.isArray(e.flows) ? e.flows : []) need(flowIds.has(f), `map.edges[${i}]: unknown flow ${f}`);
         if (e.flows != null) need(Array.isArray(e.flows), `map.edges[${i}]: flows is a list`);
       }
@@ -460,4 +464,4 @@ function parsePublishUrl(text: string): string | null {
   return m ? m[0] : null;
 }
 
-module.exports = { VERSION, validate, normalize, resolve, taskState, taskStatus, STATUS_ORDER, urlsIn, linkLabel, cardLinks, mergeLinks, snapshotHash, shortTitle, stripComments, exportHtml, scriptJson, parsePublishUrl, SLUG };
+module.exports = { VERSION, NODE_STATUSES, EDGE_STATUSES, validate, normalize, resolve, taskState, taskStatus, STATUS_ORDER, urlsIn, linkLabel, cardLinks, mergeLinks, snapshotHash, shortTitle, stripComments, exportHtml, scriptJson, parsePublishUrl, SLUG };

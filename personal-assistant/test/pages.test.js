@@ -220,6 +220,56 @@ assert.deepStrictEqual(core.validate(sample()), []);
   assert.ok(dom.all((n) => n.tag === 'path').length > 0, 'and its arrows');
 }
 
+// ------------------------------- the renderer runs, and arrows say their status ----
+{
+  const vm = require('vm');
+  const page = core.resolve(sample({
+    map: {
+      layers: [{ id: 'apps', label: 'Apps' }],
+      nodes: [
+        { id: 'a', label: 'A', layer: 'apps' },
+        { id: 'b', label: 'B', layer: 'apps', status: 'off' },
+        { id: 'c', label: 'C', layer: 'apps' },
+      ],
+      edges: [
+        { from: 'a', to: 'b', flows: ['save', 'load'] },
+        { from: 'b', to: 'c', style: 'dashed', flows: ['load'] },
+        { from: 'a', to: 'c', status: 'off' },
+        { from: 'c', to: 'a', status: 'blocked', style: 'solid', flows: ['save'] },
+      ],
+      flows: [{ id: 'load', label: 'Load', color: '#aa3377' }, { id: 'save', label: 'Save', color: '#2f6fde' }],
+    },
+  }), []);
+  assert.deepStrictEqual(core.validate(sample({ map: page.map, tasks: [] })), [], 'off nodes and edge statuses validate');
+  assert.ok(core.validate(sample({ map: { ...page.map, edges: [{ from: 'a', to: 'b', status: 'gone' }] } })).some((e) => e.includes('status is one of')));
+
+  const dom = fakeDom(page);
+  vm.runInNewContext(exportedJs, dom.globals);
+  const api = dom.globals.window.PlanPage;
+  assert.ok(api && typeof api.render === 'function', 'the stripped renderer ran and drew the page');
+  assert.deepStrictEqual(page.map.edges.map(api.edgeStatus), ['live', 'planned', 'off', 'blocked'], 'unset status follows style');
+  dom.frame();
+  const paths = () => dom.all((n) => n.tag === 'path' && n.parent && n.parent.attrs.class && n.parent.attrs.class.startsWith('e ')).map((p) => [p.style.stroke, p.attrs['stroke-dasharray'] || null, p.attrs['marker-end']]);
+  // At rest: status colours; solid only for live. Each arrowhead is keyed by its line's colour.
+  assert.deepStrictEqual(paths().map((p) => p.slice(0, 2)), [
+    ['var(--pg-edge)', null], ['var(--pg-plan)', '5 4'], ['var(--pg-warn)', '5 4'], ['var(--pg-bad)', '5 4'],
+  ]);
+  assert.ok(paths().every((p) => p[2] === 'url(#pgm-' + p[0].replace(/[^a-z0-9]/gi, '') + ')'), 'arrowheads match their line');
+  // Picking a flow paints its arrows in the flow's colour (dash kept); the others keep theirs, dimmed by CSS.
+  dom.all((n) => n.attrs['data-flow'] === 'load')[0].fire('click');
+  assert.deepStrictEqual(paths().map((p) => p.slice(0, 2)), [
+    ['#aa3377', null], ['#aa3377', '5 4'], ['var(--pg-warn)', '5 4'], ['var(--pg-bad)', '5 4'],
+  ]);
+  assert.strictEqual(paths()[0][2], 'url(#pgm-aa3377)', 'the arrowhead follows the repaint');
+  // A picked box keeps status colours.
+  dom.all((n) => n.className && n.className.includes('node') && n.text() === 'A')[0].fire('click');
+  assert.deepStrictEqual(paths().map((p) => p[0]), ['var(--pg-edge)', 'var(--pg-plan)', 'var(--pg-warn)', 'var(--pg-bad)']);
+  // The always-visible key, and the off node's look.
+  const key = dom.all((n) => n.className === 'lkey')[0];
+  assert.ok(key && /live.*planned.*switched off.*blocked.*Pick a flow to trace it/.test(key.text()), key && key.text());
+  assert.ok(dom.all((n) => n.classList.contains('node') && n.classList.contains('s-off')).length === 1);
+}
+
 // ------------------------------------------- owner, next, links: validation ----
 {
   const ok = sample({ tasks: [{ card: 1, owner: 'Sam', next: true, links: [{ label: 'spec', url: 'https://example.com/a' }] }] });
