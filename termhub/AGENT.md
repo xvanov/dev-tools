@@ -146,7 +146,12 @@ path too; the updater checks `self.pid`/`self.commit` to confirm green is the pr
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
 `{type:'input'|'resize'}` up and `{type:'replay'|'output'|'size'|'exit'}` down. `replay` carries
 `{data, cols, rows, you, owner, screen}`; `size` is `{cols, rows, owner}`. A `resize` is a claim on
-the PTY's size by that socket — see *One PTY, several screens*.
+the PTY's size by that socket — see *One PTY, several screens*. `output` frames are **coalesced per
+client** (`lib/outputCoalescer.ts`): one frame carries the bytes of a ~12 ms window (first chunk after
+a quiet spell goes out at once; flushed early at 64 KB), and `size`/`exit` flush a client's pending
+output before they are sent, so order is exactly the PTY's. A browser must not assume one frame per
+PTY read. Terminal sockets are **not** permanent: the UI closes a hidden terminal's socket and
+reconnects it on show — see *Hidden terminals stop streaming*.
 
 ## Two-tier layout & safe updates
 
@@ -1840,6 +1845,52 @@ interaction above, so switching devices and touching the screen fixes the size; 
 the *other* screen to follow until that one is touched too. If `@xterm/headless` is missing on a
 host, the mirror falls back to the old raw ring buffer (`screen: 'raw'` in the replay) rather than
 taking `sessiond` down.
+
+## Hidden terminals stop streaming (and output is coalesced)
+
+Measured: output arrives as ~100-byte reads, 1000+ messages/s under load, and with five or six
+Claude Code sessions open the browser's main thread (one `term.write()` per message, per terminal,
+shown or not) was the bottleneck. Three changes, in `web/app.js` unless noted:
+
+- **Detach hidden terminals.** There is one terminal pane on screen at a time (no split layout), so
+  *visible* = the active terminal in a page whose `document.visibilityState` is `visible`
+  (`web/termVisibility.js`). Anything else is detached **15 s** after it stops being visible
+  (`HIDDEN_DETACH_MS`; a quick tab flip never closes anything): `detachSocket()` closes the WebSocket
+  (code 1000), sets `t.detached`, and clears `replayed`/`isOwner`/`owner`/`clientId`. Showing it
+  (`setActive`, `visibilitychange`, `claim`, input, voice) calls `attachSocket()`, which reconnects and
+  is repainted by the normal `replay` snapshot; the snapshot is written as `ESC c` + data so a reattach
+  swaps stale screen for new in one parse (no blank frame). Cost: scrollback beyond what sessiond's
+  mirror keeps is gone after a reattach, and the xterm instance keeps its stale picture until the
+  snapshot lands (a few ms). Sidebar working/waiting/idle state is unaffected: it is fed by the
+  `/api/sessions` and `/api/idle` polls and the `/ws/voice` feed, never by the terminal socket.
+- **Size ownership across a detach.** Closing the socket frees the size exactly as closing a tab does
+  (`Session.attach().detach` broadcasts `owner: null`); coming back to the front queues a claim
+  (`wantClaim`) that runs when the snapshot lands. A detached terminal never claims on its own: `claim()`
+  only reattaches when the terminal is in front.
+- **Input and voice reattach on demand.** `sendInput()` on a detached (or still-connecting) terminal
+  queues the data in `t.pendingInput`, reattaches, and flushes on `onopen`; `ensureTerminal()` (voice
+  replies to a session that isn't open or is detached) does the same, and the next hide timer then
+  detaches it again. Late events from a socket that has been detached or replaced are ignored
+  (`t.ws !== ws`).
+- **WebGL only for the terminal in front.** `useGpu(t, true)` is a no-op unless `t` is the active
+  terminal; `setActive` and `detachSocket` call `useGpu(t, false)`, so hidden terminals release their GPU
+  context at once and `claim()` → `clearPassive()` takes one back on show. Scrollback is 5000 lines
+  (was 10000).
+- **Server-side coalescing.** `Session._broadcast` pushes `output` through a per-client
+  `OutputCoalescer` and sends every other message type via `sendOther()` (flush first). A client that
+  is not yet `ready` (snapshot not sent) still gets its raw ordered `queue`, so replay semantics are
+  untouched. `test/outputCoalescer.test.js` pins the timing on a fake clock. **This is a
+  `sessiond`-tier change**: it arrives with the next sessiond restart; an old sessiond still works with
+  the new browser (just uncoalesced).
+
+### Perf overlay
+
+`?perf=1` in the URL, or **Ctrl+Alt+Shift+P** to toggle (`web/termPerf.js`). Per terminal, over the
+last second: output chars/s and messages/s received, average and max `term.write` completion time
+(includes queueing behind earlier writes), and its state (`front`, `live`, `detached`, `conn`); page-wide,
+`longtask` count and ms (per second and total). Nothing runs while it is off: `app.js` checks
+`TermPerf.on` before touching it and the module creates no timer, observer or DOM until enabled.
+Safari has no `longtask` entries, so that line stays 0 there.
 
 ## Mobile notes
 

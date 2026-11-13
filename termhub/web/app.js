@@ -437,7 +437,9 @@ function openTerminal(id, title, kind) {
   $('#terminals').appendChild(pane);
 
   const term = new Term({
-    scrollback: 10000,
+    // 5000, not 10000: every terminal (and the snapshot sessiond replays into it)
+    // pays for its scrollback in memory and in reflow time when the size changes.
+    scrollback: 5000,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: baseFontSize(),
     cursorBlink: true,
@@ -479,8 +481,8 @@ function openTerminal(id, title, kind) {
   const t = {
     id, title, kind, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null,
     clientId: null, owner: null, isOwner: false, wantClaim: true, replayed: false, legacy: false, webgl: null,
+    detached: false, pendingInput: [],
   };
-  useGpu(t, true);
   state.open.set(id, t);
   wireTouchScroll(t);
   wireAttachments(t);
@@ -518,6 +520,7 @@ function openTerminal(id, title, kind) {
   // Make the pane visible and fit it to the device BEFORE connecting, so the
   // very first thing the terminal knows is its real size.
   setActive(id);
+  useGpu(t, true);   // after setActive: a GPU context is only for the terminal in front
   requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } connect(t); });
   updateChrome();
   renderSessions();
@@ -567,6 +570,9 @@ function proposedSize(t) {
 // replayed and the pane is visible, since there is nothing to measure before.
 function claim(t) {
   if (!t || !state.open.has(t.id)) return;
+  // Detached (see "hidden terminals stop streaming"): there is no socket to claim
+  // on. Remember the claim, and bring the socket back if this screen is in front.
+  if (t.detached) { t.wantClaim = true; if (isShown(t)) attachSocket(t); return; }
   if (!t.replayed || !t.ws || t.ws.readyState !== WebSocket.OPEN || !t.pane.offsetWidth) { t.wantClaim = true; return; }
   // Back to the owner's font and renderer BEFORE measuring: cell width differs
   // between them, and measuring the passive one sized the PTY ~10% too narrow.
@@ -610,7 +616,9 @@ const MIN_PASSIVE_FONT = 5;
 // GPU renderer — far faster redraws on mobile (smoother when Claude repaints on
 // scroll). Falls back to the default DOM renderer if WebGL is unavailable/lost.
 function useGpu(t, on) {
-  if (on && !t.webgl && WebglAddonCtor) {
+  // Only the terminal in front gets a context: browsers cap live WebGL contexts
+  // (~16) and every one is GPU memory, so a hidden terminal runs on the DOM renderer.
+  if (on && !t.webgl && WebglAddonCtor && state.activeId === t.id) {
     try {
       const webgl = new WebglAddonCtor();
       webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} if (t.webgl === webgl) t.webgl = null; });
@@ -876,17 +884,91 @@ function jumpToBottom() {
 }
 
 function sendInput(t, data) {
+  // A detached terminal has no socket: bring it back and send once it is open.
+  // The same for one whose socket is still connecting — voice sends the text and
+  // the Enter as two writes, 200 ms apart, and the second must not be dropped.
+  if (t.detached || (t.ws && t.ws.readyState === WebSocket.CONNECTING)) {
+    if (t.pendingInput.length < 200) t.pendingInput.push(data);
+    if (t.detached) attachSocket(t);
+    return;
+  }
   // Typing on a screen is using it — the key bar, Paste and 🎤 all land here.
   if (!t.isOwner && recentGesture()) claim(t);
   if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'input', data }));
 }
 
+// ---- hidden terminals stop streaming ----------------------------------------------
+// Every open terminal used to keep a WebSocket and parse all of its output, shown
+// or not; with five or six agents running that is thousands of messages a second
+// of main-thread work for screens nobody is looking at. A terminal that is not in
+// front (not the active one, or the page itself hidden) is detached after
+// TermVisibility.HIDDEN_DETACH_MS (15 s, so a quick tab flip stays live): its
+// socket closes and sessiond stops sending to it. Showing it again reconnects,
+// and the `replay` snapshot repaints it — the same path as a first open or a
+// dropped-socket reconnect. The sidebar's working/waiting dots and the idle total
+// never came from this socket (they are /api/sessions + /api/idle polls and the
+// /ws/voice feed), so detaching changes nothing there.
+//
+// A detached socket also gives up the size: sessiond frees the owner and tells the
+// other screens, exactly as when a tab is closed. Coming back claims it again.
+const hideSched = TermVisibility.createScheduler({
+  onDetach: (id) => { const t = state.open.get(id); if (t && !isShown(t)) detachSocket(t); },
+});
+
+function isShown(t) {
+  return TermVisibility.isVisible(t.id, state.activeId, document.visibilityState === 'visible');
+}
+
+// Re-evaluate every terminal: attach what is in front, start the clock on the rest.
+function syncVisibility() {
+  for (const t of state.open.values()) {
+    if (isShown(t)) {
+      hideSched.cancel(t.id);
+      if (t.detached) attachSocket(t);
+    } else if (!t.detached) {
+      hideSched.update(t.id, false);
+    } else {
+      hideSched.cancel(t.id);
+    }
+  }
+}
+document.addEventListener('visibilitychange', syncVisibility);
+
+function detachSocket(t) {
+  if (!state.open.has(t.id) || t.detached || t.closing) return;
+  t.detached = true;
+  hideSched.cancel(t.id);
+  clearTimeout(t.reconnectTimer);
+  t.reconnectTimer = null;
+  const ws = t.ws;
+  t.ws = null;
+  t.replayed = false; t.isOwner = false; t.owner = null; t.clientId = null;
+  useGpu(t, false);
+  try { ws && ws.close(1000); } catch {}
+  updateFitPill();
+}
+
+function attachSocket(t) {
+  if (!state.open.has(t.id) || !t.detached || t.closing) return;
+  t.detached = false;
+  t.attempts = 0;
+  if (isShown(t)) t.wantClaim = true;   // in front: take the size once the snapshot lands
+  connect(t);
+  syncVisibility();                      // attached for voice/input while hidden: schedule the next detach
+}
+
 function connect(t) {
+  if (t.detached || t.closing) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/term/${encodeURIComponent(t.id)}`);
   t.ws = ws;
-  ws.onopen = () => { t.attempts = 0; };
+  ws.onopen = () => {
+    if (t.ws !== ws) return;
+    t.attempts = 0;
+    for (const data of t.pendingInput.splice(0)) ws.send(JSON.stringify({ type: 'input', data }));
+  };
   ws.onmessage = (ev) => {
+    if (t.ws !== ws) return;   // a socket detached or replaced since: ignore its tail
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'replay') {
       // Render the snapshot at the PTY's current size — sessiond serializes it
@@ -894,13 +976,15 @@ function connect(t) {
       // (this screen was opened or used just now, or nobody holds it and we're
       // in front) or keep rendering at the owner's size.
       if (msg.cols && msg.rows) { try { t.term.resize(msg.cols, msg.rows); } catch {} }
-      t.term.reset();
       t.replayed = false;
       t.clientId = msg.you || null;
       t.legacy = !msg.you;
       t.owner = msg.owner || null;
       t.isOwner = false;
-      t.term.write(msg.data, () => {
+      // The reset rides in the write stream (ESC c) rather than being a separate
+      // term.reset() call: a reattach then goes stale-screen -> new screen in one
+      // parse, with no blank frame between them.
+      t.term.write('\x1bc' + msg.data, () => {
         t.replayed = true;
         const inFront = document.visibilityState === 'visible' && state.activeId === t.id;
         if (t.wantClaim || (inFront && (t.legacy || !t.owner))) requestAnimationFrame(() => claim(t));
@@ -917,14 +1001,20 @@ function connect(t) {
       if (!t.owner && document.visibilityState === 'visible' && state.activeId === t.id) requestAnimationFrame(() => claim(t));
       else requestAnimationFrame(() => showPassive(t));
     }
-    else if (msg.type === 'output') t.term.write(msg.data);
+    else if (msg.type === 'output') {
+      if (TermPerf.on) {
+        const t0 = performance.now();
+        TermPerf.recv(t.id, msg.data.length);
+        t.term.write(msg.data, () => TermPerf.wrote(t.id, performance.now() - t0));
+      } else t.term.write(msg.data);
+    }
     else if (msg.type === 'exit') t.term.write(`\r\n\x1b[90m[process exited${msg.code != null ? ' (' + msg.code + ')' : ''}]\x1b[0m\r\n`);
   };
   ws.onclose = () => {
-    if (t.closing) return;
+    if (t.closing || t.ws !== ws || t.detached) return;
     t.attempts += 1;
     if (t.attempts > 10) { t.term.write('\r\n\x1b[31m[disconnected — session no longer available]\x1b[0m\r\n'); return; }
-    t.reconnectTimer = setTimeout(() => connect(t), Math.min(5000, 400 * t.attempts));
+    t.reconnectTimer = setTimeout(() => { if (!t.detached && !t.closing && t.ws === ws) connect(t); }, Math.min(5000, 400 * t.attempts));
   };
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
@@ -1217,7 +1307,11 @@ function onFilesPicked(input) {
 
 function setActive(id) {
   state.activeId = id;
-  for (const [key, t] of state.open) t.pane.classList.toggle('active', key === id);
+  for (const [key, t] of state.open) {
+    t.pane.classList.toggle('active', key === id);
+    if (key !== id) useGpu(t, false);   // release the hidden terminal's WebGL context now
+  }
+  syncVisibility();                     // attach the one now in front, schedule detaching the rest
   const t = state.open.get(id);
   // Switching to a session is using it: it takes the size.
   if (t) requestAnimationFrame(() => {
@@ -1241,9 +1335,12 @@ function detachTerminal(id) {
   if (!t) return;
   t.closing = true;
   if (t.reconnectTimer) clearTimeout(t.reconnectTimer);
+  hideSched.cancel(id);
+  const ws0 = t.ws;
+  t.ws = null;   // (the stale-socket guards in connect() ignore this socket from here on)
   if (t._stopMomentum) { try { t._stopMomentum(); } catch {} }
   if (t.ro) { try { t.ro.disconnect(); } catch {} }
-  try { t.ws && t.ws.close(); } catch {}
+  try { ws0 && ws0.close(); } catch {}
   t.term.dispose();
   t.pane.remove();
   state.open.delete(id);
@@ -3100,6 +3197,7 @@ function ensureTerminal(id) {
     t = state.open.get(id);
   }
   if (!t) return Promise.resolve(null);
+  if (t.detached) attachSocket(t);   // a voice reply for a terminal that stopped streaming
   if (t.ws && t.ws.readyState === WebSocket.OPEN) return Promise.resolve(t);
   return new Promise((resolve) => {
     const started = Date.now();
@@ -3884,6 +3982,20 @@ function wireEvents() {
     window.visualViewport.addEventListener('scroll', syncViewportHeight);
   }
 }
+
+// ---- perf overlay ---------------------------------------------------------------
+// `?perf=1`, or Ctrl+Alt+Shift+P to toggle. See web/termPerf.js. Nothing runs when off.
+const TermPerf = window.TermPerfFactory.create();
+function perfTerminals() {
+  return [...state.open.values()].map((t) => ({
+    id: t.id, title: t.title,
+    state: t.detached ? 'detached' : (t.ws && t.ws.readyState === WebSocket.OPEN ? (t.id === state.activeId ? 'front' : 'live') : 'conn'),
+  }));
+}
+if (/[?&]perf=1(&|$)/.test(location.search)) TermPerf.enable({ terminals: perfTerminals });
+document.addEventListener('keydown', (e) => {
+  if (TermPerf.isShortcut(e)) { e.preventDefault(); TermPerf.toggle({ terminals: perfTerminals }); }
+}, true);
 
 // Learn the sessiond host's OS and upload caps once at startup — the OS
 // determines which hotkey triggers Claude Code's clipboard-image paste, the caps

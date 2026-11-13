@@ -14,6 +14,7 @@ const opencodeModel = require('./opencodeModel.ts');
 const opencodeApi = require('./opencodeApi.ts');
 const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore.ts');
 const { ScreenMirror } = require('./screenMirror.ts');
+const { OutputCoalescer } = require('./outputCoalescer.ts');
 const ptydClient = require('./ptydClient.ts');
 const { RemotePty } = ptydClient;
 
@@ -457,11 +458,15 @@ class Session {
     this._screen.write(data);
   }
 
+  // Fan a message out to every attached client. Output is coalesced per client
+  // (lib/outputCoalescer.js); every other type flushes that client's pending
+  // output first, so `size` and `exit` never overtake bytes sent before them.
   _broadcast(msg: any) {
     for (const [send, c] of this._clients) {
       if (!c.ready) { c.queue.push(msg); continue; }
       try {
-        send(msg);
+        if (msg.type === 'output') c.out.push(msg.data);
+        else c.out.sendOther(msg);
       } catch {
         // a dead client; it will be removed on its own close handler
       }
@@ -473,7 +478,8 @@ class Session {
   // Returns { id, detach }: `id` is how this client's resizes are told apart
   // from everyone else's (see resize()).
   attach(send: any) {
-    const c = { id: `c${++this._clientSeq}`, ready: false, queue: [] };
+    const safeSend = (msg: any) => { try { send(msg); } catch { /* dead socket; its close handler detaches */ } };
+    const c: any = { id: `c${++this._clientSeq}`, ready: false, queue: [], out: new OutputCoalescer(safeSend) };
     this._clients.set(send, c);
     // The snapshot covers every byte written before this call; anything the PTY
     // produces from here on is queued on `c` and flushed right after it.
@@ -494,6 +500,7 @@ class Session {
       id: c.id,
       detach: () => {
         this._clients.delete(send);
+        c.out.dispose();
         // The owner leaving (tab closed, phone locked) frees the size; telling
         // the rest lets whichever screen is in front take it straight back.
         if (this.sizeOwner === c.id) {
