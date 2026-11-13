@@ -151,6 +151,12 @@ function Set-TermhubState {
 function Test-ServePublished {
   param([int]$Port)
   try {
+    # Logged out (an expired node key) or stopped, Serve reports an empty config,
+    # which reads as "not published" and sent restart-front down the plain-HTTP path,
+    # which then threw for want of a tailnet IP and left the old front running. Not
+    # Running means Serve's answer says nothing about the layout: unknown.
+    $st = Invoke-Native tailscale -Arguments @('status', '--json')
+    if ($st.Code -ne 0 -or (($st.Stdout | ConvertFrom-Json).BackendState -ne 'Running')) { return $null }
     $r = Invoke-Native tailscale -Arguments @('serve', 'status', '--json')
     $raw = $r.Stdout
     if ($r.Code -ne 0 -or -not $raw.Trim()) { return $null }

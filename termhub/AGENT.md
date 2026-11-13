@@ -226,7 +226,13 @@ mode's fronts, which would otherwise keep serving stale code on a port nothing p
 tailnet IP itself and turns Serve **off** for that port. Single-port and plain-HTTP are therefore
 recorded identically, and only Serve's own config tells them apart — `Test-ServePublished` in
 `common.ps1` (`tailscale serve status --json`), which answers `$null` rather than `$false` when it
-can't consult Serve at all, because guessing "not published" is the dangerous direction.
+can't consult Serve at all, because guessing "not published" is the dangerous direction. It also
+answers `$null` when the node is not `Running` (logged out, an expired key), since Serve then
+reports an empty config. And Serve's config is *lost* on logout, so after a re-login it reads "not
+published" on a single-port machine: `restart-front.ps1` therefore treats a front already
+listening on `127.0.0.1:<publishPort>` as single-port whatever Serve says, and re-asserts Serve.
+Without that, a restart after a re-login stopped the front, failed to bind the tailnet IP and left
+no front running (2026-11-13).
 `restart-front.ps1` used to read equal ports as plain-HTTP and so, on the *default* layout, tried to
 bind `<tailnet-ip>:7000` — a port `tailscaled` already holds for Serve. It failed the health check
 and left no front at all; since `restart-sessiond.ps1` calls it, a deliberate sessiond restart took

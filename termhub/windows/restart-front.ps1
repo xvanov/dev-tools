@@ -46,6 +46,16 @@ if ($frontPort -ne $publishPort) {
   $mode = 'bluegreen'
 } else {
   $published = Test-ServePublished -Port $publishPort
+  # Serve's config is lost when the node logs out (an expired key), so after a
+  # re-login it reads "not published" on a single-port machine. The running front
+  # settles it: a front on loopback means single-port, whatever Serve says now.
+  # Taking the plain-HTTP path there stopped the front, failed to bind the tailnet
+  # IP (tailscaled still held it) and left no front at all.
+  $onLoopback = @(Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort $publishPort -ErrorAction SilentlyContinue).Count -gt 0
+  if ($published -eq $false -and $onLoopback) {
+    Write-Host "termhub restart-front: Serve does not publish :$publishPort but the front is on loopback - single-port; Serve is re-asserted below." -ForegroundColor Yellow
+    $published = $true
+  }
   if ($published -eq $false) {
     $mode = 'http'
   } else {
