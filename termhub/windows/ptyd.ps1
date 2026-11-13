@@ -75,6 +75,9 @@ function Register-PtydTask {
   # No time limit: it is a server. IgnoreNew: a second logon must not race the first for the port.
   $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+  # Scheduled tasks default to priority 7 (BelowNormal), which ptyd would pass to every terminal's
+  # tree. 5 = Normal: ptyd stays responsive; the sessions are held at BelowNormal by ptyd's own job.
+  $settings.Priority = 5
   $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $me) `
     -Settings $settings -Principal $principal -Force `

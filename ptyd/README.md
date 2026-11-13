@@ -15,13 +15,15 @@ Exit 5). The lead still deploys that commit on both stacks before Exit 5 is tick
 # once: rustup (https://rustup.rs) and, on Windows, the MSVC build tools
 cd ptyd
 cargo build --release          # target/release/ptyd(.exe)
-cargo test                     # unit tests (pure parts: env spec, links, guard, utf-8)
+cargo test                     # unit tests (pure parts: env spec, links, guard, utf-8, CPU cap, job nesting)
 ./target/release/ptyd --port 7020
 ```
 
 `--port N` (default `$TERMHUB_PTYD_PORT`, else 7020; `0` picks a free one). It binds `127.0.0.1`
 only and prints `[ptyd] <machine> listening on http://127.0.0.1:<port> (pid N)`; a port already
 in use is a refusal with exit 3, like sessiond.
+
+`--cpu-cap PCT|off` (Windows; default `$PTYD_CPU_CAP_PCT`, else 75): see *CPU cap* below.
 
 ## Protocol
 
@@ -72,6 +74,27 @@ Not covered: a process started in the instant between `CreateProcessW` and the a
 one created with `CREATE_BREAKAWAY_FROM_JOB` (the job allows breakaway, so such a call leaves
 rather than fails). If assignment fails (ptyd runs in a job that forbids nesting), ptyd logs it
 and that session falls back to `taskkill /T /F`, bounded at 3 s, and waits for the exit.
+
+## CPU cap (Windows)
+
+An agent running `dotnet build` starts one MSBuild node per logical CPU and, uncapped, freezes the
+desktop. At start ptyd creates one **agents job** (`init_agents` in `src/job.rs`; ptyd itself is
+not in it) with a hard CPU-rate cap (`JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`, enable and hard-cap flags)
+of N percent of the whole machine, default 75, and `JOB_OBJECT_LIMIT_PRIORITY_CLASS` =
+BelowNormal. Set it with `PTYD_CPU_CAP_PCT` or `--cpu-cap` (the flag wins): `0` or `off` disables
+the cap (the priority class stays), anything else is clamped to 5..100, an unreadable value logs
+and uses 75. Every session's own job is nested inside it: right after spawn the shell joins the
+agents job, then its session job (Windows 8+ nesting; the order matters, a process can only move
+down the hierarchy), so the cap is shared by all terminals together, not per terminal, and
+`TerminateJobObject` on a session job still ends only that terminal. The session job also carries
+the BelowNormal class, so a terminal stays BelowNormal even if the agents job is missing. If the
+agents job cannot be created or joined (old Windows, access denied) ptyd logs once and carries on
+uncapped; session creation never fails over it. `GET /api/ping` reports `cpuCapPct` (null when
+uncapped or not Windows). The `termhub-ptyd` task runs ptyd at Normal priority
+(`windows/ptyd.ps1` sets task priority 5; the scheduler default 7 is BelowNormal, which every
+terminal would inherit); only the terminals' trees are held down. A process created with
+`CREATE_BREAKAWAY_FROM_JOB` leaves both jobs and so the cap. Changing the cap needs a ptyd
+restart; an already-registered task keeps priority 7 until `ptyd.ps1` re-registers it.
 
 On Unix it is unchanged: `SIGHUP` to the shell's process group, then wait for the exit.
 

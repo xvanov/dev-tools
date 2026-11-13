@@ -7,8 +7,11 @@
 //! uploads, the archive) stays in Node and, with TERMHUB_PTYD=1, uses ptyd as its
 //! PTY backend (termhub/lib/ptydClient.js), so terminals outlive sessiond too.
 //!
-//!     ptyd [--port N]      # 127.0.0.1:N, default $TERMHUB_PTYD_PORT or 7020; 0 = any
+//!     ptyd [--port N] [--cpu-cap PCT|off]
+//!                          # 127.0.0.1:N, default $TERMHUB_PTYD_PORT or 7020; 0 = any
+//!                          # cap: Windows only, default $PTYD_CPU_CAP_PCT or 75
 
+mod cap;
 mod guard;
 #[cfg(windows)]
 mod job;
@@ -89,6 +92,15 @@ async fn guard_mw(req: Request, next: Next) -> Response {
     }
 }
 
+#[cfg(windows)]
+fn cpu_cap_pct() -> Option<u32> {
+    job::effective_cap_pct()
+}
+#[cfg(not(windows))]
+fn cpu_cap_pct() -> Option<u32> {
+    None
+}
+
 async fn ping(State(app): State<Shared>) -> Response {
     let n = app.sessions.lock().unwrap().len();
     reply(
@@ -103,6 +115,7 @@ async fn ping(State(app): State<Shared>) -> Response {
             "commit": option_env!("PTYD_COMMIT"),
             "dirty": Value::Null,
             "startedAt": app.started_at,
+            "cpuCapPct": cpu_cap_pct(),
             "version": env!("CARGO_PKG_VERSION"),
         }),
     )
@@ -343,6 +356,11 @@ fn port_from_args() -> u16 {
 #[tokio::main]
 async fn main() {
     let want = port_from_args();
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        job::init_agents(cap::resolve(&args, std::env::var("PTYD_CPU_CAP_PCT").ok().as_deref()));
+    }
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", want)).await {
         Ok(l) => l,
         Err(e) => {

@@ -406,7 +406,8 @@ The PTY host is ptyd, a separate process, so a routine front update needs **no n
 and does not touch the terminals. A ptyd binary change is installed beside the running one and
 used only on a deliberate `ptyd.ps1 -Restart` / `ptyd-unit.sh --restart`, which ends those
 terminals (on Windows with every process started from them: each terminal's tree is in a job
-object that dies with ptyd, `ptyd/README.md` *Closing a terminal*). A sessiond code change needs `restart-sessiond.ps1` (Windows) or the Linux update's
+object that dies with ptyd, `ptyd/README.md` *Closing a terminal*; those jobs sit inside one
+BelowNormal, 75%-CPU-capped agents job, `PTYD_CPU_CAP_PCT`, *CPU cap* there). A sessiond code change needs `restart-sessiond.ps1` (Windows) or the Linux update's
 unit restart; both adopt the terminals ptyd still has.
 
 ### The install step throws the lockfile rewrite away
