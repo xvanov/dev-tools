@@ -31,6 +31,7 @@ const archive = require('./lib/archive.ts');
 const { restoreClaudeCommand, restoreOpencodeCommand, restoreCursorCommand } = require('./lib/restore.ts');
 const claudeCli = require('./lib/claudeCli.ts');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state.ts');
+const { raiseToNormal } = require('./lib/priority.ts');
 const { probeSessiond } = require('./lib/probe.ts');
 const build = require('./lib/build.ts');
 const { suggestDirs } = require('./lib/dirs.ts');
@@ -837,7 +838,10 @@ function startSessiond({ port = DEFAULT_SESSIOND_PORT, entry = 'sessiond', claim
     throw err;
   });
   server.listen(port, '127.0.0.1', () => {
-    if (claimPid) claimPidFile('sessiond', port);
+    if (claimPid) {
+      claimPidFile('sessiond', port);
+      raiseToNormal((m: string) => console.log(`[sessiond] ${m}`));
+    }
     console.log(`[sessiond] ${MACHINE_NAME} listening on http://127.0.0.1:${port} `
       + `(pid ${process.pid}, ${build.shortCommit() || 'no commit'})`);
   });

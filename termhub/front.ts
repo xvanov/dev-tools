@@ -31,6 +31,7 @@ const { URL } = require('url');
 
 const { resolveBindAddress } = require('./lib/bind.ts');
 const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state.ts');
+const { raiseToNormal } = require('./lib/priority.ts');
 const { checkForUpdate } = require('./lib/update.ts');
 const { probeJson } = require('./lib/probe.ts');
 const { secureUrlForPort } = require('./lib/serveUrl.ts');
@@ -365,7 +366,10 @@ function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND
     throw err;
   });
   server.listen(port, bindHost, () => {
-    if (claimPid) claimPidFile(`front-${port}`, port);
+    if (claimPid) {
+      claimPidFile(`front-${port}`, port);
+      raiseToNormal((m: string) => console.log(`[front] ${m}`));
+    }
     console.log(`[front] listening on http://${bindHost}:${port} -> sessiond 127.0.0.1:${sessiondPort} `
       + `(pid ${process.pid}, ${build.shortCommit() || 'no commit'})`);
     if (bindHost === '127.0.0.1' && !process.env.TERMHUB_BIND) {
