@@ -153,12 +153,12 @@
       },
       "health": "ollama",
       "details": {
-        "Model": "local/llama3.2:3b through Ollama's native /api/chat, for both the router and the answerer",
-        "Router": "PA_FAST_ROUTER=logprob (src/chat/fastRouter.ts): one call, one generated token. The model is asked a fixed question, 'A (answer here), B (hand off: needs a lookup) or C (action)?', and the top log-probabilities of that token are calibrated (temperature 0.461 plus a per-class bias, fitted by `pa eval router --fit`) into p(answer_here), p(hand_off), p(action). Alternatives: same (the older one-call JSON {label, route, say}), rules, a model string, an http(s) URL",
-        "Answerer": "speaks only when p(answer_here) >= 0.64 (PA_FAST_ANSWER_THRESHOLD): a second streamed call that writes one to four short sentences, opening with one of at most six words so speech can start at once; meeting titles are said as titles, never as who a meeting is with. Below it, the user's words go to the PA chat verbatim with 'One moment.' (or 'On it.' when p(action) > p(hand_off))",
-        "Eval": "`pa eval answerer`: 6 day snapshots in src/eval/answerer-cases.json (placeholders), checking the answer names the right day, every meeting and no invented attendees, plus first-token and first-spoken-piece latency. `pa eval router`: 97 turns in src/eval/router-cases.json (anonymized logged turns, the known miss 'check my mail from <name>', tomorrow against this-week questions, and synthetic ones), 3-way accuracy, turns answered here that should not be, latency warm. Nov 2026 on this laptop's RTX 3000 Ada: 0 action and 0 look-up turns answered here; see PLAN.md 0.6 for the numbers",
+        "Model": "local/llama3.2:3b through Ollama's native /api/chat for the answerer, and for the router under logprob; under PA_FAST_ROUTER=decision the router is Microsoft-Decision-1 on Azure (deployment decision-1 on innergy-internal-ai2-resource, eastus2, DataZoneStandard US, Preview: retires 2027-02-04)",
+        "Router": "PA_FAST_ROUTER=logprob (the default; src/chat/fastRouter.ts): one call, one generated token. The model is asked a fixed question, 'A (answer here), B (hand off: needs a lookup) or C (action)?', and the top log-probabilities of that token are calibrated (temperature 0.461 plus a per-class bias, fitted by pa eval router --fit) into p(answer_here), p(hand_off), p(action). PA_FAST_ROUTER=decision (the work stack, D31; src/chat/decisionRouter.ts): one call to the decision model's systemone API with the snapshot, the last two turns and the words as its state and four fixed questions: route (choice answer_here | hand_off | action -> p), tool (choice: none, calendar, inbox, wip_status, memory, commitments, other), effort (score 0-3) and acts_outside (yes/no). Only route decides; the other three ride along in the decision event as signals. Auth: PA_DECISION_API_KEY, else an Entra token from the az CLI login, cached until near expiry. Alternatives: same (the older one-call JSON {label, route, say}), rules, a model string, an http(s) URL",
+        "Answerer": "speaks only when p(answer_here) >= 0.64 (PA_FAST_ANSWER_THRESHOLD; 0.85 under the decision router, PA_DECISION_ANSWER_THRESHOLD): a second streamed call that writes one to four short sentences, opening with one of at most six words so speech can start at once; meeting titles are said as titles, never as who a meeting is with. Below it, the user's words go to the PA chat verbatim with 'One moment.' (or 'On it.' when p(action) > p(hand_off))",
+        "Eval": "`pa eval answerer`: 6 day snapshots in src/eval/answerer-cases.json (placeholders), checking the answer names the right day, every meeting and no invented attendees, plus first-token and first-spoken-piece latency. `pa eval router`: 97 turns in src/eval/router-cases.json (anonymized logged turns, the known miss 'check my mail from <name>', tomorrow against this-week questions, and synthetic ones), 3-way accuracy, turns answered here that should not be, latency warm. Nov 2026 on this laptop's RTX 3000 Ada: 0 action and 0 look-up turns answered here; see PLAN.md 0.6 for the numbers. pa eval router --router decision (14 Nov 2026, 97 turns, 1x): 97.9% 3-way (logprob: 90.7%), 0 action and 0 look-up turns answered here, 2 of 38 answerable turns handed off, p50 214 ms, p95 316 ms from this laptop",
         "Prompt cache": "the router's system prompt and examples never change; the snapshot comes next, then the last two turns, then the words. 1.5 s after each turn (so it does not share the GPU with Kokoro's first sentence), and when the snapshot changes, a one-token call with the next turn's prefix fills Ollama's cache for the answerer and then the router (Ollama keeps one prefix per slot; OLLAMA_NUM_PARALLEL=2 gives each its own), so a turn pays only for its own words",
-        "Fallback": "azure/pa (PA_FAST_FALLBACK_MODEL) when Ollama is down or the router has not answered within 2500 ms (PA_FAST_LOCAL_TIMEOUT_MS): the one-call text format decides and replies",
+        "Fallback": "azure/pa (PA_FAST_FALLBACK_MODEL) when Ollama is down, the router has not answered within 2500 ms (PA_FAST_LOCAL_TIMEOUT_MS), or the decision model fails (HTTP error, rate limit, no token): the one-call text format decides and replies",
         "Prompt": [
           "a snapshot of your day: a few hundred tokens (open asks by bucket, top 3 overdue and due, the calendar to the end of tomorrow split by local day (today's remaining meetings, or 'none left today', then tomorrow's, then 'Meetings after tomorrow: not in this snapshot.', cancelled ones apart), active runs, waiting drafts and review items, first 300 chars of your 'me' page)",
           "router: the last 2 turns, 200 chars each; answerer: the last 6 turns (chat history merged with turns it answered itself)",
@@ -175,7 +175,7 @@
           "a hand-off types your verbatim words into the PA chat; the model's task is only a labelled hint",
           "a hand-off's spoken acknowledgement is replaced by the stock one when it reads as an answer (spokenAck)"
         ],
-        "Billing": "free (local GPU); the azure/pa fallback is metered and recorded in llm_spend"
+        "Billing": "free (local GPU); the azure/pa fallback and the decision router are metered and recorded in llm_spend (purpose fast-lane; the decision router's cost is unknown unless PA_MODEL_PRICES has decision/decision-1, about 580 input and 4 output tokens a turn)"
       },
       "env": [
         {
@@ -193,6 +193,18 @@
         {
           "name": "PA_FAST_ANSWER_THRESHOLD",
           "default": "0.64"
+        },
+        {
+          "name": "PA_DECISION_ENDPOINT",
+          "default": null
+        },
+        {
+          "name": "PA_DECISION_DEPLOYMENT",
+          "default": "decision-1"
+        },
+        {
+          "name": "PA_DECISION_ANSWER_THRESHOLD",
+          "default": "0.85"
         },
         {
           "name": "PA_FAST_KEEP_ALIVE",
@@ -213,7 +225,8 @@
         "personal-assistant/src/eval/router.ts",
         "personal-assistant/src/eval/router-cases.json",
         "personal-assistant/src/dashboard/talk.ts",
-        "personal-assistant/src/llm.ts"
+        "personal-assistant/src/llm.ts",
+        "personal-assistant/src/chat/decisionRouter.ts"
       ]
     },
     {

@@ -408,8 +408,11 @@ const config = {
   // speak: calibrated probabilities from one-token log-probabilities, the
   // fast model speaks only above PA_FAST_ANSWER_THRESHOLD), `same` (the fast
   // model decides and replies in one call), `rules` (built-in keyword router),
-  // a model string (a separate router call), or an http(s) URL (POST
-  // { text, context, history } -> decision JSON).
+  // a model string (a separate router call), an http(s) URL (POST
+  // { text, context, history } -> decision JSON), or `decision` (decide, then
+  // speak, with Microsoft-Decision-1 on Azure deciding instead of the local
+  // model's log-probabilities: src/chat/decisionRouter.js; the local model
+  // still speaks the answers).
   //
   // The default is local: Llama 3.2 3B in Ollama (PA_LOCAL_LLM_URL), the
   // `logprob` router then the answerer (with `same`, one streamed call whose
@@ -430,6 +433,15 @@ const config = {
     // The answerer speaks only when the router's p(answer_here) is at least this
     // (fitted with `pa eval router --fit`).
     answerThreshold: env('PA_FAST_ANSWER_THRESHOLD', '0.64'),
+    // PA_FAST_ROUTER=decision: the Azure AI resource and deployment of
+    // Microsoft-Decision-1 (key PA_DECISION_API_KEY, else the Azure key), and
+    // its own answer threshold (its probabilities are not on the logprob
+    // router's calibrated scale).
+    decision: {
+      endpoint: env('PA_DECISION_ENDPOINT'),
+      deployment: env('PA_DECISION_DEPLOYMENT', 'decision-1'),
+      answerThreshold: env('PA_DECISION_ANSWER_THRESHOLD', '0.85'),
+    },
     // Reasoning effort for an OpenAI/Azure reasoning model (the fallback too); Claude effort otherwise.
     effort: env('PA_FAST_EFFORT', 'low'),
     contextTtlMs: envInt('PA_FAST_CONTEXT_SECONDS', 60) * 1000,

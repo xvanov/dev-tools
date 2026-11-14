@@ -137,6 +137,11 @@ We take the idea, not the service: a local router scores fixed yes/no questions 
 log-probabilities (later, a small classifier on the turn embedding trained on logged turns), and
 the small model only speaks when the router is confident the turn is answerable locally.
 
+Since D31 (Nov 2026) the work stack uses the service after all: Azure hosts Microsoft-Decision-1
+on a resource we already pay for, and on our own eval set it routes 97.9% of turns right against
+90.7% for the log-probability router. It sits behind the same interface (`PA_FAST_ROUTER=decision`),
+so the local router stays the default and the fallback.
+
 ## Risks
 
 Subscription billing change (15 Jun 2026, headless use has its own credit pool); Windows

@@ -171,7 +171,12 @@ Since 0.6 (D7) the default router is `logprob` (`src/chat/fastRouter.js`): decid
 router returns calibrated probabilities from one token's log-probabilities and never words, and the
 answerer only speaks above `PA_FAST_ANSWER_THRESHOLD`. Changing its prompt or model invalidates
 the calibration: re-run `pa eval router --fit`, paste the printed constants into `fastRouter.js`,
-and keep "no action answered here" at 0. Changing the answerer's prompt (`ANSWER_RULES`) or the
+and keep "no action answered here" at 0. Since D31 the work stack sets `PA_FAST_ROUTER=decision`
+(`src/chat/decisionRouter.ts`): Microsoft-Decision-1 on Azure answers four fixed questions (route,
+tool, effort, acts_outside) and only `route` decides; its option descriptions are the router's whole
+prompt, so keep them in step with `ROUTER_SYSTEM` and re-run `pa eval router --router decision`
+after changing them. It never reads the turn aloud and has no tools; the guards above still apply.
+Changing the answerer's prompt (`ANSWER_RULES`) or the
 snapshot's format: run `pa eval answerer` and `pa eval router`. The eval sets
 (`src/eval/router-cases.json`, `src/eval/answerer-cases.json`) are public: people, companies and
 meeting titles in them are placeholders only.

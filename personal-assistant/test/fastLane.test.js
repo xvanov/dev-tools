@@ -701,6 +701,106 @@ function splitAll(pieces) {
     assert.strictEqual(F.routerKind({ router: 'logprob', model: 'local/llama3.2:3b' }), 'logprob');
   }
 
+  // ---- the decision router (src/chat/decisionRouter.ts, Microsoft-Decision-1) -------------
+  {
+    const D = require('../src/chat/decisionRouter.ts');
+    // The URL: the resource's origin, whatever path the endpoint carries.
+    assert.strictEqual(D.decisionUrl('https://r.cognitiveservices.azure.com/openai/v1/'), 'https://r.cognitiveservices.azure.com/providers/microsoft/v1/systemone');
+    assert.throws(() => D.decisionUrl(''), /PA_DECISION_ENDPOINT/);
+    // The state: snapshot, the last two turns, the words.
+    const st = D.decisionState({ text: ' check  my mail ', context: 'Now: Friday', history: [{ type: 'user', text: 'one' }, { type: 'assistant', text: 'two' }, { type: 'user', text: 'three' }] });
+    assert.deepStrictEqual(st, { snapshot: 'Now: Friday', conversation: ['assistant: two', 'user: three'], user_just_said: 'check my mail' });
+    // The request: the deployment as model, the fixed questions, a key or a bearer token.
+    let req = D.decisionRequest({ deployment: 'decision-1', endpoint: 'https://r.x', key: 'k', text: 'hi' });
+    assert.strictEqual(req.body.model, 'decision-1');
+    assert.deepStrictEqual(Object.keys(req.body.questions), ['route', 'tool', 'effort', 'acts_outside']);
+    assert.deepStrictEqual(Object.keys(req.body.questions.route.criteria), ['answer_here', 'hand_off', 'action']);
+    assert.strictEqual(req.headers['api-key'], 'k');
+    req = D.decisionRequest({ deployment: 'd', endpoint: 'https://r.x', key: null, token: 't', text: 'hi' });
+    assert.strictEqual(req.headers.authorization, 'Bearer t');
+    assert.ok(!req.headers['api-key']);
+    // The answers: route probabilities renormalized, lp = ln p, the other answers as signals.
+    const answers = {
+      route: { choice: 'hand_off', confidence: 0.9, probabilities: { answer_here: 0.1, hand_off: 0.6, action: 0.1 } },
+      tool: { choice: 'inbox', confidence: 0.99 },
+      effort: { score: 1.0084 },
+      acts_outside: { noul: 0.0008 },
+    };
+    const a = D.parseAnswers(answers);
+    assert.ok(Math.abs(a.p.hand_off - 0.75) < 1e-9 && Math.abs(a.p.answer_here + a.p.hand_off + a.p.action - 1) < 1e-9);
+    assert.ok(Math.abs(a.lp.hand_off - Math.log(0.75)) < 1e-9);
+    assert.deepStrictEqual(a.extra, { tool: 'inbox', toolConfidence: 0.99, effort: 1.008, actsOutside: 0.001, routeConfidence: 0.9 });
+    // The identity calibration gives the same p back: the eval's fitting works on it unchanged.
+    const R = require('../src/chat/fastRouter.ts');
+    const pc = R.calibrate(a.lp, { T: 1, b: { answer_here: 0, hand_off: 0, action: 0 } });
+    assert.ok(Math.abs(pc.hand_off - 0.75) < 1e-9);
+    assert.strictEqual(D.parseAnswers({}), null);
+    assert.strictEqual(D.parseAnswers({ route: { probabilities: { answer_here: 'x' } } }), null);
+    assert.strictEqual(D.parseAnswers({ route: { probabilities: { answer_here: 0, hand_off: 0, action: 0 } } }), null);
+
+    // score() against a mocked endpoint; one spend row per call, no text in it.
+    const reply = (body, status = 200) => async () => ({ ok: status < 400, status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
+    const rows = [];
+    let posted = null;
+    const s = await D.score({ text: 'check my mail', deployment: 'decision-1', endpoint: 'https://r.x', key: 'k', record: async (r) => rows.push(r), post: async (url, init) => ((posted = { url, init }), reply({ model: 'microsoft-decision-1', answers, usage: { input_tokens: 578, output_tokens: 4 } })()) });
+    assert.strictEqual(posted.url, 'https://r.x/providers/microsoft/v1/systemone');
+    assert.strictEqual(s.model, 'decision/decision-1');
+    assert.ok(s.p.hand_off > s.p.answer_here);
+    assert.strictEqual(s.extra.tool, 'inbox');
+    assert.deepStrictEqual(s.usage, { input: 578, output: 4 });
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(rows.map((r) => [r.purpose, r.model, r.backend, r.inputTokens, r.ok]), [['fast-lane', 'decision/decision-1', 'azure', 578, true]]);
+    await assert.rejects(D.score({ text: 'x', deployment: 'd', endpoint: 'https://r.x', key: 'k', record: async () => {}, post: reply({ error: { code: 'RateLimitReached', message: 'rate limit' } }, 429) }), /decision router 429: rate limit/);
+    await assert.rejects(D.score({ text: 'x', deployment: 'd', endpoint: 'https://r.x', key: 'k', record: async () => {}, post: reply({ answers: {} }) }), /no route probabilities/);
+    // A rate limit is waited out only when asked (the eval), never in a live turn.
+    let n = 0;
+    const flaky = async () => (++n === 1 ? { ok: false, status: 429, headers: { get: () => '0.01' }, text: async () => '{}' } : reply({ answers })());
+    const s2 = await D.score({ text: 'x', deployment: 'd', endpoint: 'https://r.x', key: 'k', record: async () => {}, post: flaky, retries: 2 });
+    assert.strictEqual(n, 2);
+    assert.ok(s2.p.hand_off > 0.5);
+
+    // No key: an Entra token from the az CLI, fetched once and cached.
+    D.resetToken();
+    assert.deepStrictEqual(D.parseAzToken('{"accessToken":"tok","expires_on":2000000000}'), { value: 'tok', expiresAt: 2e12 });
+    assert.strictEqual(D.parseAzToken('not json'), null);
+    let runs = 0;
+    const run = async () => (runs++, '{"accessToken":"tok","expires_on":2000000000}');
+    assert.strictEqual(await D.entraToken({ now: 1e12, run }), 'tok');
+    assert.strictEqual(await D.entraToken({ now: 1e12 + 60_000, run }), 'tok');
+    assert.strictEqual(runs, 1, 'cached until close to expiry');
+    assert.strictEqual(await D.entraToken({ now: 2e12 - 60_000, run }), 'tok');
+    assert.strictEqual(runs, 2, 'refreshed in its last five minutes');
+    D.resetToken();
+
+    // runTurn: the decision router decides, the local model speaks the answer.
+    const dec = (answer_here, hand_off, action) => async () => ({ p: { answer_here, hand_off, action }, lp: {}, ms: 300, model: 'decision/decision-1', extra: { tool: 'calendar', effort: 0.4 } });
+    const dopts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'decision', decision: { answerThreshold: '0.85' }, keepAlive: '24h', localTimeoutMs: 1000, decisionTimeoutMs: 20000, effort: 'low', enabled: true, primeAfterMs: 0 };
+    assert.strictEqual(F.routerKind(dopts), 'decision');
+    assert.strictEqual(F.answerThreshold(dopts), 0.85);
+    assert.strictEqual(F.answerThreshold({ ...dopts, decision: {} }), 0.85, 'its own default, not the logprob fit');
+    let calls = [];
+    let b = base({ decide: dec(0.97, 0.02, 0.01), route: async () => { throw new Error('the logprob router is not used'); }, prepare: async () => true, warmLocal: async () => 1, stream: (x) => (calls.push(x), script(['Three ', 'tomorrow.'])(x)) });
+    let t = await turn("what's on tomorrow?", b.deps, dopts);
+    assert.strictEqual(t.events[0].router, 'decision');
+    assert.strictEqual(t.events[0].route, 'answer');
+    assert.deepStrictEqual(t.events[0].signals, { tool: 'calendar', effort: 0.4 });
+    assert.match(t.events[0].reason, /^decision\/decision-1: answer/);
+    assert.strictEqual(t.say, 'Three tomorrow.');
+    assert.deepStrictEqual(calls.map((c) => c.model), ['local/llama3.2:3b'], 'the local model speaks');
+    // Below its threshold: the words go to Jarvis verbatim.
+    b = base({ decide: dec(0.6, 0.39, 0.01), prepare: async () => true, stream: script(['nope']) });
+    t = await turn('check my mail from Quorvin', b.deps, dopts);
+    assert.strictEqual(t.events[0].route, 'handoff');
+    assert.strictEqual(t.say, 'One moment.');
+    assert.deepStrictEqual(b.sent, ['check my mail from Quorvin']);
+    // Decision model unreachable: the fallback model's one-call path.
+    calls = [];
+    b = base({ decide: async () => { throw new Error('decision router 401: no'); }, prepare: async () => null, stream: (x) => (calls.push(x), script(['{"route":"answer","reason":"hi"}\nHello.'])(x)) });
+    t = await turn('hello', b.deps, dopts);
+    assert.deepStrictEqual(calls.map((c) => c.model), ['azure/pa']);
+    assert.strictEqual(t.events.at(-1).fellBack, true);
+  }
+
   // ---- POST /api/talk/turn ---------------------------------------------------------------
   {
     const { config } = require('../src/config.ts');

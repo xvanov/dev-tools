@@ -701,14 +701,25 @@ const liveHistory = () => mergeHistory(require('./feed.ts').feed().history(8), a
 /** Pure. The router in use: `logprob` needs a local model, else `same`. */
 function routerKind(o: any) {
   if (/^https?:\/\//i.test(o.router || '')) return 'http';
+  if (o.router === 'decision') return 'decision';
   if (o.router === 'logprob') return /^local\//.test(String(o.model || '')) ? 'logprob' : 'same';
   if (o.router === 'same' || !o.router) return 'same';
   if (o.router === 'rules') return 'rules';
   return 'model';
 }
 
-/** The answer threshold: PA_FAST_ANSWER_THRESHOLD, else the fitted default. */
+/** Pure. Routers that decide, then let the local model speak: its answerer prefix is worth warming. */
+const decidesFirst = (kind: string) => kind === 'logprob' || kind === 'decision';
+
+/**
+ * The answer threshold: PA_FAST_ANSWER_THRESHOLD (PA_DECISION_ANSWER_THRESHOLD
+ * under the decision router), else the fitted default.
+ */
 function answerThreshold(o: any = config.fastLane) {
+  if (routerKind(o) === 'decision') {
+    const t = Number(o.decision?.answerThreshold);
+    return Number.isFinite(t) && t > 0 && t <= 1 ? t : 0.85;
+  }
   const t = Number(o.answerThreshold);
   return Number.isFinite(t) && t > 0 && t <= 1 ? t : require('./fastRouter.ts').THRESHOLD;
 }
@@ -726,6 +737,8 @@ async function nextTurnInputs({ context, history, deps = {} }: PrimeArgs) {
 // Warms the router's prompt cache for the next turn (a new snapshot, or the
 // conversation as it now stands). Never throws, never waits.
 function primeRouter({ context, history, o = config.fastLane, deps = {} }: PrimeArgs = {}) {
+  // The decision model has no prompt cache to fill; only its sign-in token (when no key is set).
+  if (o.enabled && routerKind(o) === 'decision') return (deps.prepare || depOverrides.prepare || require('./decisionRouter.ts').prepare)();
   if (!o.enabled || routerKind(o) !== 'logprob') return null;
   const prime = deps.prime || depOverrides.prime || require('./fastRouter.ts').prime;
   return Promise.resolve()
@@ -744,7 +757,7 @@ function answererPrefix({ context, history }: { context?: any; history?: any }) 
 // two, the router and the answerer each keep theirs, so a new snapshot is not
 // read again inside the turn. Never throws.
 function primeAnswerer({ context, history, o = config.fastLane, deps = {} }: PrimeArgs = {}) {
-  if (!o.enabled || routerKind(o) !== 'logprob') return null;
+  if (!o.enabled || !decidesFirst(routerKind(o))) return null;
   const warmLocal = deps.warmLocal || depOverrides.warmLocal || require('../llm.ts').warmLocal;
   return Promise.resolve()
     .then(() => nextTurnInputs({ context, history, deps }))
@@ -763,6 +776,7 @@ function defaultDeps() {
     stream: llm.stream,
     complete: llm.complete,
     route: (a: any) => require('./fastRouter.ts').score(a),
+    decide: (a: any) => require('./decisionRouter.ts').score(a),
     prime: (a: any) => require('./fastRouter.ts').prime(a),
     snapshot: () => snapshotCache().get(),
     history: liveHistory,
@@ -897,18 +911,22 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
   // localTimeoutMs): the turn then goes to the fallback model, unharmed.
   async function logprobTurn() {
     let s;
+    const scoreTurn = router === 'decision' ? d.decide : d.route;
     try {
-      s = await d.route({ text, context, history, model: o.model, keepAlive: o.keepAlive, timeoutMs: o.localTimeoutMs, signal: ac.signal });
+      s = await scoreTurn({ text, context, history, model: o.model, keepAlive: o.keepAlive, timeoutMs: o.localTimeoutMs, signal: ac.signal });
     } catch (err: any) {
       if (signal?.aborted) throw err;
-      log.warn('router failed; using the fallback', { model: o.model, message: err.message, ms: since() });
+      log.warn('router failed; using the fallback', { router, model: o.model, message: err.message, ms: since() });
       return false;
     }
     const threshold = answerThreshold(o);
     const choice = require('./fastRouter.ts').decide(s.p, threshold);
     const p = Object.fromEntries(Object.entries(s.p).map(([k, v]: [string, any]) => [k, Math.round(v * 1000) / 1000]));
-    const reason = `router: ${choice} (p answer ${p.answer_here}, hand off ${p.hand_off}, action ${p.action}; threshold ${threshold})`;
-    const decided = decide(choice === 'answer' ? { route: 'answer', reason } : { route: 'handoff', task: clip(text, MAX_TASK), reason }, true, { p, routerMs: s.ms });
+    const by = router === 'decision' ? `${s.model || 'decision'}` : 'router';
+    const reason = `${by}: ${choice} (p answer ${p.answer_here}, hand off ${p.hand_off}, action ${p.action}; threshold ${threshold})`;
+    // The decision model's other answers (tool, effort, acts_outside): logged, not acted on yet.
+    const extra = s.extra ? { p, routerMs: s.ms, signals: s.extra } : { p, routerMs: s.ms };
+    const decided = decide(choice === 'answer' ? { route: 'answer', reason } : { route: 'handoff', task: clip(text, MAX_TASK), reason }, true, extra);
     if (decided.route !== 'answer') {
       // The user's own words, verbatim: the task is the text, so no hint.
       startHandoff({ ...decided, task: clip(text, MAX_TASK) });
@@ -933,7 +951,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
   try {
     let model = o.model;
     let handled = false;
-    if (router === 'logprob') {
+    if (decidesFirst(router)) {
       handled = await logprobTurn();
       if (!handled) {
         model = o.fallback || o.model;
@@ -948,7 +966,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     }
     if (handled) {
       // decided, spoken and handed off above
-    } else if (router === 'same' || router === 'logprob') {
+    } else if (router === 'same' || decidesFirst(router)) {
       const split = createReplySplitter();
       let suppress = false;
       let decided = null;
@@ -1025,7 +1043,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     if (r.route === 'answer' && r.say.trim()) d.remember(text, r.say.trim());
     const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model, router, ...(r.fellBack ? { fellBack: true } : {}) };
     emit(done);
-    if (router === 'logprob' && !r.fellBack && !signal?.aborted) {
+    if (decidesFirst(router) && !r.fellBack && !signal?.aborted) {
       // The next turn's conversation is this one: put it in the prompt cache,
       // once the first sentence is synthesised (the primes share the GPU with
       // Kokoro: its first byte came ~100 ms later under them).
@@ -1062,7 +1080,7 @@ function warm({ now = Date.now(), deps = {} }: { now?: number | undefined; deps?
       }
       // So the KV cache holds the prefix: the answerer's (system, snapshot,
       // conversation) under the logprob router, the one-call JSON prompt otherwise.
-      if (routerKind(o) === 'logprob') {
+      if (decidesFirst(routerKind(o))) {
         const a = await nextTurnInputs({ deps }).catch(() => ({ context: '', history: [] }));
         return warmLocal({ model: o.model, keepAlive: o.keepAlive, ...answererPrefix(a) });
       }
@@ -1111,5 +1129,5 @@ module.exports = {
   answererPrefix,
   usesJson,
   createJsonSayStreamer,
-  DECISION_SCHEMA,
+  DECISION_SCHEMA,
 };

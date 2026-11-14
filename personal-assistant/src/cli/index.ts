@@ -1211,13 +1211,27 @@ const commands: Json = {
       const E = require('../eval/router.ts');
       const R = require('../chat/fastRouter.ts');
       const F = require('../chat/fastLane.ts');
+      const at = E.snapshotNow();
+      const guard = (t: string) => F.guardRoute(t, at);
+      const repeat = flagInt(flags, 'repeat', 3);
+      // --router decision: Microsoft-Decision-1 (src/chat/decisionRouter.ts) on the same
+      // set; its probabilities come uncalibrated (identity), --fit fits them like the logprob ones.
+      if ((flags.router && flags.router !== true ? String(flags.router) : config.fastLane.router) === 'decision') {
+        const D = require('../chat/decisionRouter.ts');
+        const s = D.settings();
+        if (!s.endpoint) return fail('the decision router needs PA_DECISION_ENDPOINT (the Azure AI resource with the Microsoft-Decision-1 deployment)');
+        out(`scoring ${E.loadCases().cases.length} turns on decision/${s.deployment}, ${repeat}x each ...`);
+        // Waits out the deployment's rate limit (requests per minute) rather than failing a case.
+        const scored = await E.scoreCases({ repeat, score: (a: any) => D.score({ ...a, timeoutMs: 120_000, retries: 8 }) });
+        const threshold = F.answerThreshold({ ...config.fastLane, router: 'decision' });
+        E.report(scored, { cal: E.RAW, threshold, guard, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
+        return;
+      }
       const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
       if (!/^local\//.test(model)) return fail(`the router scores log-probabilities from a local/ model; ${model} is not one (--model local/llama3.2:3b)`);
-      const repeat = flagInt(flags, 'repeat', 3);
       out(`scoring ${E.loadCases().cases.length} turns on ${model}, ${repeat}x each (warm) ...`);
       const s = await E.scoreCases({ model, keepAlive: config.fastLane.keepAlive, repeat });
-      const at = E.snapshotNow();
-      E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold(), guard: (t: string) => F.guardRoute(t, at), fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
+      E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold({ ...config.fastLane, router: 'logprob' }), guard, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
       return;
     }
     // And its answerer: is what it says true to the snapshot (src/eval/answerer-cases.json)?
@@ -1313,7 +1327,7 @@ const commands: Json = {
     pa eval drop <id>[,id]  /  restore <id>    deactivate a bad case / bring it back
     pa eval add "<question>" --gold 1,2 [--answer "..."]   log a miss by hand
     pa eval run [--retriever search] [--k 10] [--threshold x] [--judge] [--misses]
-    pa eval router [--repeat 3] [--fit] [--misses] [--model local/x]   the voice fast lane's router: accuracy, latency
+    pa eval router [--repeat 3] [--fit] [--misses] [--model local/x] [--router decision]   the voice fast lane's router: accuracy, latency
     pa eval answerer [--repeat 2] [-v] [--model local/x]   its answerer: right day, every meeting, titles as titles
   retrievers: ${ev.retrievers.names().join(', ')}`);
   },
