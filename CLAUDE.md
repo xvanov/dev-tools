@@ -35,6 +35,22 @@ git push origin main
   and say so in the report if anything fails.
 - **Verify the push.** `git status -sb` should show `## main...origin/main` with no ahead/behind and
   nothing staged. A commit that only exists locally hasn't shipped.
+- **Done means CI is green.** The pre-commit hook runs only the tests your change reaches; CI runs
+  every tool's whole suite plus checks the hook does not (jarvisd's `tsc` over the PA's TypeScript,
+  `cargo fmt --check` and clippy for ptyd, the Postgres contract). After every push, follow the run
+  to the end and only then call the work done:
+
+  ```bash
+  gh run list --branch main --limit 1          # the run for your push (match the commit)
+  gh run watch <run-id> --exit-status          # wait for it; non-zero when any job fails
+  gh run view <run-id> --log-failed            # what failed
+  ```
+
+  A red run is yours to fix, **including a failure you did not cause**: CI stayed red for two days
+  (Nov 2026: a `cargo fmt` diff in ptyd, then strict-index `tsc` errors in `src/pages/core.ts`)
+  because every later push only looked at its own tests. Fix it in its own commit, push, and watch
+  again until green. Report the run's result (and URL) in your summary; never report a unit done
+  while its run is red or still running.
 - If something blocks the commit or push (conflict, hook failure, no network), **say so explicitly**
   rather than leaving it silently undone.
 
