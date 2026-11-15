@@ -260,6 +260,26 @@
   };
   const ttsName = () => C.chooseTts(prefs.tts, { kokoro: TTS_BACKENDS.kokoro.healthy, browser: TTS_BACKENDS.browser.available() }) || 'browser';
 
+  // Is Ask the view in front? The shell's nav (this window's, or the top
+  // window's when this page is one of its frames) knows; a Talk page opened on
+  // its own always is.
+  let frontFromShell = null; // set when this page is a frame and the shell says so (nav.js announceView)
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent || window.parent === window || !e.data || e.data.jarvis !== 'view') return;
+    frontFromShell = !!e.data.front;
+    window.dispatchEvent(new CustomEvent('jarvis:view'));
+  });
+  function askInFront() {
+    if (frontFromShell !== null) return frontFromShell;
+    try {
+      const nav = (window.top && window.top.JarvisNav) || window.JarvisNav;
+      if (nav && typeof nav.showing === 'function') return nav.showing() === 'talk';
+    } catch {
+      /* a cross-origin top (termhub on another origin): no shell to ask */
+    }
+    return true;
+  }
+
   const speaker = {
     queue: [],
     busy: false,
@@ -270,7 +290,8 @@
     },
     say(sentences) {
       for (const s of sentences) {
-        if (prefs.muted) caption(s);
+        // Muted, or Ask is not the view in front (askInFront): written, never spoken.
+        if (prefs.muted || !askInFront()) caption(s);
         else this.queue.push(s);
       }
       this.next();
@@ -1021,6 +1042,25 @@
   }
   $('face').addEventListener('click', tapped);
   $('tapPrompt').addEventListener('click', tapped);
+
+  // Jarvis listens and speaks in Ask only. In the one-tab shell (nav.js) this
+  // page stays loaded while Plan, Build, Run, Meter or Map is in front; it then
+  // stops the mic and goes quiet (replies are still captioned here), and picks
+  // the mic up again when Ask comes back. (It kept answering chat turns aloud
+  // from behind the Run view, 2026-11-14.)
+  window.addEventListener('jarvis:view', () => {
+    if (!askInFront()) {
+      speaker.cancel();
+      if (mic.on) {
+        stopMic();
+        mic.away = true;
+      }
+    } else if (mic.away) {
+      mic.away = false;
+      if (TOUCH) showTapPrompt('Tap to resume');
+      else startMic();
+    }
+  });
 
   // A phone that goes to the background loses the mic (iOS ends the track;
   // Android may keep it, but listening from a pocket is not wanted). Coming

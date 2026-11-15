@@ -249,8 +249,18 @@
     if (!opts.fromHistory) history.pushState({ jx: id }, '', urlWith(id));
     // Keys go where the eyes are: a terminal takes typing at once.
     try { if (id !== current) frames[id].contentWindow.focus(); else window.focus(); } catch (e) { /* ignore */ }
+    announceView();
     paint();
     return true;
+  }
+  // Tells this page and every kept-alive frame which view is in front: Talk listens and speaks only
+  // while Ask is (talk.page.js). A frame may be on another origin (termhub), so frames hear it by
+  // postMessage, each told only whether it is the one in front.
+  function announceView() {
+    try { window.dispatchEvent(new CustomEvent('jarvis:view', { detail: { showing: showing } })); } catch (e) { /* old browser */ }
+    for (var k in frames) {
+      try { frames[k].contentWindow.postMessage({ jarvis: 'view', front: k === showing, id: k }, '*'); } catch (e) { /* ignore */ }
+    }
   }
   function fromUrl() {
     var id = new URLSearchParams(location.search).get('jx');
@@ -661,6 +671,7 @@
     destinations: DESTS,
     go: go,
     linkTarget: destOfHref, // which destination a link switches to, or null (test/nav.test.js)
+    showing: function () { return showing; }, // the view in front: Talk speaks only while it is 'talk'
     streams: tabStreams(), // the one /api/events and one /api/chat/stream for this tab
     refresh: function () { return fetchSession().then(paint); },
     settings: {

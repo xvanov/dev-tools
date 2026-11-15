@@ -188,7 +188,10 @@ push-to-talk) is sent, to the PA's own `/api/talk/transcribe` and `/api/talk/end
 wake word client-side. The local voice service (`voice/server.py`, 127.0.0.1:47830) is loopback only
 and refuses any request with an `Origin` header: browsers reach it only through the PA's X-PA-guarded
 proxy (`/api/talk/tts`, `/api/talk/endpoint`, `/api/talk/warm`). `/talk/models/` serves a fixed list
-of file names (`MODEL_FILES`), never a path. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
+of file names (`MODEL_FILES`), never a path. The page listens and speaks only while Ask is the view in
+front: in the one-tab shell it stays loaded behind Plan, Build, Run, Meter and Map, and `nav.js`'s
+`jarvis:view` (an event here, a `postMessage` to frames) makes it stop the mic and only caption
+replies until Ask is back. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
 copies of termhub's (`test/voiceCaptureCopy.test.js`); change termhub's and copy them over.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
