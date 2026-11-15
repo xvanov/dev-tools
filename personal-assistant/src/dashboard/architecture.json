@@ -127,7 +127,8 @@
         "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side.",
         "Modes": "Voice (the face, default) or Text, switched in the page's panel and remembered per browser (jarvis.talk.mode). Text mode is the same PA chat as a transcript with a box to type in (chat.client.js, POST /api/chat), and shows the Approve / Deny card for a pending action prompt (permission.client.js); Voice mode has no buttons.",
         "Permission prompts": "Audio only, no buttons: Jarvis speaks the server-written question (transcript.askTool) and your next utterance answers it (talk.core.js createVoiceAsk: only while awake, only from words begun after the question, strict yes/no, unclear asked once more, 60 s window) via POST /api/chat/permission with the page token",
-        "Sleep": "\"Jarvis, sleep\" / \"stop listening\" / \"go to sleep\" (and the stop phrases) return it to wake-word-only, said aloud; windows: 6 s after the wake word, 8 s after an answer, 60 s after a question"
+        "Sleep": "\"Jarvis, sleep\" / \"stop listening\" / \"go to sleep\" (and the stop phrases) return it to wake-word-only, said aloud; windows: 6 s after the wake word, 8 s after an answer, 60 s after a question",
+        "Ask only": "Jarvis listens and speaks only while Ask is the page in front (2026-11-14): nav.js announces every view change (a jarvis:view event, postMessage {jarvis:'view'} to frames, JarvisNav.showing()); talk.page.js askInFront() stops the microphone when you switch to Plan, Build, Run, Meter or Map and starts it again when you come back (a tap prompt on touch devices). Anything the chat says while you are elsewhere is shown as a caption, not spoken. termhub/web/nav.js is a byte copy of the PA's nav.js"
       },
       "code": [
         "personal-assistant/src/dashboard/talk.html",
@@ -135,7 +136,8 @@
         "personal-assistant/src/dashboard/talk.page.js",
         "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/src/dashboard/chat.client.js",
-        "personal-assistant/src/dashboard/permission.client.js"
+        "personal-assistant/src/dashboard/permission.client.js",
+        "personal-assistant/src/dashboard/nav.js"
       ]
     },
     {
@@ -154,7 +156,7 @@
       "health": "ollama",
       "details": {
         "Model": "local/llama3.2:3b through Ollama's native /api/chat for the answerer, and for the router under logprob; under PA_FAST_ROUTER=decision the router is Microsoft-Decision-1 on Azure (deployment decision-1 on innergy-internal-ai2-resource, eastus2, DataZoneStandard US, Preview: retires 2027-02-04)",
-        "Router": "PA_FAST_ROUTER=logprob (the default; src/chat/fastRouter.ts): one call, one generated token. The model is asked a fixed question, 'A (answer here), B (hand off: needs a lookup) or C (action)?', and the top log-probabilities of that token are calibrated (temperature 0.461 plus a per-class bias, fitted by pa eval router --fit) into p(answer_here), p(hand_off), p(action). PA_FAST_ROUTER=decision (the work stack, D31; src/chat/decisionRouter.ts): one call to the decision model's systemone API with the snapshot, the last two turns and the words as its state and four fixed questions: route (choice answer_here | hand_off | action -> p), tool (choice: none, calendar, inbox, wip_status, memory, commitments, other), effort (score 0-3) and acts_outside (yes/no). Only route decides; the other three ride along in the decision event as signals. Auth: PA_DECISION_API_KEY, else an Entra token from the az CLI login, cached until near expiry. Alternatives: same (the older one-call JSON {label, route, say}), rules, a model string, an http(s) URL",
+        "Router": "PA_FAST_ROUTER=logprob (the default; src/chat/fastRouter.ts): one call, one generated token. The model is asked a fixed question, 'A (answer here), B (hand off: needs a lookup) or C (action)?', and the top log-probabilities of that token are calibrated (temperature 0.461 plus a per-class bias, fitted by pa eval router --fit) into p(answer_here), p(hand_off), p(action). PA_FAST_ROUTER=decision (the work stack, D31, live since the 48a0fef roll on 2026-11-15; src/chat/decisionRouter.ts): one call to the decision model's systemone API with the snapshot, the last two turns and the words as its state and four fixed questions: route (choice answer_here | hand_off | action -> p), tool (choice: none, calendar, inbox, wip_status, memory, commitments, other), effort (score 0-3) and acts_outside (yes/no). Only route decides; the other three ride along in the decision event as signals. Auth: PA_DECISION_API_KEY, else an Entra token from the az CLI login, cached until near expiry. Alternatives: same (the older one-call JSON {label, route, say}), rules, a model string, an http(s) URL",
         "Answerer": "speaks only when p(answer_here) >= 0.64 (PA_FAST_ANSWER_THRESHOLD; 0.85 under the decision router, PA_DECISION_ANSWER_THRESHOLD): a second streamed call that writes one to four short sentences, opening with one of at most six words so speech can start at once; meeting titles are said as titles, never as who a meeting is with. Below it, the user's words go to the PA chat verbatim with 'One moment.' (or 'On it.' when p(action) > p(hand_off))",
         "Eval": "`pa eval answerer`: 6 day snapshots in src/eval/answerer-cases.json (placeholders), checking the answer names the right day, every meeting and no invented attendees, plus first-token and first-spoken-piece latency. `pa eval router`: 97 turns in src/eval/router-cases.json (anonymized logged turns, the known miss 'check my mail from <name>', tomorrow against this-week questions, and synthetic ones), 3-way accuracy, turns answered here that should not be, latency warm. Nov 2026 on this laptop's RTX 3000 Ada: 0 action and 0 look-up turns answered here; see PLAN.md 0.6 for the numbers. pa eval router --router decision (14 Nov 2026, 97 turns, 1x): 97.9% 3-way (logprob: 90.7%), 0 action and 0 look-up turns answered here, 2 of 38 answerable turns handed off, p50 214 ms, p95 316 ms from this laptop",
         "Prompt cache": "the router's system prompt and examples never change; the snapshot comes next, then the last two turns, then the words. 1.5 s after each turn (so it does not share the GPU with Kokoro's first sentence), and when the snapshot changes, a one-token call with the next turn's prefix fills Ollama's cache for the answerer and then the router (Ollama keeps one prefix per slot; OLLAMA_NUM_PARALLEL=2 gives each its own), so a turn pays only for its own words",
@@ -353,8 +355,8 @@
           "its action-tool prompts can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.ts checks the screen first"
         ],
         "How you reach it": [
-          "typing in its termhub tab",
-          "Ask (/talk), by voice or in its Text mode (src/chat/feed.ts types into the session through termhub's input API and tails its transcript)"
+          "typing in its termhub tab (terminal engine)",
+          "Ask (/talk), by voice or in its Text mode: on the sdk engine src/chat/sdkFeed.ts takes the message directly; on the terminal engine src/chat/feed.ts types into the session through termhub's input API and tails its transcript"
         ],
         "Transcript": "~/.claude/projects/<encoded pa-home>/<uuid>.jsonl, tailed by byte offset (first read: last 4 MB)",
         "Billing": "the machine's Claude Code login: a claude.ai subscription login is not metered per call",
@@ -367,7 +369,8 @@
           "SDK on a Z1 roll: drain denies the prompts still waiting (with a reason the model repeats), gives the turn in flight up to 20 s, closes the query; the new generation resumes the session by its id on its first message; undrain (rollback) restarts it here the same way",
           "SDK Run view: every kept chat event is appended to pa-home/sdk-view/chat.jsonl and a read-only termhub session (cwd pa-home/sdk-view, never pa-home) runs `node src/chat/sdkView.js --follow` on it; /api/chat/session's sessionId and url are that session (conversationId is the SDK's), so the drill-down links work as on the terminal engine",
           "SDK limits for now: `pa chat` only points at Ask"
-        ]
+        ],
+        "Turn log": "every message the chat is given is a row in turn_log (src/chat/turnLog.ts; sdk engine): a voice hand-off arrives with the fast lane's row (send({ turn })), a typed message or a doorbell opens its own; the chat's final text blocks (not the steps before a tool call), the names of the tools it called, and its result (reply ms, turns, cost-equivalent, ok or the error) complete it. A session that ends with messages unanswered marks them errors. Read at /turns or pa turns"
       },
       "tools": {
         "allowed": [
@@ -700,6 +703,7 @@
           "/talk",
           "/factory",
           "/architecture",
+          "/turns (the turn log)",
           "/pages/<slug> (Jarvis pages)"
         ],
         "Guards": [
@@ -719,7 +723,8 @@
         "Factory push": "POST /api/factory/events (X-PA): a factory on this machine pushes {job_id, state, why?, updated_at?} or {jobs: [...]}; merged into factory_board at once (Build shows it in about 25 ms) and the full `job list` follows within PA_FACTORY_ACTIVE_POLL_SECONDS. A done, failed or cancelled job also settles the run that holds it right after the answer, through the factory pass's own apply on the stored job under the pushed state: run row ended, card moved and its context cleared, \"Factory run #N\" raised (17 ms in test/factoryPushSettle.test.js); a poll that read the run before the push writes nothing (the write is guarded on the status it read). The factory side is `factory serve` (E3): within 0.2-0.4 s of a story transition",
         "Build board (plan 8.8.2)": "Frozen with the factory (D30): Build's default Board view (factory.board.client.js, /factory-board.js; List keeps the grouped list): a strip with active/idle, spend today and over 7 days on both runtimes (Claude Code's labelled notional, not billed) and runtimes paused at a provider limit with their resume time; a card per job with its progress (the TUI's handler ratio), the persona at work, state and why (paused, needs you), the EBS ETA (P50/P75/P95), PRs with CI and CodeRabbit, cost against its budget cap and a dot per step; a card unfolds its steps on one time axis, a lane per persona; a step opens the run viewer on the right: its turns (text, thinking, each tool call with arguments folded and its result, diffs, gates, usage, the end), streamed while it runs, with Open in termhub kept as a link. GET /api/factory/board (`factory job board`, cached 2 s, one read shared by a burst) and GET /api/factory/steps/<id>/events?cursor&limit&wait&at (`factory job step`, JOBS-API v1.11: cursor-paginated, `wait` long-polls up to 20 s on factory serve, `at` reads one record uncapped); src/dashboard/factoryBoard.ts checks every query value before it becomes an argv element. Re-read on the live feed's factory and run events, and every 10 s while a job is live and the page is seen (the snapshot moves with factory state the feed does not carry)",
         "Passkey sessions (plan 7.1, PA_PASSKEYS=off|on, default off)": "Off: nothing changes (loopback Host, X-PA on POST, page tokens). On: once a passkey is registered, every request except /api/auth/*, /login, the theme, /healthz and /api/version needs the pa_session cookie (HttpOnly, SameSite=Strict, opaque, stored only as a SHA-256 in passkey_session; idle 30 min and sliding, 12 h hard ceiling). WebAuthn runs on @simplewebauthn/server (src/auth/ceremony.ts): single-use two-minute challenges, user verification required, 10 failed assertions a minute rate-limited. Step-up for high-risk approvals (merge, push to main, secret reveal; src/auth/stepup.ts): POST /api/auth/stepup/verify records a one-use, two-minute grant for exactly one approval id, whose challenge commits to that id; the dashboard demands it where auto_merge and push_to_main are accepted today (a dispatch card, a factory job, ids derived server-side), and the policy engine (4.3) calls hasStepUp() for the same kinds. Voice and MCP can never write a grant. The Plan card's approval prompt (permission.client.js) and Build's Approve (factory.client.js) show an 'Approve with passkey' button only after the server answers an approval with needsStepUp and an approvalId. Never locked out: the gate is open while no passkey exists, an unreadable store fails open, `pa passkeys reset` (interactive local terminal, type RESET) forgets every passkey and session, and PA_PASSKEYS=off is the other exit. Enabling it on the live stacks is pending the owner.",
-        "Build page (D30)": "Build (/factory, factory.html, build.board.client.js, src/dashboard/buildBoard.ts) is the Build agent board: GET /api/build?page=&limit= (ten runs a page: state, model, cost against its cap, tokens, result, branch, the agents' lanes with their last 40 tool calls, messages, needs_you, notional spend in 24 h), POST /api/build/runs {task, model, repo} (a run with no card), POST /api/build/<id>/stop|reply|send (X-PA). One card per run: a lane per agent (a bar pulses only while its agent works, an ended one is static; ticks are tool calls, red when one failed), tool-call steps, messages with a reply box on an open ask, Open in termhub and Stop. Polls every 5 s while an agent is live, 30 s otherwise. The factory's own board, repos and job client files (factory.client.js, factory.board.client.js, factory.apps.client.js) stay in the tree, frozen and no longer loaded by the page."
+        "Build page (D30)": "Build (/factory, factory.html, build.board.client.js, src/dashboard/buildBoard.ts) is the Build agent board: GET /api/build?page=&limit= (ten runs a page: state, model, cost against its cap, tokens, result, branch, the agents' lanes with their last 40 tool calls, messages, needs_you, notional spend in 24 h), POST /api/build/runs {task, model, repo} (a run with no card), POST /api/build/<id>/stop|reply|send (X-PA). One card per run: a lane per agent (a bar pulses only while its agent works, an ended one is static; ticks are tool calls, red when one failed), tool-call steps, messages with a reply box on an open ask, Open in termhub and Stop. Polls every 5 s while an agent is live, 30 s otherwise. The factory's own board, repos and job client files (factory.client.js, factory.board.client.js, factory.apps.client.js) stay in the tree, frozen and no longer loaded by the page.",
+        "Turn log": "/turns (turns.html, turns.client.js): every thing said to Jarvis, newest first, filtered by channel and route and searched by words, refreshed every 10 s; GET /api/turns?limit=&before=&channel=&route=&q= (rows without the snapshot) and GET /api/turns/<id> (the whole row, with the snapshot and last turns the router saw). Read-only"
       },
       "env": [
         {
@@ -764,7 +769,9 @@
         "personal-assistant/test/passkeys.test.js",
         "personal-assistant/test/dashboardAuth.test.js",
         "personal-assistant/src/dashboard/buildBoard.ts",
-        "personal-assistant/src/dashboard/build.board.client.js"
+        "personal-assistant/src/dashboard/build.board.client.js",
+        "personal-assistant/src/dashboard/turns.html",
+        "personal-assistant/src/dashboard/turns.client.js"
       ]
     },
     {
@@ -1029,7 +1036,8 @@
         "Budget": "PA_PUSH_BUDGET pushes (default 4), quiet hours 19-08, digests at 09:00 and 14:00",
         "PA chat": "pushes go to pa-home/INBOX.md; the only text ever typed into the chat is a content-free doorbell, and only when nudgeDecision proves the session is idle at an empty prompt",
         "ntfy": "fallback mode by default; bodies off unless PA_NTFY_BODY=1",
-        "New asks": "kind new_ask (8.4.31): when distill writes an owed_by_me commitment (confidence 0.5 or more) from someone else's message under 3 h old, or from your self chat; a Teams DM, the self chat or a mention is priority normal (a push within the budget), any other source digest; one per item (dedupe new-ask:<item id>); src/notify/newAsk.ts"
+        "New asks": "kind new_ask (8.4.31): when distill writes an owed_by_me commitment (confidence 0.5 or more) from someone else's message under 3 h old, or from your self chat; a Teams DM, the self chat or a mention is priority normal (a push within the budget), any other source digest; one per item (dedupe new-ask:<item id>); src/notify/newAsk.ts",
+        "Tests never notify": "a test that raises a real notice (build.test.js's vanished run: 'Build agent #2 failed') once rewrote the live pa-home/INBOX.md and rang the running chat's doorbell on every test run, and Jarvis read it aloud (2026-11-14). The test runner (test/runner.config.js) now gives every run its own PA_DATA_DIR and sets PA_CHAT_NUDGE=0, PA_TOASTS=0, PA_NTFY=off and PA_TURN_LOG=off; build.test.js sets them itself too"
       },
       "env": [
         {
@@ -1356,7 +1364,7 @@
       "health": "store",
       "details": {
         "Backend (plan 3.1)": "src/db/sqlite.ts: better-sqlite3-multiple-ciphers (optional dependency; N-API prebuilds for Windows and Linux) with src/db's interface. $n placeholders, Date/JSON/boolean encoding, and rows decoded by declared column type (timestamptz -> Date, jsonb and arrays -> JSON, boolean, vector -> Float32Array), so the SQLite repositories return what pg does. Writes and transactions take an in-process lock and BEGIN IMMEDIATE; plain reads use a second, read-only connection",
-        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.ts migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
+        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.ts migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/*.sql (sql-sqlite/018_turn_log.sql is the twin of sql/046; each file names its twin), tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
         "Repositories": "src/repo/sqlite/<aggregate>.ts, the twin of each src/repo/<aggregate>.ts; createRepos() loads them when the backend says dialect sqlite. Every aggregate phase 1.2 has converted has its twin; each states where SQLite cannot say what Postgres says (FTS5 bm25 ranks, ASCII-only lower()/like, regexes tested in JS, millisecond timestamps), for the 3.4 shadow comparison",
         "Contract (plan 3.2)": "test/repoContract.test.js runs every case on postgres and sqlite (a throwaway encrypted pa_test_* file, no server; CI runs it on Linux and Windows and fails if SQLite is skipped). Strict: a repository method without its SQLite twin fails (PA_CONTRACT_STRICT=0 reports todo for work in progress). Green on every aggregate of 1.2",
         "Encryption": "PA_SQLITE_KEY set: SQLCipher v4 (PRAGMA cipher=sqlcipher, legacy=4, key); the key lives in the OS vault or the gitignored .env",
