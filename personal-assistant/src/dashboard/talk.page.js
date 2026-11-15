@@ -272,6 +272,19 @@
   function askInFront() {
     // A tab in the background is not in front, whatever the shell inside it shows.
     if (document.hidden) return false;
+    // What the shell's page shows, read off its DOM: true for every version of
+    // nav.js, also one loaded before it announced views (a long-lived Run tab
+    // whose termhub front never restarted kept an old shell that never told
+    // this frame, and Jarvis listened and spoke from behind Run, 2026-11-15).
+    // In a shell frame, Ask is in front only while the frame is shown (.on);
+    // as the shell's own page, not while another view covers it (jx-away).
+    try {
+      const fe = window.frameElement;
+      if (fe && fe.classList && fe.classList.contains('jx-frame')) return fe.classList.contains('on');
+    } catch {
+      /* a cross-origin parent: fall through to its messages */
+    }
+    if (window.top === window && document.documentElement.classList.contains('jx-away')) return false;
     if (frontFromShell !== null) return frontFromShell;
     try {
       const nav = (window.top && window.top.JarvisNav) || window.JarvisNav;
@@ -1050,19 +1063,23 @@
   // stops the mic and goes quiet (replies are still captioned here), and picks
   // the mic up again when Ask comes back. (It kept answering chat turns aloud
   // from behind the Run view, 2026-11-14.)
-  window.addEventListener('jarvis:view', () => {
+  function followFront() {
     if (!askInFront()) {
       speaker.cancel();
       if (mic.on) {
         stopMic();
         mic.away = true;
       }
-    } else if (mic.away) {
+    } else if (mic.away && !document.hidden) {
       mic.away = false;
       if (TOUCH) showTapPrompt('Tap to resume');
       else startMic();
     }
-  });
+  }
+  window.addEventListener('jarvis:view', followFront);
+  // Also checked every 2 s: a shell too old to announce views is still followed
+  // (askInFront reads its DOM), within two seconds of a switch.
+  setInterval(followFront, 2000);
 
   // A phone that goes to the background loses the mic (iOS ends the track;
   // Android may keep it, but listening from a pocket is not wanted). Coming
