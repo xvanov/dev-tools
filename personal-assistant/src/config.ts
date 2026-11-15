@@ -402,6 +402,15 @@ const config = {
     approvalTimeoutMs: envInt('PA_CHAT_APPROVAL_TIMEOUT_MS', 300_000),
   },
 
+  // The turn log (src/chat/turnLog.ts, table turn_log): one row per thing said
+  // to Jarvis, by voice, typed or the INBOX doorbell, with the fast lane's
+  // route and probabilities, what it said, and the PA chat's answer and tools.
+  // Kept PA_TURN_LOG_DAYS days; PA_TURN_LOG=off writes nothing.
+  turnLog: {
+    enabled: env('PA_TURN_LOG', 'on') !== 'off',
+    days: envInt('PA_TURN_LOG_DAYS', 90),
+  },
+
   // The voice page's fast lane ("System 1", src/chat/fastLane.js): a quick
   // model answers simple spoken turns itself and acknowledges the rest while
   // handing them to the PA chat. PA_FAST_ROUTER: `logprob` (decide, then

@@ -256,6 +256,7 @@ function createSdkFeed({
   env = () => subscriptionEnv(),
   executable = () => claudeExecutable(),
   hub = () => require('../dispatch/termhub.ts'),
+  turnLog = () => require('./turnLog.ts'),
   viewCommand = (file: any) => {
     const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
     return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;
@@ -282,6 +283,8 @@ function createSdkFeed({
   const streamText = new Map(); // event id -> text so far
   let streamMsg: any = null;
   let held: any[] = [];
+  // The turn log (src/chat/turnLog.ts): each message given to the chat, and its answer and tools.
+  const turns = turnLog().chatTracker();
 
   function readSessionId() {
     try {
@@ -580,7 +583,10 @@ function createSdkFeed({
   }
 
   function flushHeld(final: any) {
-    for (const e of held) publish(final === undefined ? e : { ...e, final });
+    for (const e of held) {
+      if (final === true) turns.text(e.text);
+      publish(final === undefined ? e : { ...e, final });
+    }
     held = [];
   }
 
@@ -624,6 +630,7 @@ function createSdkFeed({
         if (String(b.text || '').trim()) held.push({ id, type: 'assistant', text: String(b.text).trim(), at: now() });
       } else if (b.type === 'tool_use') {
         flushHeld(false); // text before a tool call is a step, not the answer
+        turns.tool(b.name);
         const e: Json = { id: `${m.uuid || msgId}:${k}`, type: 'activity', text: T.describeTool(b.name, b.input), at: now(), tool: String(b.name || ''), toolUseId: String(b.id || '') };
         const ask = T.askTool(b.name, b.input);
         if (ask) e.ask = ask;
@@ -640,6 +647,8 @@ function createSdkFeed({
       publish({ id: `err-${m.uuid || Date.now()}`, type: 'activity', text: `the chat stopped: ${why || 'error'}`, at: now() });
     }
     log.info('chat turn done', { subtype: m.subtype, turns: m.num_turns, ms: m.duration_ms, costEquivalentUsd: m.total_cost_usd });
+    const failed = m.subtype !== 'success' || m.is_error;
+    turns.result({ ok: !failed, error: failed ? [m.subtype, ...(Array.isArray(m.errors) ? m.errors : [])].filter(Boolean).join(': ') : null, turns: m.num_turns ?? null, costUsd: m.total_cost_usd ?? null });
     setStatus('idle');
   }
 
@@ -706,6 +715,7 @@ function createSdkFeed({
           input = null;
           for (const p of [...approvals.values()]) settle(p, { behavior: 'deny', message: 'the chat session ended' });
           flushHeld(true);
+          turns.ended('the chat session ended before answering');
           setStatus('offline');
         }
       }
@@ -729,7 +739,7 @@ function createSdkFeed({
     }
   }
 
-  async function send({ text, source = 'typed' }: { text?: any; source?: string | undefined } = {}) {
+  async function send({ text, source = 'typed', turn = null }: { text?: any; source?: string | undefined; turn?: any } = {}) {
     if (typeof text !== 'string' || !text.trim()) throw httpError(400, 'text must be a non-empty string');
     if (text.length > MAX_TEXT) throw httpError(400, `text is over ${MAX_TEXT} characters`);
     if (!SOURCES.includes(source)) throw httpError(400, `source must be ${SOURCES.join(' or ')}`);
@@ -741,6 +751,7 @@ function createSdkFeed({
     publish(event);
     setStatus('thinking');
     input.push({ type: 'user', message: { role: 'user', content: clean }, parent_tool_use_id: null, ...(sessionId ? { session_id: sessionId } : {}) });
+    turns.sent({ text: clean, channel: source, turn });
     return { id: event.id };
   }
 
@@ -782,6 +793,7 @@ function createSdkFeed({
     if (!(Date.now() - idleSince >= minIdleMs)) return { ok: false, reason: 'idle too briefly' };
     const text = require('../notify/chat.ts').nudgeText(n);
     publish({ id: `u-${crypto.randomUUID()}`, type: 'user', text, at: now() });
+    turns.sent({ text, channel: 'doorbell' });
     setStatus('thinking');
     input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, ...(sessionId ? { session_id: sessionId } : {}) });
     return { ok: true, reason: 'idle, nothing waiting' };

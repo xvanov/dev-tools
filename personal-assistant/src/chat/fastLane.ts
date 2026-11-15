@@ -780,7 +780,9 @@ function defaultDeps() {
     prime: (a: any) => require('./fastRouter.ts').prime(a),
     snapshot: () => snapshotCache().get(),
     history: liveHistory,
-    handoff: (text: any) => require('./feed.ts').feed().send({ text, source: 'voice' }),
+    // A hand-off carries its turn-log row (src/chat/turnLog.ts) to the PA chat, which adds the answer.
+    handoff: (text: any, extra: any = {}) => require('./feed.ts').feed().send({ text, source: 'voice', ...(extra && extra.turn ? { turn: extra.turn } : {}) }),
+    turnLog: require('./turnLog.ts'),
     fetch: (...a: Parameters<typeof fetch>) => fetch(...a),
     remember: rememberAnswered,
     ...depOverrides,
@@ -813,6 +815,9 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
   const router = routerKind(o);
   const r: Json = { route: null, decisionMs: null, firstTokenMs: null, say: '', handoff: null, overridden: false, valid: true };
   let handoffP = null;
+  // This turn's row in the turn log, opened at the decision (never awaited here).
+  let turn: any = null;
+  let turnDone = false;
 
   const [context, history] = await Promise.all([d.snapshot().catch(() => ''), Promise.resolve().then(d.history).catch(() => [])]);
   const prompt = userPrompt({ text, context, history });
@@ -823,7 +828,9 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     r.decisionMs = since();
     r.overridden = g.overridden;
     r.valid = valid;
-    emit({ type: 'decision', ...g.decision, router, ms: r.decisionMs, ...extra, ...(g.overridden ? { overridden: true } : {}) });
+    const ev = { type: 'decision', ...g.decision, router, ms: r.decisionMs, ...extra, ...(g.overridden ? { overridden: true } : {}) };
+    emit(ev);
+    if (d.turnLog && !turn) turn = d.turnLog.voiceDecided(text, ev, { context, history });
     return g.decision;
   }
   function speak(t: any) {
@@ -837,7 +844,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     // The note about what was already said is only known at the end for
     // "both"; the hand-off cannot wait for it, so it carries the task only.
     handoffP = Promise.resolve()
-      .then(() => d.handoff(handoffText(text, decision, '')))
+      .then(() => d.handoff(handoffText(text, decision, ''), { turn }))
       .then((x) => {
         r.handoff = { id: x && x.id };
         emit({ type: 'handoff', id: x && x.id, ms: since() });
@@ -1043,6 +1050,8 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     if (r.route === 'answer' && r.say.trim()) d.remember(text, r.say.trim());
     const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model, router, ...(r.fellBack ? { fellBack: true } : {}) };
     emit(done);
+    turnDone = true;
+    d.turnLog?.voiceDone(turn, { ...r, model, ms: done.ms });
     if (decidesFirst(router) && !r.fellBack && !signal?.aborted) {
       // The next turn's conversation is this one: put it in the prompt cache,
       // once the first sentence is synthesised (the primes share the GPU with
@@ -1053,6 +1062,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     }
     return { ...r, ms: done.ms };
   } finally {
+    if (turn && !turnDone) d.turnLog?.voiceDone(turn, { ...r, ms: since(), aborted: true });
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   }

@@ -505,6 +505,27 @@ const ROUTES: Route[] = [
       return c.send(c.res, 200, await setStatus(Number(c.m?.[1]), String(body.status)));
     },
   },
+  // The turn log (src/chat/turnLog.ts): /turns, what was said to Jarvis and what it answered. Read-only.
+  { method: 'GET', path: '/turns', handle: file('turns.html', 'text/html; charset=utf-8') },
+  { method: 'GET', path: '/turns.client.js', handle: file('turns.client.js', JS) },
+  {
+    method: 'GET',
+    path: '/api/turns',
+    handle: async (c) => {
+      const q = c.url.searchParams;
+      const L = require('../chat/turnLog.ts');
+      const turns = await L.list({ limit: Number(q.get('limit')) || 50, before: q.get('before') || null, channel: q.get('channel') || null, route: q.get('route') || null, q: q.get('q') || null });
+      return c.send(c.res, 200, { enabled: L.enabled(), turns: turns.map((t: any) => ({ ...t, context: undefined })) });
+    },
+  },
+  {
+    method: 'GET',
+    path: /^\/api\/turns\/(\d+)$/,
+    handle: async (c) => {
+      const row = await require('../repo').turns.byId(Number(c.m?.[1]));
+      return row ? c.send(c.res, 200, require('../chat/turnLog.ts').view(row)) : c.send(c.res, 404, { error: 'no such turn' });
+    },
+  },
   // The "Proposed card changes" card (cardplan.client.js): card plans waiting for one yes, src/cardplans.ts.
   { method: 'GET', path: '/cardplan.js', handle: file('cardplan.client.js', JS) },
   { method: 'GET', path: '/api/cardplans', handle: async (c) => c.send(c.res, 200, { plans: await require('../cardplans.ts').list({ status: c.url.searchParams.get('status') || null }) }) },

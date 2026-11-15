@@ -587,6 +587,7 @@ pa who Sam                      identities, threads, open commitments
 
 pa done 42 [--dismiss|--reopen] close a commitment yourself
 pa card edit 42 --title "…" --due friday --note "…"   change a card in place (also --details, --project, --no-due, --reason); recorded in `pa ledger 42`
+pa turns [show 12] [--voice] [--grep "mail"] [--eval]   the turn log: what you said to Jarvis, how it was routed (p, signals), what it said and the chat's answer; also at the dashboard's /turns
 pa cardplan list|show 3|apply 3 [--skip 1,3]|discard 3   card changes proposed together (close, edit, create), approved once; also on the dashboard as "Proposed card changes"
 pa task add "Send the deck" --due friday --for Sam   a task because you asked for it
 pa policy [close [--apply]]     which sources create tasks; close cards the policy would not have made

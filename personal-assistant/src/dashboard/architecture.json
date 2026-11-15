@@ -175,7 +175,8 @@
           "a hand-off types your verbatim words into the PA chat; the model's task is only a labelled hint",
           "a hand-off's spoken acknowledgement is replaced by the stock one when it reads as an answer (spokenAck)"
         ],
-        "Billing": "free (local GPU); the azure/pa fallback and the decision router are metered and recorded in llm_spend (purpose fast-lane; the decision router's cost is unknown unless PA_MODEL_PRICES has decision/decision-1, about 580 input and 4 output tokens a turn)"
+        "Billing": "free (local GPU); the azure/pa fallback and the decision router are metered and recorded in llm_spend (purpose fast-lane; the decision router's cost is unknown unless PA_MODEL_PRICES has decision/decision-1, about 580 input and 4 output tokens a turn)",
+        "Turn log": "every thing said to Jarvis is one row in turn_log (src/chat/turnLog.ts, repo aggregate turns, sql/046 + sql-sqlite/018): a voice turn is opened at the decision with the words, the snapshot and last two turns the router saw, router, route, p, the decision model's signals (tool, effort, acts_outside) and decision ms, then gets what the fast lane said (fast_say, model, first-token and total ms); a hand-off carries the row to the SDK chat, which adds its final answer (reply), the tools it called, reply ms, turns and cost-equivalent. Typed messages and INBOX doorbells get their own rows (no route). Kept PA_TURN_LOG_DAYS (90) days; open turns with no answer after an hour are closed as errors; PA_TURN_LOG=off writes nothing. Read it at the dashboard's /turns (filters, search, 'What the router saw'; GET /api/turns, /api/turns/<id>) or with pa turns [show <id>] [--json]; pa turns --eval writes voice turns as router eval cases labelled from what happened, for review before they join src/eval/router-cases.json. Local only: the store is Jarvis's SQLite file; nothing is sent anywhere"
       },
       "env": [
         {
@@ -217,6 +218,14 @@
         {
           "name": "PA_FAST_CONTEXT_SECONDS",
           "default": "60"
+        },
+        {
+          "name": "PA_TURN_LOG",
+          "default": "on"
+        },
+        {
+          "name": "PA_TURN_LOG_DAYS",
+          "default": "90"
         }
       ],
       "code": [
@@ -226,7 +235,13 @@
         "personal-assistant/src/eval/router-cases.json",
         "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/src/llm.ts",
-        "personal-assistant/src/chat/decisionRouter.ts"
+        "personal-assistant/src/chat/decisionRouter.ts",
+        "personal-assistant/src/chat/turnLog.ts",
+        "personal-assistant/src/repo/turns.ts",
+        "personal-assistant/src/cli/turns.ts",
+        "personal-assistant/src/dashboard/turns.html",
+        "personal-assistant/src/dashboard/turns.client.js",
+        "personal-assistant/test/turnLog.test.js"
       ]
     },
     {
@@ -1302,7 +1317,8 @@
         "build_run",
         "build_msg",
         "card_plan",
-        "card_plan_item"
+        "card_plan_item",
+        "turn_log"
       ],
       "env": [
         {

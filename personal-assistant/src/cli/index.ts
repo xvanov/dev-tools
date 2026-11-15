@@ -134,6 +134,7 @@ const HELP = `pa — your context layer
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
+    pa turns [show <id>] [--eval]   the turn log: what was said to Jarvis, how it was routed, the answer (pa help turns)
     pa eval answerer                voice fast lane answerer: right day, every meeting, titles as titles
     pa e2e [--dry-run|--sweep]      the golden path end to end on the live stack, timed per hop (pa help e2e)
     pa audit verify|tail|check      the policy audit log: verify its hash chain, show the newest rows, or dry-run a decision (pa help audit)
@@ -1838,13 +1839,14 @@ Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
 Object.assign(commands, require('./page.ts').make(out, fail));
+Object.assign(commands, require('./turns.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
 // only literal requires, and Node never adds `.ts`).
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
-  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts', page: './page.ts', pages: './page.ts',
+  run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts', page: './page.ts', pages: './page.ts', turns: './turns.ts',
 };
 
 async function main(argv: string[]) {

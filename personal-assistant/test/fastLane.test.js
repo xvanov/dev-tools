@@ -793,6 +793,25 @@ function splitAll(pieces) {
     assert.strictEqual(t.events[0].route, 'handoff');
     assert.strictEqual(t.say, 'One moment.');
     assert.deepStrictEqual(b.sent, ['check my mail from Quorvin']);
+    // The turn log (src/chat/turnLog.ts): opened at the decision with what the router saw, its row
+    // carried on the hand-off to the PA chat, and finished with what the fast lane said.
+    {
+      const logged = [];
+      let carried = null;
+      const turnLog = {
+        voiceDecided: (text, ev, seen) => (logged.push(['decided', text, ev.route, ev.p.answer_here, ev.signals.tool, seen.context]), Promise.resolve(7)),
+        voiceDone: (ref, r) => (logged.push(['done', r.say, !!(r.handoff && !r.handoff.error), r.model]), ref.then((id) => logged.push(['ref', id]))),
+      };
+      b = base({ decide: dec(0.6, 0.39, 0.01), prepare: async () => true, stream: script(['nope']), turnLog, handoff: async (text, extra) => ((carried = extra.turn), { id: 'u-2' }) });
+      await turn('check my mail from Quorvin', b.deps, dopts);
+      await new Promise((r) => setImmediate(r));
+      assert.strictEqual(await carried, 7, 'the hand-off carries the row');
+      assert.deepStrictEqual(logged, [
+        ['decided', 'check my mail from Quorvin', 'handoff', 0.6, 'calendar', 'Now: Friday'],
+        ['done', 'One moment.', true, 'local/llama3.2:3b'],
+        ['ref', 7],
+      ]);
+    }
     // Decision model unreachable: the fallback model's one-call path.
     calls = [];
     b = base({ decide: async () => { throw new Error('decision router 401: no'); }, prepare: async () => null, stream: (x) => (calls.push(x), script(['{"route":"answer","reason":"hi"}\nHello.'])(x)) });

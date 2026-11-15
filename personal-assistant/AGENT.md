@@ -181,6 +181,15 @@ snapshot's format: run `pa eval answerer` and `pa eval router`. The eval sets
 (`src/eval/router-cases.json`, `src/eval/answerer-cases.json`) are public: people, companies and
 meeting titles in them are placeholders only.
 
+**The turn log is the record of what Jarvis heard and answered** (`src/chat/turnLog.ts`, table
+`turn_log`): `runTurn` opens a voice turn at its decision (words, snapshot, last two turns, route, p,
+signals) and finishes it when done speaking; `deps.handoff(text, { turn })` carries the row to the SDK
+chat, whose `send({ turn })`, final text blocks, `tool_use` names and `result` complete it. Typed
+messages and doorbells open their own rows. It never throws into a caller and never makes a turn wait
+on the store: keep it that way. It holds real words and snapshots, so `pa turns --eval` output is for
+review and must be anonymized before anything joins the public eval sets. The test runner sets
+`PA_TURN_LOG=off`; `test/turnLog.test.js` turns it on for its own store.
+
 **The voice page hears the room; nothing it hears leaves the browser until a request is made.** The
 wake word ("hey jarvis", openWakeWord) and Silero VAD run in the page on onnxruntime-web
 (`talk.voice.js`); only an utterance after the wake word (or with the wake word off, hands-free or

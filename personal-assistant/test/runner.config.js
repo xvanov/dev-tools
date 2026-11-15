@@ -28,6 +28,8 @@ module.exports = {
     PA_TOASTS: '0',
     PA_NTFY: 'off',
     PA_CHAT_NUDGE: '0',
+    // Nor write the turn log (src/chat/turnLog.ts): turnLog.test.js turns it on for its own store.
+    PA_TURN_LOG: 'off',
     // Named like the real one: stalls.test.js reads logs under a `personal-assistant` folder.
     PA_DATA_DIR: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-test-data-')), 'personal-assistant'),
   },
