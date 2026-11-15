@@ -20,11 +20,12 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-    JobObjectCpuRateControlInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE, JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PRIORITY_CLASS,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION_0,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE, JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PRIORITY_CLASS,
 };
 use windows_sys::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
 
@@ -89,9 +90,11 @@ fn build_agents(cap_pct: Option<u32>) -> io::Result<Job> {
     let job = Job(h);
     set_limits(h)?;
     if let Some(pct) = cap_pct {
-        let mut info = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
-        info.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
-        info.Anonymous.CpuRate = pct * 100; // 1/100 of a percent of ALL processors
+        let info = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
+            ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+            // 1/100 of a percent of ALL processors
+            Anonymous: JOBOBJECT_CPU_RATE_CONTROL_INFORMATION_0 { CpuRate: pct * 100 },
+        };
         let ok = unsafe {
             SetInformationJobObject(
                 h,
@@ -123,11 +126,14 @@ impl Job {
         }
         let job = Job(h); // closes the handle on any error below
         set_limits(job.0)?; // priority class here too: still BelowNormal if the agents job is missing
-        // Parent first, then the session job nests inside it. A failure here
-        // (an old Windows, access denied) only costs the cap, never the session.
+                            // Parent first, then the session job nests inside it. A failure here
+                            // (an old Windows, access denied) only costs the cap, never the session.
         if let Some(Some(parent)) = AGENTS.get() {
             if unsafe { AssignProcessToJobObject(parent.0, process as HANDLE) } == 0 {
-                eprintln!("[ptyd] session not put in the agents job ({}); it runs uncapped", io::Error::last_os_error());
+                eprintln!(
+                    "[ptyd] session not put in the agents job ({}); it runs uncapped",
+                    io::Error::last_os_error()
+                );
             }
         }
         if unsafe { AssignProcessToJobObject(job.0, process as HANDLE) } == 0 {
@@ -149,7 +155,7 @@ impl Job {
                 std::ptr::null_mut(),
             )
         };
-        (ok != 0).then(|| (unsafe { info.Anonymous.CpuRate }, info.ControlFlags))
+        (ok != 0).then_some((unsafe { info.Anonymous.CpuRate }, info.ControlFlags))
     }
 
     /// Live processes in the job (nested jobs included), or None if the query fails.
@@ -205,16 +211,26 @@ mod tests {
         // Not through init_agents (a process-wide OnceLock): build a local agents
         // job and repeat Job::assign's order (parent, then the nested session job).
         let parent = build_agents(Some(60)).expect("agents job");
-        let mut child = Command::new("cmd").args(["/c", "ping -n 20 127.0.0.1 >nul"]).spawn().unwrap();
+        let mut child = Command::new("cmd")
+            .args(["/c", "ping -n 20 127.0.0.1 >nul"])
+            .spawn()
+            .unwrap();
         let h = child.as_raw_handle() as HANDLE;
         assert_ne!(unsafe { AssignProcessToJobObject(parent.0, h) }, 0, "parent assign");
         let session = Job(unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) });
         set_limits(session.0).unwrap();
-        assert_ne!(unsafe { AssignProcessToJobObject(session.0, h) }, 0, "nested session assign");
+        assert_ne!(
+            unsafe { AssignProcessToJobObject(session.0, h) },
+            0,
+            "nested session assign"
+        );
         assert_eq!(unsafe { GetPriorityClass(h) }, BELOW_NORMAL_PRIORITY_CLASS);
         let (rate, flags) = parent.cpu_rate().expect("query");
         assert_eq!(rate, 6000);
-        assert_eq!(flags, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP);
+        assert_eq!(
+            flags,
+            JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP
+        );
         assert_eq!(parent.active(), Some(1)); // nested job's process counts in the parent
         assert!(session.terminate(Duration::from_secs(3)));
         assert_eq!(parent.active(), Some(0));
@@ -223,7 +239,10 @@ mod tests {
 
     #[test]
     fn session_job_alone_still_sets_below_normal() {
-        let mut child = Command::new("cmd").args(["/c", "ping -n 20 127.0.0.1 >nul"]).spawn().unwrap();
+        let mut child = Command::new("cmd")
+            .args(["/c", "ping -n 20 127.0.0.1 >nul"])
+            .spawn()
+            .unwrap();
         let h = child.as_raw_handle() as HANDLE;
         let session = Job(unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) });
         set_limits(session.0).unwrap();
