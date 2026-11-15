@@ -230,7 +230,8 @@ async function distillOne(item: any, cached: any) {
     : [];
 
   try {
-    const result = await callModel(item, { meLabel, candidates, ranked });
+    const earlier = item.thread_external_id ? await repo.sources.threadBefore(item.source, item.thread_external_id, item.occurred_at, 4).catch(() => []) : [];
+    const result = await callModel(item, { meLabel, candidates, ranked, earlier });
     // On GitHub, what you owe is decided by GitHub's own records of who you
     // are on the item (author, assignee, named reviewer, @mention), not left
     // to the model: a team's review queue or a PR's planned follow-up is not

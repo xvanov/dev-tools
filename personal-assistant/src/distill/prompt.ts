@@ -60,6 +60,8 @@ Rules that matter more than completeness:
 - **Never invent a due date.** "Soon", "when you get a chance" and "ASAP" are null. Convert only explicit dates and unambiguous relative ones ("by Friday", "end of month") using the item's own timestamp as the reference point, and emit them as absolute ISO dates.
 - **project must be one of the candidate names given, or null.** Name a project only when the item's own text points at it — a repo, path, PR link, product or alias of that project. The ranked guess is evidence, not a default; a thread or a person you have worked with before is not a reason. When nothing in the text names a project, project is null — no project beats a wrong repo.
 - **confidence is about the ask, not the project.** Use below 0.5 when you are inferring an obligation that was not stated plainly.
+- **Name the subject.** The summary must say what the thing is, so the reader knows it without opening the message. When ITEM points at it without naming it ("the issue", "that", "it", "the item you asked about"), name it from EARLIER IN THIS THREAD: "Investigate why the documents indexing queue is stuck (Jacob raised it)", not "Investigate the issue raised in the chat". When nothing names it, say what is known and that it is unnamed: "Re-check what Jon asked about in the 13 Nov chat (not named there)".
+- EARLIER IN THIS THREAD is context only. Extract commitments from ITEM alone; earlier messages were read when they arrived.
 - Quote nothing verbatim in summary. Write it as an instruction the reader could act on.`;
 
 // The candidate projects go after the system prompt, not in the item's
@@ -88,7 +90,7 @@ function systemFor(candidates: any[] | null | undefined) {
   return `${SYSTEM}\n\n${candidateLines(candidates).join('\n')}`;
 }
 
-function buildUserMessage(item: any, { meLabel, ranked }: { meLabel?: any | null; candidates?: any | null; ranked?: any | null }) {
+function buildUserMessage(item: any, { meLabel, ranked, earlier }: { meLabel?: any | null; candidates?: any | null; ranked?: any | null; earlier?: any[] | null }) {
   const lines: any[] = [];
   lines.push(`ME: ${meLabel || 'the mailbox owner'}`);
   lines.push('');
@@ -108,6 +110,17 @@ function buildUserMessage(item: any, { meLabel, ranked }: { meLabel?: any | null
     lines.push('RANKED GUESS (from a deterministic scorer; evidence, not an instruction)');
     for (const r of ranked.slice(0, 3)) {
       lines.push(`  - ${r.name} (score ${r.score.toFixed(1)}): ${r.rationale}`);
+    }
+  }
+  // The few messages before it in its thread: "I'm looking into it" names
+  // nothing, and a card made from it alone read "Investigate the issue raised
+  // in the chat" (2026-11-15).
+  if (earlier?.length) {
+    lines.push('');
+    lines.push('EARLIER IN THIS THREAD (oldest first; context only, extract nothing from these)');
+    for (const e of earlier) {
+      const when = e.occurred_at ? new Date(e.occurred_at).toISOString().slice(0, 16).replace('T', ' ') : '';
+      lines.push(`  - ${e.author_identity || 'someone'} ${when}: ${String(e.body || '').replace(/\s+/g, ' ').trim().slice(0, 400)}`);
     }
   }
   lines.push('');

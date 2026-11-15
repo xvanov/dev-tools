@@ -367,6 +367,11 @@ owner is not the user, or whose ref was not in the prompt. Every write is record
 `meeting_debrief.applied` with the columns it replaced, and undo restores them (unless someone
 changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
 distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
+**A card names its subject.** The distiller's message carries the four items before it in its
+thread (`sources.threadBefore`, "EARLIER IN THIS THREAD", context only), and its prompt says to name
+what "the issue" or "it" is from them: a card made from "I'm looking into it" alone read
+"Investigate the issue raised in the chat". The prompt version stays `distill-v1` (bumping it
+re-distills every item); the chat's How to talk also explains a vague title from its details.
 **One live debrief per episode:** a newer debrief supersedes the older ones (`supersedeOlder`,
 `meeting_debrief.superseded_by`, sql/044 and sql-sqlite/016): every list query filters
 `superseded_by is null`. Items the newer one restates (its `skipped` says "already on your list as

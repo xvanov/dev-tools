@@ -120,6 +120,24 @@ const REF = '2026-09-01T10:00:00.000Z';
   assert.match(msg, /RANKED GUESS/);
   assert.match(msg, /can you look at the import/);
   assert.doesNotMatch(msg, /CANDIDATE PROJECTS/, 'the candidates are in the system prompt (8.4.37)');
+  assert.doesNotMatch(msg, /EARLIER IN THIS THREAD/, 'no thread context given, none shown');
+}
+
+{
+  // The messages before it in its thread, so "I'm looking into it" can be named
+  // ("the stuck indexing queue"), shown oldest first ahead of the body.
+  const msg = buildUserMessage(
+    { source: 'graph_chat', occurred_at: REF, author_identity: 'me@example.com', body_text: "I'm looking into it", raw: {} },
+    {
+      meLabel: 'Me <me@example.com>',
+      earlier: [
+        { author_identity: 'sam@example.com', occurred_at: '2026-11-10T15:00:00Z', body: 'the documents indexing   queue\nis stuck again' },
+        { author_identity: 'sam@example.com', occurred_at: '2026-11-10T15:01:00Z', body: 'can someone look?' },
+      ],
+    }
+  );
+  assert.match(msg, /EARLIER IN THIS THREAD[^\n]*\n {2}- sam@example.com 2026-11-10 15:00: the documents indexing queue is stuck again\n {2}- sam@example.com 2026-11-10 15:01: can someone look\?\n\nBODY\nI'm looking into it$/);
+  assert.match(require('../src/distill/prompt.ts').SYSTEM, /Name the subject/);
 }
 
 {

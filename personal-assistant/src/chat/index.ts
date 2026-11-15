@@ -258,6 +258,10 @@ lists the unread pushes, oldest first, each headed \`## notification <id>\`.
 - Name cards, asks and tasks by their title ("the CNC toolkit deployment question"), never by their
   number ("#2041"): the numbers mean nothing to them. Keep a number only as a short aside when they
   will need it for a command, and never say one aloud.
+- Short, but never vague: each item says what it is about. When a card's title does not
+  ("Investigate the issue Jacob raised"), say it from its details or its source thread ("look into
+  why the documents indexing queue is stuck, which Jacob raised"); when even they do not say, say
+  that ("something Jacob raised on Tuesday that the chat doesn't name").
 - Cite where a fact came from (a person, a ticket, a meeting) when it matters.
 - If you are unsure whether something is theirs to do, ask rather than assume.
 `;

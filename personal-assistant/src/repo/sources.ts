@@ -369,6 +369,17 @@ function create(db: Db) {
       );
     },
 
+    /** Up to `limit` items of a thread in one source from before `before`, oldest first (body cut to 500 chars). */
+    async threadBefore(source: string, threadExternalId: number | string, before: Date | string, limit: number = 5) {
+      const rows = await db.rows(
+        `select id, author_identity, occurred_at, substr(body_text, 1, 500) as body from source_item
+          where source = $1 and thread_external_id = $2 and occurred_at < $3
+          order by occurred_at desc, id desc limit $4`,
+        [source, threadExternalId, before, limit]
+      );
+      return rows.reverse();
+    },
+
     // --- for src/ingest/store.js (chunk F): the ingest write path. Items and
     // their cursor advance in one transaction: call these inside repo.withTx.
 

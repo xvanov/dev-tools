@@ -315,6 +315,22 @@ module.exports = {
     assert.deepStrictEqual([got[0].body.length, got[0].author_identity], [600, 'a@x.test']);
   },
 
+  "threadBefore: a thread's items in one source before a time, oldest first, body cut to 500": async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const at = (m) => new Date(Date.now() - m * 60_000);
+    const ids = [];
+    for (let i = 0; i < 7; i++) ids.push(await seed.item({ source: 'graph_chat', thread: thr, occurredAt: at(30 - i), body: `msg ${i} ${'y'.repeat(600)}`, author: 'b@x.test' }));
+    const cut = at(10);
+    const item = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: cut, body: 'looking into it' });
+    await seed.item({ source: 'graph_chat', thread: thr, occurredAt: at(5), body: 'after it' });
+    await seed.item({ source: 'graph_mail', thread: thr, occurredAt: at(29), body: 'same thread id, other source' });
+    const got = await repos.sources.threadBefore('graph_chat', thr, cut, 5);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), ids.slice(2), 'the five before it, oldest first');
+    assert.ok(!got.some((r) => Number(r.id) === item));
+    assert.deepStrictEqual([got[0].body.length, got[0].author_identity], [500, 'b@x.test']);
+    assert.deepStrictEqual(await repos.sources.threadBefore('graph_chat', uniq('none'), at(0)), []);
+  },
+
   // --- for chunk F (ingest, repos, routines)
   'upsertItem: new, then unchanged (null), then changed': async ({ repos, assert, uniq }) => {
     const it = { source: 'graph_mail', externalId: uniq('ext'), threadExternalId: null, occurredAt: new Date(), authorIdentity: 'a@x.test', subject: 's', bodyText: 'one', raw: {}, hash: 'h1' };
