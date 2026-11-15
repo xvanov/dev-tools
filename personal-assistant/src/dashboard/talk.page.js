@@ -1122,6 +1122,7 @@
   // Which blocks of a turn are spoken (settings: "Speak while working").
   const turnVoice = C.createTurnVoice({ mode: prefs.voiceMode });
   const held = new Map(); // block id -> its sentences, until spoken or dropped
+  let quietTurn = false; // the chat's current turn was started by the doorbell, not by you
   function sayHeld(id) {
     if (id == null || !held.has(id)) return;
     speaker.say(held.get(id));
@@ -1232,6 +1233,11 @@
     if (ev.type === 'user') {
       turnVoice.userTurn(Date.now());
       held.clear();
+      // A turn Jarvis started itself (the INBOX doorbell, src/notify/chat.ts nudgeText: "PA inbox:
+      // notification N is waiting") is never spoken: its reply is captioned.
+      // Jarvis talks to answer you, not to read out a digest at 14:00 (2026-11-15).
+      quietTurn = /^PA inbox: notification \d+ is waiting/i.test(ev.text || '');
+      if (quietTurn) return;
       if (ev.source !== 'voice') {
         heard(ev.text);
         latency.begin({ posted: Date.now() }); // typed elsewhere: the turn starts here
@@ -1247,6 +1253,10 @@
         s = C.createUtteranceStream();
         streams.set(ev.id, s);
         if (streams.size > 50) streams.delete(streams.keys().next().value);
+      }
+      if (quietTurn) {
+        if (!ev.partial) caption(s.finish(ev.text).join(' '));
+        return;
       }
       if (ev.partial) return speaker.say(s.push(ev.text));
       const sentences = s.finish(ev.text);

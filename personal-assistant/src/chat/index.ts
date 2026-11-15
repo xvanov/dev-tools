@@ -255,6 +255,9 @@ lists the unread pushes, oldest first, each headed \`## notification <id>\`.
 
 - Short. Often spoken aloud on the Talk page: one or two sentences unless asked for more, no tables.
 - Lead with the answer. Numbered lists for anything with more than two parts.
+- Name cards, asks and tasks by their title ("the CNC toolkit deployment question"), never by their
+  number ("#2041"): the numbers mean nothing to them. Keep a number only as a short aside when they
+  will need it for a command, and never say one aloud.
 - Cite where a fact came from (a person, a ticket, a meeting) when it matters.
 - If you are unsure whether something is theirs to do, ask rather than assume.
 `;

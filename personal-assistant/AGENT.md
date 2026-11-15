@@ -204,7 +204,9 @@ replies until Ask is back. A tab in the background counts as not in front too (d
 phone): Ask open in its own tab stops the mic when you switch to another tab and picks it up when
 you come back. `askInFront` reads the shell's DOM first (its frame's `.on`, the page's `jx-away`) and
 `followFront` re-checks every 2 s, so a shell too old to announce views (a long-lived Run tab) is
-still followed. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
+still followed. A turn the INBOX doorbell started (`nudgeText`) is captioned, never spoken, wherever
+you are: Jarvis speaks to answer you, not to read a digest out (`quietTurn`; `test/talk.test.js` keeps
+its pattern in step with `src/notify/chat.ts`). `src/dashboard/voiceCapture.js` and `micWorklet.js` are
 copies of termhub's (`test/voiceCaptureCopy.test.js`); change termhub's and copy them over.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot

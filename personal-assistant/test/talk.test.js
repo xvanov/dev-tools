@@ -775,6 +775,16 @@ const C = require('../src/dashboard/talk.core');
   voice.close();
   // The dashboard handler lazily opens the pg pool; its 30 s idle timers would hold the process open.
   await require('../src/db').close();
+  // The doorbell's turn is captioned, never spoken (talk.page.js quietTurn): its pattern must
+  // match what src/notify/chat.ts actually types into the chat.
+  {
+    const page = fs.readFileSync(require('path').join(__dirname, '..', 'src', 'dashboard', 'talk.page.js'), 'utf8');
+    const m = /quietTurn = \/(.+?)\/i\.test/.exec(page);
+    assert.ok(m, 'talk.page.js has the doorbell pattern');
+    const re = new RegExp(m[1], 'i');
+    assert.ok(re.test(require('../src/notify/chat.ts').nudgeText(1683)), 'the doorbell turn is recognised');
+    assert.ok(!re.test("what's on tomorrow?"), 'your own words are not');
+  }
   console.log('talk ok');
 })().catch((err) => {
   console.error(err);
