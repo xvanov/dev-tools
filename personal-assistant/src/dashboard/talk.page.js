@@ -270,6 +270,8 @@
     window.dispatchEvent(new CustomEvent('jarvis:view'));
   });
   function askInFront() {
+    // A tab in the background is not in front, whatever the shell inside it shows.
+    if (document.hidden) return false;
     if (frontFromShell !== null) return frontFromShell;
     try {
       const nav = (window.top && window.top.JarvisNav) || window.JarvisNav;
@@ -1065,8 +1067,27 @@
   // A phone that goes to the background loses the mic (iOS ends the track;
   // Android may keep it, but listening from a pocket is not wanted). Coming
   // back asks for one tap: the audio context needs a gesture again on iOS.
+  //
+  // On a desktop the same rule as the shell's views (Ask only): Ask in its own
+  // tab, with Run or anything else in front, kept the mic open and the browser's
+  // mic indicator on (2026-11-15). A hidden tab stops listening and goes quiet;
+  // coming back to it picks the mic up again (no tap needed: the permission
+  // and the audio context survive on a desktop), unless the shell has another
+  // view in front.
   document.addEventListener('visibilitychange', () => {
-    if (!TOUCH) return;
+    if (!TOUCH) {
+      if (document.hidden) {
+        speaker.cancel();
+        if (mic.on) {
+          stopMic();
+          mic.away = true;
+        }
+      } else if (mic.away && askInFront()) {
+        mic.away = false;
+        startMic();
+      }
+      return;
+    }
     if (document.hidden) {
       if (mic.on) {
         stopMic();

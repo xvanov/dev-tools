@@ -200,7 +200,9 @@ proxy (`/api/talk/tts`, `/api/talk/endpoint`, `/api/talk/warm`). `/talk/models/`
 of file names (`MODEL_FILES`), never a path. The page listens and speaks only while Ask is the view in
 front: in the one-tab shell it stays loaded behind Plan, Build, Run, Meter and Map, and `nav.js`'s
 `jarvis:view` (an event here, a `postMessage` to frames) makes it stop the mic and only caption
-replies until Ask is back. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
+replies until Ask is back. A tab in the background counts as not in front too (desktop as well as
+phone): Ask open in its own tab stops the mic when you switch to another tab and picks it up when
+you come back. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
 copies of termhub's (`test/voiceCaptureCopy.test.js`); change termhub's and copy them over.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
