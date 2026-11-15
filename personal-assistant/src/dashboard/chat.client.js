@@ -50,6 +50,31 @@
   function say(text) {
     const n = $('chat-activity');
     if (n) n.textContent = text;
+    const t = $('chat-thinking');
+    if (t && text) t.querySelector('.chat-thinking-step').textContent = text;
+  }
+
+  // "Jarvis is thinking…" at the bottom of the conversation, from the moment a
+  // message is sent until the chat goes idle: the small "working…" in the head
+  // was easy to miss, and a sent message then looked ignored (2026-11-15).
+  // The latest step ("searching files…") shows in it as it happens.
+  function thinking(on) {
+    const log = $('chat-log');
+    let t = $('chat-thinking');
+    if (!on) {
+      if (t) t.remove();
+      return;
+    }
+    if (!t) {
+      t = el('div', { class: 'chat-msg assistant chat-thinking', id: 'chat-thinking', role: 'status' },
+        el('span', { class: 'chat-meta' }, 'Jarvis'),
+        el('div', { class: 'chat-text' }, el('span', { class: 'chat-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')), ' thinking…'),
+        el('div', { class: 'chat-thinking-step' }, ''));
+    }
+    if (!log) return;
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    log.append(t); // always the last line
+    if (nearBottom) log.scrollTop = log.scrollHeight;
   }
 
   function chatTime(iso) {
@@ -84,6 +109,7 @@
     const body = el('div', { class: 'chat-text' }, String(e.text || ''));
     log.append(el('div', { class: `chat-msg ${e.type}` }, el('span', { class: 'chat-meta' }, meta), body));
     if (chat.lines && e.type === 'assistant') chat.lines.set(e.id, { node: body, partial: Boolean(e.partial) });
+    if ($('chat-thinking')) thinking(true); // stays the last line while the chat works
     if (nearBottom || e.type === 'user') log.scrollTop = log.scrollHeight;
   }
 
@@ -95,6 +121,7 @@
     state.textContent = STATE[text] || text;
     state.className = `chat-state ${text}`;
     if (text !== 'thinking') say('');
+    thinking(text === 'thinking');
     if (text !== 'offline' && !chat.url) session();
     if (text === 'offline') link(null);
   }
@@ -179,6 +206,7 @@
       const r = await post('api/chat', { text, source: 'typed' });
       pending.remove();
       add({ id: r.id, type: 'user', text, at: new Date().toISOString(), source: 'typed' });
+      thinking(true); // at once, before the stream says so
     } catch (err) {
       pending.remove();
       input.value = text;
