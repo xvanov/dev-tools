@@ -79,6 +79,17 @@ const DIRTY = `
              and lower(coalesce(r.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}
              and (r.source in ('graph_chat', 'graph_mail')
                   or (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))))
+         -- What you wrote to them elsewhere: an answer you owed them, sent in
+         -- a chat or mail thread they are in. A card made with pa task add,
+         -- from a meeting or in another thread has no thread of theirs, so your
+         -- reply ("answers to your six questions", in their 1:1 chat) was never
+         -- judged and the card stayed open (2026-11-15).
+         or (o.direction = 'owed_by_me' and o.counterparty_person_id is not null
+             and lower(coalesce(r.author_identity, '')) in (select value from json_each($1))
+             and r.source in ('graph_chat', 'graph_mail') and r.thread_external_id is not null
+             and exists (select 1 from source_item t
+                          where t.source = r.source and t.thread_external_id = r.thread_external_id
+                            and lower(coalesce(t.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}))
          or (lower(coalesce(r.author_identity, '')) in (select value from json_each($1)) and (
                (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))
                or (o.repo_path is not null and r.source = 'claude_session'
@@ -128,6 +139,13 @@ const FRESH = `
      and (source <> 'claude_session' or fetched_at < $2)
      and ${atLeastChars('body_text', 8)}`;
 
+// Who wrote in these chat and mail threads (the owed-by-me rule in DIRTY).
+const THREAD_AUTHORS = `
+  select distinct source, thread_external_id, lower(coalesce(author_identity, '')) as author
+    from source_item
+   where source in ('graph_chat', 'graph_mail')
+     and thread_external_id in (select value from json_each($1))`;
+
 const FORMS = `
   select person_id,
          case kind when 'smtp' then lower(value)
@@ -162,7 +180,7 @@ function pushMap(map: Map<string, Row[]>, key: string, item: Row) {
  * (src/repo/ledger.js); the scan is one read of the fresh items, not one
  * window per commitment.
  */
-function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommitment }: { mine: Set<string>; forms: Map<string, Set<string>>; perCommitment: number }) {
+function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommitment, threadAuthors = new Map() }: { mine: Set<string>; forms: Map<string, Set<string>>; perCommitment: number; threadAuthors?: Map<string, Set<string>> }) {
   const byThread = new Map<string, Row[]>();
   const chatByAuthor = new Map<string, Row[]>();
   const githubByAuthor = new Map<string, Row[]>();
@@ -180,18 +198,22 @@ function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommit
   for (const c of commitments) {
     const cand = new Map<number, Row>();
     const add = (item: Row | undefined) => {
-      if (!item || !related(c, item, mine, forms)) return;
+      if (!item || !related(c, item, mine, forms, threadAuthors)) return;
       cand.set(Number(item.id), item);
     };
     if (c.thread_external_id) for (const item of byThread.get(`${c.source}\0${c.thread_external_id}`) || []) add(item);
     // Owed to me: what they wrote in chat, mail, or this ask's repo. My own
-    // chat only counts in the thread (above); elsewhere only my GitHub and
-    // sessions do, matching DIRTY.
+    // chat counts in the ask's thread (above) and, for an ask I owe, in any
+    // thread they are in (below); my GitHub and sessions as DIRTY says.
     if (c.direction === 'owed_to_me' && c.counterparty_person_id != null) {
       for (const a of forms.get(String(c.counterparty_person_id)) || []) {
         for (const item of chatByAuthor.get(a) || []) add(item);
         for (const item of githubByAuthor.get(a) || []) add(item);
       }
+    }
+    // Owed by me: what I wrote in a chat or mail thread they are in (DIRTY).
+    if (c.direction === 'owed_by_me' && c.counterparty_person_id != null) {
+      for (const a of mine) for (const item of chatByAuthor.get(a) || []) add(item);
     }
     for (const a of mine) for (const item of githubByAuthor.get(a) || []) add(item);
     for (const item of sessions) if (mine.has(String(item.author_identity || '').toLowerCase())) add(item);
@@ -232,7 +254,7 @@ function matchChecked(commitments: Row[], items: Row[], { mine, forms, perCommit
   return out;
 }
 
-function related(c: Row, item: Row, mine: Set<string>, forms: Map<string, Set<string>>) {
+function related(c: Row, item: Row, mine: Set<string>, forms: Map<string, Set<string>>, threadAuthors: Map<string, Set<string>> = new Map()) {
   if (!(String(item.fetched_at) > String(c.ledger_checked_at))) return false;
   const self = Number(item.id) === Number(c.item_id);
   if (!(String(item.occurred_at) > String(c.asked_at) || self)) return false;
@@ -250,6 +272,11 @@ function related(c: Row, item: Row, mine: Set<string>, forms: Map<string, Set<st
   }
   if (mine.has(author)) {
     if (github) return true;
+    if (c.direction === 'owed_by_me' && c.counterparty_person_id != null && (item.source === 'graph_chat' || item.source === 'graph_mail') && item.thread_external_id) {
+      const set = forms.get(String(c.counterparty_person_id));
+      const there = threadAuthors.get(`${item.source} ${item.thread_external_id}`);
+      if (set && there) for (const a of set) if (there.has(a)) return true;
+    }
     if (c.repo_path && item.source === 'claude_session') {
       const cwd = String(item.cwd || '').toLowerCase();
       const repo = String(c.repo_path).toLowerCase();
@@ -364,7 +391,7 @@ function create(db: Db) {
         );
         if (hit) {
           const items = await db.rows(FRESH, [' ' + oldest, settledBefore]);
-          const people = [...new Set(checked.filter((c: Row) => c.direction === 'owed_to_me' && c.counterparty_person_id != null).map((c: Row) => Number(c.counterparty_person_id)))];
+          const people = [...new Set(checked.filter((c: Row) => c.counterparty_person_id != null).map((c: Row) => Number(c.counterparty_person_id)))];
           const forms = new Map<string, Set<string>>();
           if (people.length) {
             for (const r of await db.rows(FORMS, [people])) {
@@ -376,7 +403,19 @@ function create(db: Db) {
             }
           }
           const mine = new Set((myForms || []).map((s) => String(s)));
-          parts.push(...matchChecked(checked, items, { mine, forms, perCommitment: per }));
+          // Who wrote in the threads of my fresh chat and mail: an owed-by-me
+          // ask counts my message there when its counterparty is in the thread.
+          const threadAuthors = new Map<string, Set<string>>();
+          const myThreads = [...new Set(items.filter((i: Row) => (i.source === 'graph_chat' || i.source === 'graph_mail') && i.thread_external_id && mine.has(String(i.author_identity || '').toLowerCase())).map((i: Row) => String(i.thread_external_id)))];
+          if (myThreads.length && checked.some((c: Row) => c.direction === 'owed_by_me' && c.counterparty_person_id != null)) {
+            for (const r of await db.rows(THREAD_AUTHORS, [myThreads])) {
+              const k = `${r.source} ${r.thread_external_id}`;
+              let set = threadAuthors.get(k);
+              if (!set) threadAuthors.set(k, set = new Set());
+              set.add(String(r.author));
+            }
+          }
+          parts.push(...matchChecked(checked, items, { mine, forms, perCommitment: per, threadAuthors }));
         }
       }
       parts.sort((a, b) => {

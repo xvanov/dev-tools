@@ -449,7 +449,8 @@ fresh Teams message; `PA_RECONCILE=0` turns it off, `PA_RECONCILE_AUTO=0` makes 
 proposal). It is level-triggered: each open commitment, in either direction, is judged against
 everything *related* that arrived since it was last judged — the same thread first, what the other
 person wrote in chat or mail or in the ask's own repo (so their answer to an owed-to-me ask closes
-it), and your own PRs, notifications and
+it), what you wrote to them in any chat or mail thread they are in (so the answers you sent in their
+1:1 close an ask you made with `pa task add` or that came from a meeting), and your own PRs, notifications and
 Claude sessions in the commitment's repo (a session once it has been quiet for 10 minutes, or a
 live one would re-judge its whole repo every minute). Fresh evidence is judged first, then the asks
 that have waited longest, so a backlog never starves. Commitments that share new items are judged in one call;

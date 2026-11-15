@@ -70,6 +70,17 @@ const DIRTY = `
                and lower(coalesce(r.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}
                and (r.source in ('graph_chat', 'graph_mail')
                     or (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))))
+           -- What you wrote to them elsewhere: an answer you owed them, sent in
+           -- a chat or mail thread they are in. A card made with pa task add,
+           -- from a meeting or in another thread has no thread of theirs, so your
+           -- reply ("answers to your six questions", in their 1:1 chat) was never
+           -- judged and the card stayed open (2026-11-15).
+           or (o.direction = 'owed_by_me' and o.counterparty_person_id is not null
+               and lower(coalesce(r.author_identity, '')) = any($1::text[])
+               and r.source in ('graph_chat', 'graph_mail') and r.thread_external_id is not null
+               and exists (select 1 from source_item t
+                            where t.source = r.source and t.thread_external_id = r.thread_external_id
+                              and lower(coalesce(t.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}))
            or (lower(coalesce(r.author_identity, '')) = any($1::text[]) and (
                  (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))
                  or (o.repo_path is not null and r.source = 'claude_session'

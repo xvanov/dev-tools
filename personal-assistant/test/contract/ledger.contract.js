@@ -89,6 +89,32 @@ module.exports = {
     assert.deepStrictEqual(await items(10), [ask, b, a]);
   },
 
+  'dirty: an ask I owe counts my reply in another thread they are in, not one they are not in': async ({ repos, seed, db, assert }) => {
+    const tag = `${process.pid}-${Date.now()}`;
+    const drew = await seed.personWith({ name: 'Owed Example' });
+    await seed.identity(drew, 'smtp', `owed-${tag}@example.test`);
+    // The ask came from somewhere with no thread of theirs (pa task add, a meeting).
+    const ask = await seed.sourceItem({ source: 'pa_request', body: 'answer their six questions', occurredAt: new Date(Date.now() - 3 * 3600_000) });
+    const c = await seed.commitment({ sourceItemId: ask, summary: 'answer the six questions' });
+    await seed.updateCommitment(c, { counterparty_person_id: drew });
+    const theirs = `thr-their-chat-${tag}`;
+    await seed.sourceItem({ source: 'graph_chat', thread: theirs, author: `owed-${tag}@example.test`, body: 'here are my six questions', occurredAt: new Date(Date.now() - 2 * 3600_000) });
+    const reply = await seed.sourceItem({ source: 'graph_chat', thread: theirs, author: 'me', body: 'answers to your six questions: 1. yes', occurredAt: new Date(Date.now() - 3600_000) });
+    const notThere = await seed.sourceItem({ source: 'graph_chat', thread: `thr-someone-else-${tag}`, author: 'me', body: 'lunch at noon anyone?', occurredAt: new Date(Date.now() - 3000_000) });
+    const ids = async () => ((await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] }))[0]?.item_ids || []).map(Number);
+    let got = await ids();
+    assert.ok(got.includes(reply), 'never checked: my reply in their chat is evidence');
+    assert.ok(!got.includes(notThere), 'my message in a chat they are not in is not');
+    // Checked: only what came after, by the same rule (SQLite matches these in process).
+    await repos.ledger.markChecked(c, got);
+    await db.query('update commitment set ledger_checked_at = $2 where id = $1', [c, new Date(Date.now() - 60_000)]);
+    const later = await seed.sourceItem({ source: 'graph_chat', thread: theirs, author: 'me', body: 'and the challenges to your plan', occurredAt: new Date(Date.now() - 1000) });
+    const elsewhere = await seed.sourceItem({ source: 'graph_chat', thread: `thr-someone-else-${tag}`, author: 'me', body: 'another unrelated note', occurredAt: new Date(Date.now() - 500) });
+    got = await ids();
+    assert.ok(got.includes(later), 'checked: a later reply in their chat');
+    assert.ok(!got.includes(elsewhere));
+  },
+
   'markChecked: never moves back, and ignores items it cannot find': async ({ repos, seed, db, assert }) => {
     const c = await seed.commitment();
     const late = await seed.sourceItem();
