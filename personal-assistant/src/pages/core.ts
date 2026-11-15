@@ -380,7 +380,7 @@ function stripComments(src: string): string {
   let prev = ''; // the last significant punctuation or word, for the regex test
   let i = 0;
   while (i < n) {
-    const c = s[i];
+    const c = s[i]!;
     const d = s[i + 1];
     if (c === '/' && d === '*') {
       const end = s.indexOf('*/', i + 2);
@@ -412,7 +412,7 @@ function stripComments(src: string): string {
         j++;
       }
       j++;
-      while (j < n && /[a-z]/i.test(s[j])) j++; // its flags
+      while (j < n && /[a-z]/i.test(s[j]!)) j++; // its flags
       out += s.slice(i, j);
       i = j;
       prev = ')'; // a regex ends an expression
@@ -420,7 +420,7 @@ function stripComments(src: string): string {
     }
     if (WORD_CHAR.test(c)) {
       let j = i;
-      while (j < n && WORD_CHAR.test(s[j])) j++;
+      while (j < n && WORD_CHAR.test(s[j]!)) j++;
       prev = s.slice(i, j);
       out += prev;
       i = j;
