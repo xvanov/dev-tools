@@ -14,6 +14,12 @@ process.env.PA_DB = 'sqlite';
 process.env.PA_SQLITE_PATH = path.join(dir, 'pa_test_build.sqlite');
 process.env.PA_SQLITE_KEY = 'build-test-key';
 process.env.PA_WORKTREES_ROOT = dir;
+// The vanished run raises a real "Build agent #2 failed" notice: never as a toast, a doorbell on a
+// live PA chat or a line in the live INBOX.md, even when this file is run without the runner.
+process.env.PA_DATA_DIR = dir;
+process.env.PA_TOASTS = '0';
+process.env.PA_NTFY = 'off';
+process.env.PA_CHAT_NUDGE = '0';
 
 const B = require('../src/build/index.ts');
 const termhub = require('../src/dispatch/termhub.ts');
