@@ -508,6 +508,9 @@ html, body {
 
 .hidden { display: none; }
 
+/* ☰ in the key bar: phone only (see index.html). */
+#keybar #menu-key { display: none; }
+
 /* ---- scrim (mobile drawer backdrop) ---- */
 #scrim { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 18; }
 
@@ -521,6 +524,14 @@ html, body {
   body.drawer-open #sidebar { transform: translateX(0); }
   body.drawer-open #scrim { display: block; }
   #sidebar-close { display: block; margin-left: auto; }
+  /* Fixed things follow the visible part of the page (--vvtop, see
+     syncViewportHeight), or iOS's keyboard pan carries them off the top. */
+  #sidebar {
+    top: var(--vvtop, 0px); bottom: auto; height: var(--vvh, 100dvh);
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .jnav-toggle { top: calc(6px + var(--vvtop, 0px) + env(safe-area-inset-top, 0px)); }
+  #keybar #menu-key { display: block; flex: 0 0 auto; min-width: 40px; padding: 6px 8px; font-size: 16px; }
 }
 
 /* On desktop the key bar is handy but optional; keep it compact. */

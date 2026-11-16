@@ -3821,10 +3821,19 @@ function navSettings(open) {
   const s = window.JarvisNav && window.JarvisNav.settings;
   if (s) s.set(open);
 }
-function openDrawer() { document.body.classList.add('drawer-open'); navSettings(true); }
+function openDrawer() { document.body.classList.add('drawer-open'); navSettings(true); dropKeyboard(); }
 function closeDrawer() { document.body.classList.remove('drawer-open'); navSettings(false); }
+// The drawer is for picking, not typing: let the terminal's keyboard go, so the
+// whole list is on screen instead of half of it under the keys.
+function dropKeyboard() {
+  const a = document.activeElement;
+  if (isMobile() && a && a !== document.body && !$('#sidebar').contains(a)) { try { a.blur(); } catch {} }
+}
 window.addEventListener('jarvis:settings', (e) => {
-  if (isMobile()) document.body.classList.toggle('drawer-open', !!e.detail.open);
+  if (isMobile()) {
+    document.body.classList.toggle('drawer-open', !!e.detail.open);
+    if (e.detail.open) dropKeyboard();
+  }
   // On a desktop the terminal changes width as the panel slides; fit it after.
   setTimeout(refitActive, 220);
 });
@@ -3894,10 +3903,19 @@ function updateMouseHint() {
 // On iOS the on-screen keyboard shrinks the visual viewport but not the layout
 // viewport, which pushes the terminal and key bar under the keyboard. Pin the
 // app height to the visual viewport so everything stays on-screen and sized right.
+// iOS also *pans* the page to bring the focused input into view (offsetTop),
+// which carries everything fixed to the layout viewport — the » toggle, the
+// drawer — off the top of the screen; --vvtop moves those back. And it often
+// leaves the page panned after the keyboard is gone, so with no keyboard up the
+// scroll is put back to 0.
 function syncViewportHeight() {
   const vv = window.visualViewport;
   const h = vv ? vv.height : window.innerHeight;
-  document.documentElement.style.setProperty('--vvh', h + 'px');
+  const root = document.documentElement.style;
+  root.setProperty('--vvh', h + 'px');
+  root.setProperty('--vvtop', Math.max(0, vv ? vv.offsetTop : 0) + 'px');
+  const keyboardUp = vv && window.innerHeight - vv.height > 80;
+  if (!keyboardUp && (window.scrollY || document.documentElement.scrollTop)) window.scrollTo(0, 0);
   refitActive();
 }
 
@@ -3906,7 +3924,7 @@ function wireEvents() {
   cwdCombo = makeCombobox($('#dlg-cwd'), $('#dlg-cwd-list'), { getItems: dirItems, keepOpenOnPick: true });
   cmdCombo = makeCombobox($('#dlg-cmd'), $('#dlg-cmd-list'), { getItems: commandItems, keepOpenOnPick: false });
   // No ✕ of its own: the shared » toggle (nav.js) opens and closes the panel on
-  // every page, Run included.
+  // every page, Run included (plus ☰ in the key bar on a phone).
   $('#scrim').onclick = closeDrawer;
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;
@@ -3932,6 +3950,7 @@ function wireEvents() {
     updateMouseHint();
   };
 
+  $('#menu-key').onclick = () => { if (document.body.classList.contains('drawer-open')) closeDrawer(); else openDrawer(); };
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) focusTerminal(t); };
   $('#scroll-bottom').onclick = jumpToBottom;
   $('#fit-here').onclick = () => { const t = state.open.get(state.activeId); if (t) { claim(t); focusTerminal(t); } };

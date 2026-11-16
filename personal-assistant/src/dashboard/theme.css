@@ -182,6 +182,15 @@ button, .j-btn, [role="button"] { touch-action: manipulation; -webkit-tap-highli
 .jnav-toggle svg { transition: transform .15s var(--ease); }
 .jnav-toggle[aria-expanded="true"] { background: var(--surface-2); color: var(--ink); }
 .jnav-toggle[aria-expanded="true"] svg { transform: scaleX(-1); }
+/* On a phone it is the only way into the navigation: a thumb-sized target, fully
+   drawn (there is no hover to bring it up), clear of the notch in landscape. */
+@media (max-width: 760px) {
+  .jnav-toggle {
+    top: calc(6px + env(safe-area-inset-top, 0px)); left: calc(6px + env(safe-area-inset-left, 0px));
+    width: 36px; height: 36px; opacity: 1;
+  }
+  .jnav-toggle svg { width: 18px; height: 18px; }
+}
 
 .jpanel-nav { display: flex; flex-direction: column; gap: 6px; }
 .jpanel-top { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-height: 28px; }

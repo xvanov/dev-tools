@@ -135,6 +135,10 @@
                    hidden textarea.
              🎤 📎  the only way to talk, and the only way to attach. -->
       <div id="keybar">
+        <!-- Phone only: the session list, from where the thumb already is. The
+             » corner toggle is fixed to the layout viewport, which iOS pans away
+             while the keyboard is up; the key bar is pinned to what is visible. -->
+        <button id="menu-key" class="key" title="Sessions and navigation" aria-controls="sidebar">&#9776;</button>
         <div id="keybar-keys">
           <button data-key="esc" class="key">Esc</button>
           <button data-key="ctrl" class="key" id="ctrl-key">Ctrl</button>

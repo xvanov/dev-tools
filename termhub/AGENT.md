@@ -1582,7 +1582,13 @@ and the same layer switcher.
   the sidebar (`--sidebar-w` = theme.css `--jside-w`) and hides the key bar while it is closed;
   `app.js` only refits the terminal. On a phone the same toggle opens the drawer:
   `openDrawer()`/`closeDrawer()` and the `jarvis:settings` listener keep `body.drawer-open` and
-  nav.js's state in step, whichever side moved first (toggle, swipe, scrim, a picked session).
+  nav.js's state in step, whichever side moved first (toggle, ☰, swipe, scrim, a picked session).
+  **On a phone the drawer has a second door, ☰ at the left of the key bar** (`#menu-key`, phone
+  only): the key bar is pinned to the visual viewport, while the » toggle and the drawer are
+  `position: fixed` to the layout viewport, which iOS pans away while the keyboard is up ("I can't
+  open the sidebar on my iPhone"). `syncViewportHeight()` also sets `--vvtop` (the pan) so the toggle
+  and drawer follow what is visible, puts a pan iOS leaves behind after the keyboard closes back to
+  0, and opening the drawer blurs the terminal so the keyboard drops.
   **Alt+1..6** switches from anywhere; the listener is capture-phase on `window` (in a frame it
   forwards to the shell), so it fires before xterm's textarea and the terminal never sees those
   keys. Ask, Plan, Build and Map are the PA's (`/pa/talk`, `/pa/`, `/pa/factory`, `/pa/architecture`):
