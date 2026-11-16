@@ -210,7 +210,10 @@
     browser: {
       label: 'Browser (speechSynthesis)',
       available: () => 'speechSynthesis' in window,
+      // A browser without it (some WebViews) gets an empty list, not a page that
+      // dies while filling the voice menu.
       voices() {
+        if (!('speechSynthesis' in window)) return [];
         return speechSynthesis.getVoices().map((v) => ({ id: v.voiceURI, label: `${v.name} (${v.lang})`, v }));
       },
       // Natural/neural voices first (Edge's "… Online (Natural)", Chrome's
