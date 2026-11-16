@@ -233,6 +233,12 @@ published" on a single-port machine: `restart-front.ps1` therefore treats a fron
 listening on `127.0.0.1:<publishPort>` as single-port whatever Serve says, and re-asserts Serve.
 Without that, a restart after a re-login stopped the front, failed to bind the tailnet IP and left
 no front running (2026-11-13).
+The watchdog's `Resolve-TermhubTopology` has no such override, so the same lost config, with
+`tailscaled` still listening on `<tailnet-ip>:<publishPort>` ("No serve config", connections reset),
+classifies as `serve-holds-http-port` in `http` mode on a healthy single-port machine (2026-11-16,
+cause of the loss unknown, node `Running`). The repair is only `tailscale serve --bg
+--https=<publishPort> http://127.0.0.1:<publishPort>`; `watchdog/remedies/serve-holds-http-port.ps1`
+does that whenever a front answers on loopback, and never turns Serve off on such a machine.
 `restart-front.ps1` used to read equal ports as plain-HTTP and so, on the *default* layout, tried to
 bind `<tailnet-ip>:7000` — a port `tailscaled` already holds for Serve. It failed the health check
 and left no front at all; since `restart-sessiond.ps1` calls it, a deliberate sessiond restart took

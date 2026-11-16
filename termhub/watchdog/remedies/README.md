@@ -122,7 +122,7 @@ Fixable by script — a remedy here is expected:
 | `front-unhealthy` | the front answers but reports not-ok while sessiond is fine. |
 | `sessiond-down-front-up` | the front is up, its proxy target is gone. Starting sessiond is in scope. |
 | `both-down` | reboot, or a logon task that never ran. Bring both tiers up. |
-| `serve-holds-http-port` | tailscaled's TLS listener took the address the front should own in plain-HTTP mode. |
+| `serve-holds-http-port` | tailscaled holds the tailnet address the front would own in plain-HTTP mode. Also fires on a **single-port** machine whose Serve config was lost while tailscaled kept its listener: the empty config resolves the mode to `http` (2026-11-16). The remedy tells the two apart by the loopback front and the logon task. |
 | `publish-port-monolith` | a pre-split `node server.js` is squatting the publish port. |
 | `tailnet-ip-unavailable` | plain-HTTP mode has no address to bind the front to. **Partly** fixable — see below. |
 
