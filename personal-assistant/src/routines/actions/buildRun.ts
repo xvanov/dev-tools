@@ -13,7 +13,8 @@
 //
 // Three guards, each a recorded skip rather than a failure, so a quiet day or a slow
 // run costs one line in the history and not an error storm:
-//   - the daily budget (PA_DAILY_BUDGET_USD: model spend + the Build runs' notional cost) is spent
+//   - the daily budget is spent: PA_DAILY_BUDGET_USD (real model spend) or
+//     PA_SCHEDULED_BUILD_BUDGET_USD (notional cost of today's *scheduled* Build runs only)
 //   - this routine's previous run is still live (no pile-up)
 //   - the profile no longer exists (the one skip that toasts: someone should fix the routine)
 //
@@ -34,13 +35,18 @@ function clip(s: unknown, n: number): string {
 
 const skip = (why: string, notable = false) => ({ ok: true, summary: `skipped: ${why}`, lines: [why], notable, detail: { skipped: true, reason: why } });
 
-/** Dollars spent today: model calls (llm_spend) plus the notional cost of Build runs started today. */
+/** Real model spend today (llm_spend), the number PA_DAILY_BUDGET_USD caps. */
 async function spentToday(): Promise<number> {
-  const model: number = await require('../../budget.ts').spentToday();
+  return require('../../budget.ts').spentToday();
+}
+
+/** Notional API-price cost of the Build runs routines started today (a subscription meter, not money). */
+async function scheduledBuildToday(): Promise<number> {
   const since = require('../../budget.ts').dayStart().getTime();
   const runs: Row[] = await require('../../repo').buildRuns.list({ limit: 200 });
-  const build = runs.filter((r) => Date.parse(String(r.started_at)) >= since).reduce((t, r) => t + (Number(r.cost_usd) || 0), 0);
-  return model + build;
+  return runs
+    .filter((r) => require('../../build/origin.ts').parse(r.origin) && Date.parse(String(r.started_at)) >= since)
+    .reduce((t, r) => t + (Number(r.cost_usd) || 0), 0);
 }
 
 /** The checks that need the store: the profile, the repo, the model and effort. Used when a routine is saved. */
@@ -62,13 +68,17 @@ async function run(params: Row, { dryRun = false, routine = null }: { dryRun?: b
     if (live) return skip(`the previous run (#${live.id}, ${live.state}) is still going`);
   }
   const cap = config.budget.dailyUsd;
+  const buildCap = config.budget.scheduledBuildUsd;
   let spent = 0;
+  let scheduled = 0;
   try {
     spent = await spentToday();
+    scheduled = await scheduledBuildToday();
   } catch (err) {
     return skip(`cannot tell what was spent today (${(err as Error).message})`);
   }
   if (Number.isFinite(cap) && spent >= cap) return skip(`today's budget is spent ($${spent.toFixed(2)} of $${cap})`);
+  if (Number.isFinite(buildCap) && scheduled >= buildCap) return skip(`today's scheduled Build budget is spent ($${scheduled.toFixed(2)} of $${buildCap})`);
   if (dryRun) {
     return {
       ok: true, summary: `would start a ${profile.name} run`, lines: [`task: ${clip(params.prompt, 200)}`, `repo: ${params.repo || '(none)'}`],
@@ -110,4 +120,4 @@ const action = register({
   run,
 });
 
-module.exports = { action, run, verify, spentToday, skip };
+module.exports = { action, run, verify, spentToday, scheduledBuildToday, skip };

@@ -1105,8 +1105,9 @@ model), the dashboard's *Schedule a Build agent run* form, or the chat (it asks 
 and a profile or repo that does not exist is refused at save. The action starts the run and returns
 (it is not held for the hours the run takes); the run id is in the routine's history, and the Build
 board card reads `scheduled: <routine name>`. A fire is **skipped, with the reason in the history,
-not failed**, when today's budget is spent (`PA_DAILY_BUDGET_USD`, counting model spend plus the
-notional cost of today's Build runs), when the routine's previous run is still going, or when its
+not failed**, when today's budget is spent (`PA_DAILY_BUDGET_USD` against real model spend, or
+`PA_SCHEDULED_BUILD_BUDGET_USD`, default 10, against the notional API-price cost of today's
+*scheduled* runs only — Build runs ride the subscription, so manual Do runs do not count), when the routine's previous run is still going, or when its
 profile has since been deleted (that one also toasts). The suggester never proposes a `build_run`.
 
 `repo_sync` fast-forwards only a repo that is **on** its default branch (`origin/HEAD`, else

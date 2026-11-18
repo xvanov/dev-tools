@@ -99,14 +99,25 @@ async function main() {
     // Another routine's live run does not block this one.
     assert.strictEqual(await repo.buildRuns.liveForOrigin(O.likeRoutine(routine.id + 1000)), null);
 
-    // The run ends: the budget (model spend plus the Build runs' notional cost today) gates the next one.
+    // The run ends: real model spend gates the next one against the daily cap.
     await repo.buildRuns.update(runId, { state: 'done', cost_usd: 2, ended_at: new Date().toISOString() });
-    spend = 13.5; // 13.5 + 2 of today's Build cost = 15.5 >= the default $15 cap
+    spend = 15.5; // >= the default $15 cap
     const broke = await routines.runRoutine(routine.id, { scheduled: true });
     assert.strictEqual(broke.ok, true);
     assert.match(broke.summary, /skipped: today's budget is spent \(\$15\.50 of \$15\)/);
     assert.strictEqual(starts.length, 1);
     spend = 1;
+    // A manual Build run's notional cost (a subscription meter) does not count against the schedule.
+    const manual = await repo.buildRuns.insert({ task: 'by hand', model: 'sonnet', costCapUsd: 5, wallCapMin: 10 });
+    await repo.buildRuns.update(manual.id, { state: 'done', cost_usd: 50, ended_at: new Date().toISOString() });
+    // Scheduled runs' own notional cost today is capped by PA_SCHEDULED_BUILD_BUDGET_USD.
+    const { config } = require('../src/config.ts');
+    assert.strictEqual(config.budget.scheduledBuildUsd, 10);
+    config.budget.scheduledBuildUsd = 2; // today's scheduled run cost 2
+    const capped = await routines.runRoutine(routine.id, { scheduled: true });
+    assert.match(capped.summary, /skipped: today's scheduled Build budget is spent \(\$2\.00 of \$2\)/);
+    assert.strictEqual(starts.length, 1);
+    config.budget.scheduledBuildUsd = 10;
     const second = await routines.runRoutine(routine.id, { scheduled: true });
     assert.match(second.summary, /started run #/);
     assert.strictEqual(starts.length, 2);

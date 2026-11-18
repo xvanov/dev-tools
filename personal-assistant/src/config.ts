@@ -687,6 +687,13 @@ const config = {
       const n = Number.parseFloat(env('PA_DAILY_BUDGET_USD', '15'));
       return Number.isFinite(n) ? n : 15;
     })(),
+    // Scheduled Build runs (routine action build_run) skip a fire once the notional API-price cost of
+    // today's *scheduled* runs reaches this. Build runs ride the Claude subscription, so cost_usd is a
+    // meter, not a bill: counting manual Do runs against the daily cap would silence the schedule.
+    scheduledBuildUsd: (() => {
+      const n = Number.parseFloat(env('PA_SCHEDULED_BUILD_BUDGET_USD', '10'));
+      return Number.isFinite(n) ? n : 10;
+    })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
     discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe,build-summary').split(',').map((s) => s.trim()).filter(Boolean),
   },

@@ -870,6 +870,10 @@
         {
           "name": "PA_DAILY_BUDGET_USD",
           "default": "15"
+        },
+        {
+          "name": "PA_SCHEDULED_BUILD_BUDGET_USD",
+          "default": "10"
         }
       ],
       "code": [

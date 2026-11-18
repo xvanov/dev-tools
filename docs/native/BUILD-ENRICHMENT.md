@@ -75,7 +75,8 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 ## E. Scheduled Build runs
 
 - New routine action `build_run`: name + schedule + prompt + profile (+ repo). On fire it starts a Build run
-  exactly like Do on a card, under the daily budget (`PA_DAILY_BUDGET_USD`) and the profile's caps.
+  exactly like Do on a card, under the daily budget (`PA_DAILY_BUDGET_USD`, real model spend), a scheduled-run
+  budget (`PA_SCHEDULED_BUILD_BUDGET_USD`, notional cost of scheduled runs only) and the profile's caps.
   Results wait for review (draft PR / report) — near the loop.
 - Created from the dashboard routines page, the chat (`routine_add` already exists — extend it), or
   `pa routine add`. Preview shows the next 3 runs, as routines do today.

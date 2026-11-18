@@ -335,7 +335,11 @@ async function finish(id: number | string, state: 'done' | 'failed' | 'stopped',
   const r = await repo().byId(id);
   if (!r) return null;
   if (!LIVE.includes(r.state)) return r;
-  await repo().update(id, { state, result: result ?? r.result, error, ended_at: new Date().toISOString() });
+  // A run that ends mid-wait (its asking process died with the session) closes its wait here, so the
+  // wait stays off the wall clock and the run does not keep a `waiting_since` forever.
+  const since = r.waiting_since ? Date.parse(String(r.waiting_since)) : NaN;
+  const waited: Row = r.waiting_since ? { waiting_since: null, ...(Number.isFinite(since) ? { waiting_ms: Number(r.waiting_ms || 0) + Math.max(0, Date.now() - since) } : {}) } : {};
+  await repo().update(id, { state, result: result ?? r.result, error, ended_at: new Date().toISOString(), ...waited });
   await settleNotices(id);
   return repo().byId(id);
 }

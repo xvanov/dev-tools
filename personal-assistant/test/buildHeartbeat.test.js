@@ -157,6 +157,8 @@ async function main() {
     assert.strictEqual((await H.tick()).failed, 1);
     const gone = await repo.buildRuns.byId(parked.id);
     assert.deepStrictEqual([gone.state, /without/.test(gone.error)], ['failed', true]);
+    assert.strictEqual(gone.waiting_since, null, 'the wait is closed with the run');
+    assert.ok(gone.waiting_ms >= 0, 'and booked as waiting time');
     assert.strictEqual((await repo.buildRuns.openAsks()).some((a) => a.id === open.id), false, 'the open ask is closed');
     assert.match((await repo.buildRuns.msgById(open.id)).answer, /session ended/);
     assert.strictEqual(await unread(`build-ask:${open.id}`), false, 'its "needs you" notice is read');
