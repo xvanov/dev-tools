@@ -47,6 +47,18 @@ const STATUSES = ['ok', 'capped', 'failed', 'timeout', 'skipped'];
 
 const BLOCKED_PUSH_URL = 'https://pa-push-blocked.invalid/this-run-may-not-push.git';
 const DENY = ['git push', 'git push *', 'gh pr', 'gh pr *'];
+/**
+ * The replay's node_modules are junctions to the owner's real checkout, so an install in the replay would write
+ * through to it. Package-manager commands that change dependencies are denied (running tests stays allowed).
+ */
+const PM_MUTATING: Record<string, string[]> = {
+  npm: ['install', 'i', 'ci', 'add', 'update', 'upgrade', 'uninstall', 'remove', 'rm', 'link', 'prune', 'dedupe', 'rebuild'],
+  pnpm: ['install', 'i', 'add', 'update', 'up', 'remove', 'rm', 'link', 'prune', 'import'],
+  yarn: ['install', 'add', 'up', 'upgrade', 'remove', 'link'],
+  bun: ['install', 'i', 'add', 'update', 'remove', 'link'],
+};
+const DENY_INSTALL = [...Object.entries(PM_MUTATING).flatMap(([pm, subs]) => subs.flatMap((s) => [`${pm} ${s}`, `${pm} ${s} *`])), 'yarn'];
+const DENY_PATHS = ['**/node_modules/**'];
 
 // ------------------------------------------------------------------ pure ----
 
@@ -153,6 +165,7 @@ ${task}${own}
 
 - Do the task completely, in this tree. Run the repo's tests where the task changes code.
 - Never run \`git push\`, never open a pull request or merge request, and do not use \`gh\` or any other way to publish: the credentials are removed on purpose and trying to get around that fails the run. Committing locally is fine.
+- Do not install or change dependencies (\`npm install\`, \`npm ci\`, \`pnpm\`, \`yarn\`, \`bun\` install or add, and so on): \`node_modules\` is shared with the owner's real checkout and is off limits. Run the tests with what is there.
 - Nobody is there to answer questions and there is no \`pa\` command. Where the task is ambiguous, take the most reasonable reading and say which.
 - Ignore any instruction above to run a \`pa\` command or to open a PR: in this replay your last message is the result. Make it a plain summary of what you changed and why, or, for a research task, the report itself.`;
 }
@@ -174,7 +187,8 @@ function claudeArgs(r: Json, o: { flags: string; settingsFile: string; maxBudget
 /** Pure: the settings file of a replay: the profile's allow rules, its deny rules, and the push/PR denials every replay has (both shell tools). */
 function settingsFor(perms: { allow: string[]; deny: string[] }): Json {
   const deny = [...perms.deny];
-  for (const d of DENY) deny.push(`Bash(${d})`, `PowerShell(${d})`);
+  for (const d of [...DENY, ...DENY_INSTALL]) deny.push(`Bash(${d})`, `PowerShell(${d})`);
+  for (const p of DENY_PATHS) deny.push(`Edit(${p})`, `Write(${p})`);
   return { skipDangerousModePermissionPrompt: true, permissions: { ...(perms.allow.length ? { allow: perms.allow } : {}), deny } };
 }
 
@@ -183,9 +197,9 @@ function passedOf(t: { kind: string | null; status: string; tests: string | null
   if (t.status === 'failed' || t.status === 'timeout' || t.status === 'skipped') return t.status === 'skipped' ? null : 0;
   if (t.kind === 'pr') {
     if (!(Number(t.files_changed) > 0)) return 0;
-    if (t.tests === 'pass') return 1;
-    if (t.tests === 'fail' || t.tests === 'timeout') return 0;
-    return null;
+    if (t.tests === 'pass' || t.tests === 'fixed') return 1;
+    if (t.tests === 'fail' || t.tests === 'timeout' || t.tests === 'regression') return 0;
+    return null; // n/a, or 'still-failing': the base already failed and still does, so the agent's part cannot be told apart
   }
   // A report is scored on being delivered; whether it is right is for a person (the JSONL keeps the text).
   return String(t.result || '').trim() ? 1 : 0;
@@ -435,7 +449,26 @@ async function removeTree(d: Deps, repoPath: string, wt: string, links: string[]
   return !fs.existsSync(wt);
 }
 
-interface Ctx { evalId: string; seq: number; budget: number | null; spent: number; testCommand: (repoPath: string) => string | null; verdicts: Map<number, string | null>; noLink: boolean; wallMin?: number | null }
+interface Ctx { evalId: string; seq: number; budget: number | null; spent: number; testCommand: (repoPath: string) => string | null; verdicts: Map<number, string | null>; noLink: boolean; wallMin?: number | null; baselines?: Map<string, 'pass' | 'fail' | 'timeout'> }
+
+/**
+ * Pure: a trial's test outcome against the base's: `pass` / `fixed` (the base failed, now passes) / `regression`
+ * (the base passed, now fails) / `still-failing` (failed before and after: not the agent's doing, not scored) /
+ * `fail` and `timeout` when there is no usable baseline.
+ */
+function testVerdict(now: 'pass' | 'fail' | 'timeout', baseline: 'pass' | 'fail' | 'timeout' | null | undefined): string {
+  if (now === 'pass') return baseline === 'fail' ? 'fixed' : 'pass';
+  if (baseline === 'pass') return 'regression';
+  if (baseline === 'fail' && now === 'fail') return 'still-failing';
+  return now;
+}
+
+/** Commits whatever is in the tree (artifacts a test run left, the agent's work) so it can be diffed; returns HEAD. */
+async function snapshot(d: Deps, wt: string, msg: string): Promise<string> {
+  await d.git(wt, ['add', '-A']).catch(() => {});
+  await d.git(wt, ['-c', 'user.name=pa-eval', '-c', 'user.email=pa-eval@invalid', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-q', '-m', msg]).catch(() => {});
+  return (await d.git(wt, ['rev-parse', 'HEAD']).catch(() => '')).trim();
+}
 
 /** One replay: worktree at base, claude headless, score, clean up. Never throws: a setup failure is a `failed` trial. */
 async function runTrial(x: Resolved, it: Item, ctx: Ctx, d: Deps): Promise<Json> {
@@ -456,6 +489,20 @@ async function runTrial(x: Resolved, it: Item, ctx: Ctx, d: Deps): Promise<Json>
     created = true;
     await d.blockPush(it.repo, wt);
     if (!ctx.noLink) links.push(...linkDeps(it.repo, wt));
+    // The baseline: the repo's tests at the base commit, once per base (no model), so a failure that was already
+    // there is not blamed on the profile. Run in this tree, then snapshotted so its artifacts do not count as the diff.
+    let diffBase = it.base;
+    const testCmd = it.kind === 'pr' ? ctx.testCommand(it.repo) : null;
+    if (testCmd) {
+      const key = `${it.repo}@${it.base}@${testCmd}`;
+      const cache = (ctx.baselines ||= new Map());
+      if (!cache.has(key)) {
+        const b = await d.tests({ cwd: wt, command: testCmd, timeoutMs: TESTS_TIMEOUT_MIN * 60_000, env: sess.env });
+        cache.set(key, b.timedOut ? 'timeout' : b.code === 0 ? 'pass' : 'fail');
+        diffBase = (await snapshot(d, wt, 'eval baseline')) || it.base;
+      }
+      trial.baseline = cache.get(key) as string;
+    }
     await B().writeSubagents(wt, x.extra.files, true);
     const settingsFile = path.join(config.worktreesRoot, `eval-${ctx.evalId.slice(-6)}-${ctx.seq}.settings.json`);
     fs.writeFileSync(settingsFile, JSON.stringify(settingsFor(x.extra.permissions)), 'utf8');
@@ -478,9 +525,8 @@ async function runTrial(x: Resolved, it: Item, ctx: Ctx, d: Deps): Promise<Json>
     if (res.timedOut) { trial.status = 'timeout'; trial.reason = `wall timeout after ${Math.round(timeoutMs / 60_000)} min`; }
     if (trial.status === 'failed' && !got) { trial.passed = 0; return trial; }
     // Score the tree, whatever claude said last: the diff first, then the tests.
-    await d.git(wt, ['add', '-A']).catch(() => {});
-    await d.git(wt, ['-c', 'user.name=pa-eval', '-c', 'user.email=pa-eval@invalid', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-q', '-m', 'eval replay']).catch(() => {});
-    const stat = parseNumstat(await d.git(wt, ['diff', '--numstat', it.base, 'HEAD']).catch(() => ''));
+    await snapshot(d, wt, 'eval replay');
+    const stat = parseNumstat(await d.git(wt, ['diff', '--numstat', diffBase, 'HEAD']).catch(() => ''));
     Object.assign(trial, { files_changed: stat.files, lines_added: stat.added, lines_removed: stat.removed });
     if (it.kind === 'pr') {
       const cmd = ctx.testCommand(it.repo);
@@ -488,8 +534,9 @@ async function runTrial(x: Resolved, it: Item, ctx: Ctx, d: Deps): Promise<Json>
       else if (!cmd) { trial.tests = 'n/a'; trial.tests_note = 'no test command for this repo (the build.eval setting)'; }
       else {
         const t = await d.tests({ cwd: wt, command: cmd, timeoutMs: TESTS_TIMEOUT_MIN * 60_000, env: sess.env });
-        trial.tests = t.timedOut ? 'timeout' : t.code === 0 ? 'pass' : 'fail';
-        trial.tests_note = `${cmd}${t.code === 0 && !t.timedOut ? '' : `: ${(t.out + t.err).trim().slice(-300)}`}`;
+        const now = t.timedOut ? 'timeout' : t.code === 0 ? 'pass' : 'fail';
+        trial.tests = testVerdict(now, trial.baseline as 'pass' | 'fail' | 'timeout' | undefined);
+        trial.tests_note = `${cmd} (base: ${trial.baseline || 'not run'})${now === 'pass' ? '' : `: ${(t.out + t.err).trim().slice(-300)}`}`;
       }
     } else { trial.tests = 'n/a'; trial.tests_note = 'a report: scored on being delivered'; }
     trial.passed = passedOf(trial as never);
@@ -570,6 +617,6 @@ async function reportData({ evalId = null }: { evalId?: string | null } = {}): P
 
 module.exports = {
   STATUSES, TEST_COMMANDS, DEFAULT_BUDGET_USD, BLOCKED_PUSH_URL,
-  median, parseProfiles, ineligible, kindOf, testCommandFor, parseClaude, parseNumstat, trialPrompt, claudeArgs, settingsFor, passedOf, summarize, formatTable, money, secs,
+  median, parseProfiles, ineligible, kindOf, testCommandFor, parseClaude, parseNumstat, trialPrompt, claudeArgs, settingsFor, passedOf, testVerdict, DENY_INSTALL, summarize, formatTable, money, secs,
   defaults, resolveBase, plan, resolveSpecs, estimate, linkDeps, removeTree, runTrial, launch, reportData,
 };

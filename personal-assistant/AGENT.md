@@ -675,13 +675,17 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   then removed. **No flag launches anything: without `--yes` (or with `--dry-run`) it prints the trial plan and an estimate.** Guards, layered
   because a replay must never touch a real branch or PR: no branch is made; every remote's push URL in the worktree is the dead address
   (`dispatch/remote.ts blockPush`, read back); the session env has no GitHub/GitLab tokens or ssh agent and an empty gh config (`noPushEnv`);
-  the settings file denies `git push` and `gh pr` for both shells on top of the profile's own rules; the prompt says no pushing. Spend: budget
+  the settings file denies `git push` and `gh pr` for both shells on top of the profile's own rules (verified to hold under
+  `--permission-mode bypassPermissions`: the harness refuses the call, it is not the model's choice); the prompt says no pushing. Dependency
+  changes (`npm|pnpm|yarn|bun install/ci/add/...`, edits under `node_modules`) are denied too, because the junctions below write through. Spend: budget
   (`--budget-usd`, `PA_BUILD_EVAL_BUDGET_USD`, default $10) is checked before every trial against its projected cost (median of that profile's
   finished trials, else the original run's cost, bounded by the profile cap), and claude's own `--max-budget-usd` is min(profile cap, budget
   left). A code task passes with a non-empty diff and passing tests (no test command: unscored, `passed` null); a report on being delivered, so
-  read the reports in the JSONL. Known limits: tests run once on the result with no baseline run of the base commit; `node_modules` of the
-  checkout (root and one level down) are junctioned into the replay so tests can run, so an agent's `npm install` would write through to the
-  checkout (`--no-link-deps` turns that off and the tests then usually fail to start). Results: `build_eval_trial` and
+  read the reports in the JSONL. Baseline: the repo's tests run once per base commit in the replay tree before the agent starts (no model,
+  cached for the launch), and `tests` is `pass`, `fixed` (base failed, now passes: counts as pass), `regression` (base passed, now fails),
+  `still-failing` (failed before and after: unscored) or plain `fail`/`timeout` when the baseline timed out. `node_modules` of the
+  checkout (root and one level down) are junctioned into the replay so tests can run (`--no-link-deps` turns that off and the tests then
+  usually fail to start). Results: `build_eval_trial` and
   `<dataDir>/build-eval/<id>.jsonl` (with each agent's last message); `pa eval build --report [--eval id] [-v]`, the chat's `eval_build_report`
   (a read, allowed) and the Build board sidebar's table (`GET /api/build/eval`). Launching is CLI-only on purpose (no mutating route, so no
   parity exception): it spends the subscription.

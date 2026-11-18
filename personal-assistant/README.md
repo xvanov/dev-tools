@@ -1284,7 +1284,9 @@ pa eval build --report [-v]                  # per profile: n, pass rate, median
 Each trial is a throwaway worktree at the run's recorded `base_sha`, claude headless with the profile's
 flags, no push and no PR (tokens stripped, push URLs blocked, `git push` and `gh pr` denied), scored by the
 repo's tests (`npm test -- --changed` for this monorepo; the `build.eval` setting overrides per repo), the
-diff, cost, turns and wall time, and the original PR's merged or closed state. It never runs without `--yes`
+diff, cost, turns and wall time, and the original PR's merged or closed state. The tests also run once at
+the base commit first, so a failure that was already there is not blamed on the profile (`regression`,
+`fixed`, `still-failing`). It never runs without `--yes`
 and stops before the budget. Results go to `<data dir>/build-eval/<id>.jsonl`, the Build board's sidebar and
 the chat's `eval_build_report`.
 

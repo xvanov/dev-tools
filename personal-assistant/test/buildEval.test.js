@@ -87,6 +87,14 @@ const { available } = require('../src/db/sqlite.ts');
   const st = E.settingsFor({ allow: ['Read'], deny: ['Bash(rm *)'] });
   assert.deepStrictEqual(st.permissions.allow, ['Read']);
   for (const rule of ['Bash(rm *)', 'Bash(git push)', 'Bash(git push *)', 'PowerShell(git push *)', 'Bash(gh pr)', 'PowerShell(gh pr *)']) assert.ok(st.permissions.deny.includes(rule), rule);
+  // node_modules in a replay is a junction to the real checkout: installs are denied in both shells.
+  for (const rule of ['Bash(npm install)', 'Bash(npm install *)', 'PowerShell(npm ci *)', 'Bash(npm i *)', 'PowerShell(pnpm add *)', 'Bash(yarn)', 'PowerShell(yarn install)', 'Bash(bun add *)', 'Edit(**/node_modules/**)', 'Write(**/node_modules/**)']) assert.ok(st.permissions.deny.includes(rule), rule);
+  assert.ok(!st.permissions.deny.includes('Bash(npm test)') && !st.permissions.deny.includes('Bash(npm run *)'), 'running tests is not denied');
+  assert.match(prompt, /Do not install or change dependencies/);
+
+  // Test outcome against the base's.
+  assert.deepStrictEqual([['pass', 'pass'], ['pass', 'fail'], ['pass', null], ['fail', 'pass'], ['fail', 'fail'], ['fail', null], ['timeout', 'fail'], ['timeout', 'pass']].map(([n, b]) => E.testVerdict(n, b)), ['pass', 'fixed', 'pass', 'regression', 'still-failing', 'fail', 'timeout', 'regression']);
+  assert.deepStrictEqual(['fixed', 'regression', 'still-failing'].map((tests) => E.passedOf({ kind: 'pr', status: 'ok', tests, files_changed: 1 })), [1, 0, null]);
 
   // The table.
   const rows = [
@@ -194,7 +202,8 @@ async function main() {
         if (stub.timeout) return { code: null, out: '', err: '', timedOut: true };
         return { code: 0, out: JSON.stringify({ type: 'result', subtype: stub.subtype || 'success', is_error: false, result: 'summary of work', total_cost_usd: cost, num_turns: 4, usage: { input_tokens: 100, output_tokens: 20 } }), err: '', timedOut: false };
       },
-      tests: async (o) => { testCalls.push(o); return { code: stub.testsFail ? 1 : 0, out: stub.testsFail ? 'FAIL x' : 'ok', err: '', timedOut: false }; },
+      // testsFail: true fails the baseline and the replay; 'regress' fails only once the agent has written its change.
+      tests: async (o) => { testCalls.push(o); const fail = stub.testsFail === 'regress' ? fs.readdirSync(o.cwd).some((f) => f.startsWith('change-')) : Boolean(stub.testsFail); return { code: fail ? 1 : 0, out: fail ? 'FAIL x' : 'ok', err: '', timedOut: false }; },
     };
     const deps = () => ({ ...E.defaults(), ...stub });
 
@@ -263,11 +272,13 @@ async function main() {
     // Scoring of the code task.
     assert.deepStrictEqual([pr.status, pr.kind, pr.tests, pr.files_changed, pr.lines_added, pr.lines_removed, pr.passed], ['ok', 'pr', 'pass', 1, 3, 0, 1]);
     assert.deepStrictEqual([pr.cost_usd, pr.turns, pr.tokens_in, pr.tokens_out, pr.original_verdict, pr.base_sha], [0.5, 4, 100, 20, 'merged', base]);
-    assert.strictEqual(testCalls.length, 1);
+    assert.strictEqual(testCalls.length, 2, 'the baseline at the base commit, then the replay');
+    assert.ok(testCalls[0].cwd === testCalls[1].cwd, 'both ran in the replay tree (baseline before the agent)');
+    assert.match(pr.tests_note, /base: pass/);
     assert.strictEqual(testCalls[0].command, 'npm test', 'package.json and no override: npm test');
     // The report task is scored on being delivered; the tests are not run for it.
     assert.deepStrictEqual([rep.kind, rep.tests, rep.passed, rep.files_changed >= 0], ['report', 'n/a', 1, true]);
-    assert.strictEqual(testCalls.length, 1);
+    assert.strictEqual(testCalls.length, 2);
     // Stored, and in the JSONL with the agent's final message.
     const stored = await repo.buildEvals.list({ evalId: r.evalId });
     assert.deepStrictEqual(stored.map((x) => [Number(x.run_id), x.profile, Number(x.passed), x.tests]).sort(), [[1, 'chore', 1, 'pass'], [2, 'chore', 1, 'n/a']]);
@@ -275,11 +286,28 @@ async function main() {
     assert.deepStrictEqual([lines.length, lines[0].result, lines[0].runId], [2, 'summary of work', 1]);
     assert.strictEqual(path.dirname(r.file), path.join(dir, 'build-eval'));
 
+    // node_modules is junctioned so tests can run, and removing the replay never follows it into the real checkout.
+    fs.mkdirSync(path.join(main, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(main, 'node_modules', 'pkg', 'keep.txt'), 'real');
+    fs.appendFileSync(path.join(main, '.git', 'info', 'exclude'), 'node_modules\n');
+    let linked = null;
+    const linkDeps = { ...deps(), claude: async (o) => { linked = fs.existsSync(path.join(o.cwd, 'node_modules', 'pkg', 'keep.txt')); return stub.claude(o); } };
+    const lk = await E.launch({ runs: [1], profiles: 'chore', yes: true }, linkDeps);
+    assert.strictEqual(linked, true, 'the replay sees the main checkout\'s node_modules');
+    assert.strictEqual(lk.trials[0].status, 'ok');
+    assert.strictEqual(fs.readFileSync(path.join(main, 'node_modules', 'pkg', 'keep.txt'), 'utf8'), 'real', 'the real node_modules survived the cleanup');
+    assert.deepStrictEqual(fs.readdirSync(wtRoot).filter((f) => f.startsWith('eval-')), []);
+
     // A failing test run, a replay that changed nothing, a timeout, a spend-capped one.
-    stub.testsFail = true;
+    stub.testsFail = 'regress';
     const f1 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
-    assert.deepStrictEqual([f1.trials[0].tests, f1.trials[0].passed], ['fail', 0]);
-    assert.match(f1.trials[0].tests_note, /npm test: FAIL x/);
+    assert.deepStrictEqual([f1.trials[0].tests, f1.trials[0].passed], ['regression', 0], 'the base passed and the replay fails');
+    assert.match(f1.trials[0].tests_note, /npm test \(base: pass\): FAIL x/);
+    stub.testsFail = true;
+    const f1b = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
+    assert.deepStrictEqual([f1b.trials[0].tests, f1b.trials[0].passed], ['still-failing', null], 'the base already failed: not blamed on the profile');
+    assert.match(f1b.trials[0].tests_note, /base: fail/);
+    assert.strictEqual(f1b.trials[0].files_changed, 1, "the baseline run's leftovers are not counted as the agent's diff");
     stub.testsFail = false;
     stub.noWrite = true;
     const f2 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
