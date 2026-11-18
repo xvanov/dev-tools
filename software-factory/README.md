@@ -1,5 +1,8 @@
 # 🏭 software-factory
 
+> **Frozen (D30, 2026-11-10).** Jarvis no longer dispatches work here; coding tasks run as one Claude
+> Code agent per task (`personal-assistant/src/build`). Kept in the tree, unchanged.
+
 **An autonomous software factory: an LLM persona pipeline that turns high-level product directions into reviewed, tested, merged pull requests — unattended, on cheap open-weight models.**
 
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)

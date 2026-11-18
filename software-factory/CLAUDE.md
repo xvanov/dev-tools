@@ -1,5 +1,9 @@
 ﻿# CLAUDE.md — orientation for an agent working in `software-factory`
 
+> **FROZEN (D30, 2026-11-10).** Nothing dispatches here any more. Coding work runs as one Claude Code
+> agent per task (`personal-assistant/src/build`). Do not extend this tool or route work to it; the
+> text below describes the frozen code, not the live system.
+
 Short by design. Everything else is on-demand — see **Deeper reading**. Do not
 go spelunking through `factory/` for answers this file already gives.
 
