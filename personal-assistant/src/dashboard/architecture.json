@@ -1107,10 +1107,6 @@
         {
           "name": "PA_RUNTIME_FAILOVER_MIN_WAIT_MIN",
           "default": "30"
-        },
-        {
-          "name": "PA_TELEMETRY_URL",
-          "default": null
         }
       ],
       "code": [
@@ -1121,8 +1117,7 @@
         "personal-assistant/src/dispatch/failover.ts",
         "personal-assistant/src/dashboard/meter.ts",
         "personal-assistant/src/repo/telemetry.ts",
-        "termhub/web/meterModel.js",
-        "software-factory/factory/telemetry.py"
+        "termhub/web/meterModel.js"
       ]
     },
     {
@@ -1463,303 +1458,6 @@
       ]
     },
     {
-      "id": "factory-api",
-      "layer": "factory",
-      "name": "JOBS-API (factory CLI)",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. The one contract between the PA and the factory: `uv run factory job|app ... --json`, one JSON object out.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "The work factory, natively on Windows: software-factory in the dev-tools checkout. The PA calls it locally (PA_FACTORY_MACHINE=local) through factory serve on 127.0.0.1:7330",
-        "personal": "k-911-x17, /home/k/dev-tools/software-factory"
-      },
-      "health": "factory-serve",
-      "details": {
-        "Contract": "software-factory/docs/JOBS-API.md, v1.11 (v1.7: serve reads local state plus a background GitHub snapshot, github_as_of; v1.8: the plan kind; v1.9: review off|on|auto on both runtimes, job caps, provider-limit pause/breaker/failover: paused, failover, policy; v1.10: serve ticks every app with an active job; v1.11: `job board` and `job step` for Build's board (one step's turns from both runtimes, normalized in one place, cursor-paginated, --wait long poll), runs[].viewable, runs.stream_path)",
-        "Commands": [
-          "job submit",
-          "job status",
-          "job list",
-          "job follow",
-          "job cancel",
-          "job report",
-          "job board",
-          "job step",
-          "app add | set | show | list"
-        ],
-        "Kinds": "code (direction to stories to PRs), research and report (one agent writes report.md; delivery none)",
-        "Continue and resume": "job submit --branch / --pr and job resume <id> are in JOBS-API.md, and the PA sends them. A factory that does not know them refuses in its parser and the PA says the factory must be updated",
-        "Never": "the PA never imports factory code or reads its store",
-        "Gates": "per app (software-factory/factory/gate_model.py): each of lint, format_check, type_check and test is a shell command, none (the repo has no such check: skipped, reported 'not configured: skipped', never passing) or empty (not configured); gates.requires names programs a gate needs on PATH (docker, lychee), checked up front. job submit refuses a code job with gates_not_configured (empty test gate on a repo with no tests/) or gate_requirements_missing; app list/show/set carry each app's readiness. app add detects docs-only repos and reads .github/workflows and .gitlab-ci.yml to suggest gates mirroring CI; suggestions are only written when confirmed (--gate)",
-        "Transport": "plan 2.1: a factory on the PA's machine answers through `factory serve`'s localhost API, POST 127.0.0.1:7330/api/cli {argv} (header X-Factory: 1). It returns {code, stdout, stderr, ms}. job status, job list and app list (JOBS-API v1.7) answer from the factory db and a GitHub snapshot refreshed in the background, with no gh/git/systemctl on the request, so a warm serve is milliseconds; github_as_of is when that snapshot was read. Every other allowed verb runs the same CLI command in-process (byte-identical JSON). Read-only verbs run concurrently (per-thread output capture), state-changing ones one at a time. The PA (PA_FACTORY_SERVE_URL) tries serve first and spawns `uv run factory ...` only when nothing ran (nothing listening, or a verb serve does not serve: job follow). The CLI itself still asks GitHub live. A remote factory is still reached through termhub's /api/exec",
-        "Push": "E3: `factory serve` POSTs job state changes (a new state or why; {jobs: [{job_id, state, why, updated_at}]}) to the PA's /api/factory/events from its own thread, 0.2-0.4 s after a tick commits a story transition to factory.db (statted every 0.1 s); done, failed and cancelled jobs are re-read by a full check every 5 s and right after an API submit, cancel or resume. A job whose last story delivers is pushed done with that transition, then corrected to what `job status` reads on GitHub (about 3 s, on serve's confirm thread, so other jobs' pushes never wait for it) if that differs, re-asked every 30 s while GitHub says in_progress (FACTORY_PA_EVENTS_URL, default the local PA)",
-        "Schemas": "plan 1.1 (D15): one JSON Schema source at the repo root, schemas/*.schema.json: Job (this status object, v1.4), Run (a PA run's id chain), Card, Event (an /api/events frame), Approval (the chat's permission prompt). TS types are generated (schemas/types.d.ts by schemas/gen-types.js); the PA validates with schemas/index.js (dependency-free), the factory with factory/contract_schemas.py (jsonschema). Both sides test their real objects against them"
-      },
-      "contract": "v1.11",
-      "code": [
-        "software-factory/docs/JOBS-API.md",
-        "software-factory/factory/cli_jobs.py",
-        "software-factory/factory/jobs/submit.py",
-        "software-factory/factory/jobs/status.py",
-        "software-factory/factory/jobs/board.py",
-        "software-factory/factory/cli_board.py",
-        "software-factory/factory/jobs/read_cache.py",
-        "schemas/index.js",
-        "schemas/gen-types.js",
-        "schemas/types.d.ts",
-        "software-factory/factory/contract_schemas.py"
-      ]
-    },
-    {
-      "id": "factory-chain",
-      "layer": "factory",
-      "name": "Pipelines, gates and delivery",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Turns a job into reviewed, tested work: chain (PM, SM, dev, reviewer, gates) or solo (one dev agent, one review on the API runtime, gates), then delivers at the job's level.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "Native Windows factory; the factory-serve logon task (`factory serve`) drives it",
-        "personal": "k-911-x17; factory-serve.service runs factory serve (it replaced the factory-tick@<app> timers)"
-      },
-      "details": {
-        "Scheduler": "`factory serve` on both stacks (Windows: the factory-serve logon task, scripts/windows/install-serve.ps1, running `--supervise`; Linux: factory-serve.service, replacing the factory-tick@<app> timers; `factory on/off` manage it): ticks the apps whose config sets serve_tick: true plus every app with an active code job (queued, triaging, in progress, blocked, paused; re-read every 10 s and at once when a submit or resume names a new app, so a new job never needs a restart), every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d within 1 s: it dispatches research/report jobs at once; a submit runs PM triage in the serve process and the tick starts when that triage finishes (a submit no longer starts a maintenance tick beside it); a resume or a finished step ticks the app at once, and that tick dispatches before the interval tick's GitHub maintenance; one serve per factory root (state/locks/serve.lock plus a SQLite lease, state/scheduler/leases.db, 30 s TTL); exits 75 for a restart when the checkout's HEAD moves; `factory serve --status`. A code job nothing will tick (serve not running or too old, no factory-tick@ timer) is accepted with a `ticker:` warning (the PA's Do toast and the card say it will not start), and submit, job status/list and app list carry `ticked: false` (status why: `waiting: app X is not ticked`; JOBS-API v1.6, factory/scheduler/coverage.py)",
-        "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
-        "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
-        "Solo review": "an API-runtime solo story is reviewed once before delivery (one call, no tool turns; the prompt includes the job's ask verbatim and the bounded content of files the diff touches and files the ask or context names): one fix round, only for a high or blocking finding, test slop, or a score under 0.7, and a finding that survives that round parks the story (blocked_review_nonconvergent); medium and low findings do not spend a round; a reviewer that resolves to the dev's model is refused; since JOBS-API v1.9 whether a solo story is reviewed is the job's review setting (off | on | auto; auto = only at auto_merge / push_to_main; per app review.default and review.auto_min_diff_lines, per job --review), on either runtime (claude_session: a separate read-only plan-mode Claude Code run)",
-        "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; a worktree a terminal still holds is left in place and the next checkout is created beside it and reused; never merged below auto_merge",
-        "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch. The tech_writer's context update is committed on the story branch before the PR is opened; a failed commit bounces the story",
-        "Research/report": "detached workers (python -m factory.jobs.worker), at most FACTORY_TASK_MAX_WORKERS (default 2), 5400 s wall clock",
-        "Self-edit": "apps/factory (the factory building itself) is paused since the cutover"
-      },
-      "personas": [
-        "acceptance_author",
-        "analyst",
-        "contract",
-        "dev",
-        "factory_self_context",
-        "onboarder",
-        "pm",
-        "researcher",
-        "reviewer",
-        "security",
-        "sm",
-        "tech_writer",
-        "test_designer",
-        "test_implementer",
-        "ux_auditor"
-      ],
-      "code": [
-        "software-factory/factory/chain/orchestrator.py",
-        "software-factory/factory/chain/solo.py",
-        "software-factory/factory/chain/delivery_gate.py",
-        "software-factory/factory/chain/auto_merge.py",
-        "software-factory/factory/jobs/tasks.py",
-        "software-factory/factory/personas"
-      ]
-    },
-    {
-      "id": "runtime-api",
-      "layer": "factory",
-      "name": "Runtime: api (metered)",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. OpenHands agents in-process, models through LiteLLM. Billed per token to API keys; counted in cost_usd and the spend caps.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "Native Windows factory",
-        "personal": "k-911-x17"
-      },
-      "details": {
-        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro; planning personas pm / analyst / sm DeepSeek-V4-Flash since D21; contract deepseek-v4-pro; reviewer Kimi-K2.7-Code, ...); the direct block, only when FACTORY_PROVIDER=direct: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4. tech_writer on the azure default is Kimi-K2.7-Code",
-        "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
-        "Rosters": "routes.yaml rosters.<provider> (persona map + fallback) serves any provider name selected by FACTORY_PROVIDER / default_provider; azure_routes and routes stay the defaults",
-        "Missing key": "degrades to the routes.yaml fallback with a warning",
-        "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
-        "Terminal guard": "factory/terminal_guard.py wraps the agent's terminal (Windows and Linux): a newline inside a quoted argument (on PowerShell any newline, an unterminated quote or bracket), --no-verify / git commit -n / core.hooksPath / DEVTOOLS_SKIP_TESTS, git push, gh pr writes and gh api writes are refused with a tool error before the shell sees them; on PowerShell an observation stuck at the >> continuation prompt resets the terminal at once. claude_session runs do not use it.",
-        "Billing": "metered: runs[].billing = metered, summed in cost_usd",
-        "Live view": "every sandbox run streams its turns (model text, tool calls and results, diff summaries, gate results, tokens and cost) in Claude Code's stream-json shape to state/api_runs/<run>/stream.jsonl. When termhub is reachable a read-only session runs `pretty --follow` on it from the step's start, exits at the step's end and stays open for review; runs[].session links it. Without termhub, only the file. The run row names the file (runs.stream_path; a Claude Code run names its run dir of stream-<n>.jsonl), so Build's board shows the same turns in the page (`factory job step`, JOBS-API v1.11)."
-      },
-      "env": [
-        {
-          "name": "FACTORY_API_WATCH",
-          "default": "auto"
-        }
-      ],
-      "models": [
-        "deepseek/deepseek-coder",
-        "deepseek/deepseek-chat",
-        "azure/gpt-5.4",
-        "azure/gpt-5.3-codex",
-        "azure/deepseek-v4-pro",
-        "azure/DeepSeek-V4-Flash"
-      ],
-      "code": [
-        "software-factory/factory/routes.yaml",
-        "software-factory/factory/model_router.py",
-        "software-factory/factory/runner.py",
-        "software-factory/factory/api_watch.py"
-      ]
-    },
-    {
-      "id": "runtime-claude",
-      "layer": "factory",
-      "name": "Runtime: claude_session (subscription)",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Claude Code does the agent work: `claude -p --output-format stream-json` inside a termhub session a human can open live.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "Native Windows factory, sessions in the Windows termhub (sessiond :7010); a round is `python -I -X utf8 -m factory.claude_session.round <spec>` typed into its PowerShell (no bash)",
-        "personal": "k-911-x17, sessions in its termhub"
-      },
-      "details": {
-        "Billing": "the operator's claude.ai subscription: API-key variables are unset for every run, and submit refuses (runtime_unavailable) when `claude auth status` is not a claude.ai login",
-        "Cost": "cost_usd is always 0; the API-price equivalent is summed in subscription_equiv_usd",
-        "Model": "--model claude_session=<name> (e.g. claude-sonnet-5-5); default: the CLI's default",
-        "Pipeline": "auto resolves to solo; under --pipeline chain only the dev persona is Claude Code",
-        "Bounds": "5400 s, at most 3 gate rounds, no-progress abort, and the job caps (JOBS-API v1.9: $30 counting total_cost_usd, 4 h, 20 rounds; per app and per job)",
-        "Review": "JOBS-API v1.9: a solo story's review runs here too, as a separate Claude Code run with --permission-mode plan (read-only) on the same reviewer prompt; a blocking finding goes back into the dev's own session (claude --resume) for one fix round",
-        "Usage limit": "JOBS-API v1.9: a 5-hour/weekly limit message trips this runtime's breaker (<state>/runtime_limits.json, factory/provider_limits.py) until the reset it names (else backoff 15 min doubling to 5 h); the job waits (blocked, why 'paused: Claude limit, resumes HH:MM') and resumes by itself at the reset; failover to api only when FACTORY_RUNTIME_FAILOVER or the job says so",
-        "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond) is the API; a step's session link is termhub's front: FACTORY_TERMHUB_PUBLIC_URL if set, else the front's /api/secure-url (Tailscale HTTPS), else the front itself (http://127.0.0.1:7000), never sessiond, which serves no page (8.4.17). The PA re-points any loopback link at that machine's front (PA_TERMHUB_URL or PA_MACHINES). Without termhub the run starts as a local process and cannot be watched live.",
-        "Compaction": "unknown: each run is one Claude Code conversation; Claude Code compacts it if it fills",
-        "Credit pool": "a claude_session run draws from the Claude credit pool (not metered per run here): its total_cost_usd and token usage are posted to the PA (POST /api/telemetry, when PA_TELEMETRY_URL is set) and counted against PA_CLAUDE_POOL_USD; once spent, with the failover policy on (PA_RUNTIME_FAILOVER, older name PA_CLAUDE_POOL_FALLBACK_API), the PA dispatches new jobs on the api runtime (see the Meter component)"
-      },
-      "env": [
-        {
-          "name": "FACTORY_TERMHUB_URL",
-          "default": "http://127.0.0.1:7010"
-        },
-        {
-          "name": "FACTORY_TERMHUB_PUBLIC_URL",
-          "default": null
-        },
-        {
-          "name": "FACTORY_CLAUDE_BIN",
-          "default": null
-        },
-        {
-          "name": "FACTORY_RUNTIME_FAILOVER",
-          "default": "off"
-        },
-        {
-          "name": "FACTORY_FAILOVER_MIN_WAIT_MIN",
-          "default": "30"
-        }
-      ],
-      "code": [
-        "software-factory/factory/claude_session/run.py",
-        "software-factory/factory/provider_limits.py",
-        "software-factory/factory/claude_session/termhub.py",
-        "software-factory/factory/claude_session/cli.py",
-        "software-factory/factory/claude_session/ledger.py"
-      ]
-    },
-    {
-      "id": "agent-sandbox",
-      "layer": "factory",
-      "name": "Agent sandbox, egress proxy and credential broker",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. Optional OS sandbox and credential broker (plan 5.2/5.3). Off on both stacks: D22 dropped the rollout, so agents keep full access to the machine they run on. The code stays behind FACTORY_SANDBOX and PA_SANDBOX (default off): an agent can run with no GitHub token, SSH key or gh login, egress through an allowlist proxy, and pushes and draft PRs through a broker that checks the run's ceiling.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "Windows: a restricted, Low-integrity token in a job object (factory/sandbox/exec.py); egress is proxy-routed via HTTPS_PROXY but not enforced (a firewall rule or a separate account would be an admin step); proxy and broker on 127.0.0.1, random ports",
-        "personal": "Linux: bubblewrap (new user/pid/net namespaces, host read-only, /home /root /run /tmp empty); proxy and broker on unix sockets, relayed to 127.0.0.1:3128/3129 inside"
-      },
-      "details": {
-        "Applies to": [
-          "FACTORY_SANDBOX=on: claude_session runs (claude starts inside; ceiling none, the factory delivers); the API runtime's terminal on Linux (refused on Windows: OpenHands' PowerShell probe would fall back unsandboxed)",
-          "PA_SANDBOX=on: plan-mode dispatch sessions; code modes are refused while a sandboxed session cannot commit"
-        ],
-        "Ceilings": "none | push_branch | draft_pr, from the delivery level or PA mode; never a protected branch, no force push, one draft PR from a branch the broker pushed; repo fixed by the host",
-        "Broker": "factory/sandbox/broker.py: per-run capability (not a token), per-owner token via gh_auth.token_for_repo, never runs git in the agent's checkout (fetches into its own mirror), audit.jsonl without secrets; `sbx` client in the sandbox",
-        "Egress": "factory/sandbox/proxy.py: CONNECT + plain HTTP, GitHub, the model APIs and package registries by default; names resolving to private addresses refused; egress.jsonl per run",
-        "Keys": "GitHub tokens and SSH sockets never pass; the model credential for Claude Code (CLAUDE_CODE_OAUTH_TOKEN) is the one key passed on purpose; the API runtime's model keys stay in the factory process",
-        "Limits": [
-          "Windows: directories every local user can read stay readable (C:\\repos inherits Users: RX) until `python -m factory.sandbox.exec setup --deny-read <root>` is run as an operator step",
-          "API runtime: the file editor tool runs in the factory process, unsandboxed"
-        ]
-      },
-      "env": [
-        {
-          "name": "FACTORY_SANDBOX",
-          "default": "off"
-        },
-        {
-          "name": "PA_SANDBOX",
-          "default": "off"
-        },
-        {
-          "name": "FACTORY_SANDBOX_PASS_ENV",
-          "default": "CLAUDE_CODE_OAUTH_TOKEN"
-        },
-        {
-          "name": "SANDBOX_EGRESS_ALLOW",
-          "default": null
-        },
-        {
-          "name": "SANDBOX_EGRESS_ALLOW_ONLY",
-          "default": null
-        },
-        {
-          "name": "SANDBOX_READ_PATHS",
-          "default": null
-        },
-        {
-          "name": "FACTORY_GITHUB_API_URL",
-          "default": null
-        }
-      ],
-      "code": [
-        "software-factory/factory/sandbox/__init__.py",
-        "software-factory/factory/sandbox/broker.py",
-        "software-factory/factory/sandbox/proxy.py",
-        "software-factory/factory/sandbox/exec.py",
-        "software-factory/factory/sandbox/host.py",
-        "software-factory/factory/sandbox/policy.py",
-        "software-factory/factory/claude_session/run.py",
-        "personal-assistant/src/dispatch/sandbox.ts"
-      ]
-    },
-    {
-      "id": "factory-store",
-      "layer": "factory",
-      "name": "Factory state",
-      "role": "Frozen (D30): reachable only with PA_BUILD=factory, off the default path. The factory's own store on its machine: sqlite plus a directory per job.",
-      "stacks": {
-        "work": "landing",
-        "personal": "landing"
-      },
-      "where": {
-        "work": "%LOCALAPPDATA%\\software-factory\\state since factory state migrate on 2026-11-08 (plan 2.5). software-factory/state in the checkout holds only .gitignore; .state-dir points here",
-        "personal": "~/.local/share/software-factory/state since factory state migrate on 2026-11-08 (plan 2.5). software-factory/state in the checkout holds only .gitignore; .state-dir points here"
-      },
-      "details": {
-        "Location": "outside the repo, so no story worktree or agent working directory sits inside the live checkout: factory/state_dir.py resolves the gitignored software-factory/.state-dir pointer, else software-factory/state (no environment override, so a worktree copy of the factory never inherits the live state); `factory state migrate` (an operator step, serve stopped) moves it and writes the pointer, `factory state where` prints it; the PA reads the same pointer (resolveStateDir in src/dispatch/factoryPace.ts) for the pacer's watch and the backup bundle",
-        "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations, tracker_items, tracker_notes",
-        "Tracker": "D29: each app's tracker is github_issues or local (apps/<app>/config.yaml::tracker; default github_issues only for a personal owner's repo, FACTORY_PERSONAL_OWNERS else xvanov). A local app's directions, stories, escalations and live status are rows in tracker_items/tracker_notes (factory/tracker.py), shown in `factory job status` (tracker, JOBS-API v1.12, so on Build), `factory why` and `factory inbox`; nothing touches its GitHub Issues, and its stories are named by story id. A repo with Issues disabled (has_issues false, or a 410) falls back to local",
-        "Research/report jobs": "state/jobs/<task_id>-<slug>/ (job.yaml, ask.md, brief.md, report.md, workspace, Claude run dir, worker.log)",
-        "Locks": "state/locks/story-<id>.lock around merge and cancel; serve.lock and tick-<app>.lock under factory serve (flock on Linux, LockFileEx on Windows: factory/oscompat.py)",
-        "Apps": "apps/<app>/config.yaml; only apps/factory and apps/template-probe are tracked in this public repo",
-        "PA side": "the worker stores the last `job list` in factory_board; it never reads this store"
-      },
-      "code": [
-        "software-factory/factory/settings/modes.py",
-        "software-factory/factory/runtime_state.py",
-        "software-factory/factory/state_dir.py",
-        "software-factory/factory/state_migrate.py",
-        "software-factory/factory/tracker.py",
-        "software-factory/.gitignore"
-      ]
-    },
-    {
       "id": "termhub",
       "layer": "sessions",
       "name": "termhub front",
@@ -2000,25 +1698,23 @@
         }
       ],
       "code": [
-        "personal-assistant/src/models.ts",
-        "software-factory/factory/routes.yaml"
+        "personal-assistant/src/models.ts"
       ]
     },
     {
       "id": "deepseek",
       "layer": "outside",
       "name": "DeepSeek API",
-      "role": "Frozen (D30): metered models for the software-factory personas (direct routes) and any PA pass set to deepseek/...; Build (D30) never calls it.",
+      "role": "Metered models for any PA pass set to deepseek/...; Build (D30) never calls it.",
       "stacks": {
         "work": "landing",
         "personal": "landing"
       },
       "details": {
-        "Factory": "the direct-provider block only, not what jobs use (default_provider is azure): dev deepseek/deepseek-coder, pm / analyst / tech_writer deepseek/deepseek-chat. On the azure default, planning personas are DeepSeek-V4-Flash (D21) and tech_writer is Kimi-K2.7-Code",
-        "Billing": "metered"
+        "Billing": "metered, in llm_spend"
       },
       "code": [
-        "software-factory/factory/routes.yaml"
+        "personal-assistant/src/llm.ts"
       ]
     },
     {
@@ -2096,16 +1792,6 @@
       "from": "you",
       "to": "talk-page",
       "label": "speak (wake word)"
-    },
-    {
-      "from": "runtime-claude",
-      "to": "agent-sandbox",
-      "label": "frozen (D30, PA_BUILD=factory only): claude inside the sandbox (FACTORY_SANDBOX=on)"
-    },
-    {
-      "from": "runtime-api",
-      "to": "agent-sandbox",
-      "label": "frozen (D30, PA_BUILD=factory only): terminal inside the sandbox (Linux, FACTORY_SANDBOX=on)"
     },
     {
       "from": "you",
@@ -2268,69 +1954,9 @@
       "label": "POST /api/sessions {links: card, run, job}"
     },
     {
-      "from": "dispatcher",
-      "to": "factory-api",
-      "label": "frozen (D30, PA_BUILD=factory only): JOBS-API JSON"
-    },
-    {
-      "from": "worker",
-      "to": "factory-api",
-      "label": "frozen (D30, PA_BUILD=factory only): job list to factory_board (every 5 s while a job moves, at once on a local factory's state write, else every 120 s); job status to run_pr / run_step (id chain)"
-    },
-    {
       "from": "sqlite-store",
       "to": "dashboard",
       "label": "event_outbox poll to GET /api/events (SSE); NOTIFY is only the optional Postgres backend"
-    },
-    {
-      "from": "factory-api",
-      "to": "dashboard",
-      "label": "frozen (D30, PA_BUILD=factory only): POST /api/factory/events (job status push, < 1 s after a transition)"
-    },
-    {
-      "from": "factory-api",
-      "to": "factory-chain",
-      "label": "frozen (D30, PA_BUILD=factory only): direction / task"
-    },
-    {
-      "from": "factory-chain",
-      "to": "runtime-api",
-      "label": "frozen (D30, PA_BUILD=factory only): persona step"
-    },
-    {
-      "from": "factory-chain",
-      "to": "runtime-claude",
-      "label": "frozen (D30, PA_BUILD=factory only): dev step / report"
-    },
-    {
-      "from": "factory-chain",
-      "to": "factory-store",
-      "label": "frozen (D30, PA_BUILD=factory only): stories, runs, events"
-    },
-    {
-      "from": "factory-chain",
-      "to": "github",
-      "label": "frozen (D30, PA_BUILD=factory only): push, PR, CI watch"
-    },
-    {
-      "from": "runtime-api",
-      "to": "deepseek",
-      "label": "frozen (D30, PA_BUILD=factory only): LiteLLM (metered)"
-    },
-    {
-      "from": "runtime-api",
-      "to": "azure",
-      "label": "frozen (D30, PA_BUILD=factory only): LiteLLM (metered)"
-    },
-    {
-      "from": "runtime-claude",
-      "to": "sessiond",
-      "label": "frozen (D30, PA_BUILD=factory only): create session {links: job, step, story} (FACTORY_TERMHUB_URL, default sessiond :7010)"
-    },
-    {
-      "from": "runtime-claude",
-      "to": "claude-sub",
-      "label": "frozen (D30, PA_BUILD=factory only): claude -p stream-json"
     },
     {
       "from": "termhub",
@@ -2341,11 +1967,6 @@
       "from": "watchdog",
       "to": "termhub",
       "label": "health probe, remedy"
-    },
-    {
-      "from": "factory-chain",
-      "to": "meter",
-      "label": "frozen (D30, PA_BUILD=factory only): POST /api/telemetry: spans, claude_session usage"
     },
     {
       "from": "meter",
@@ -2895,15 +2516,6 @@
       "config": "termhub.url",
       "path": "/api/health",
       "label": "termhub (local)"
-    },
-    "factory-serve": {
-      "kind": "http",
-      "config": "factory.serveUrl",
-      "path": "/api/health",
-      "headers": {
-        "X-Factory": "1"
-      },
-      "label": "factory serve"
     }
   }
 }

@@ -163,16 +163,6 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
   same(byId.postgres.tables, [...tables], 'postgres.tables');
 }
 
-// The factory's personas and the api runtime's models.
-{
-  const dir = path.join(REPO, 'software-factory', 'factory', 'personas');
-  same(byId['factory-chain'].personas, fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)), 'factory-chain.personas');
-  const routes = fs.readFileSync(path.join(REPO, 'software-factory', 'factory', 'routes.yaml'), 'utf8');
-  for (const m of byId['runtime-api'].models) assert.ok(routes.includes(m), `runtime-api.models: ${m} is not in routes.yaml`);
-  const api = fs.readFileSync(path.join(REPO, 'software-factory', 'docs', 'JOBS-API.md'), 'utf8');
-  assert.ok(api.includes(`${byId['factory-api'].contract} additions`), `factory-api.contract ${byId['factory-api'].contract} is not a section of JOBS-API.md`);
-}
-
 // Env defaults: a PA_ variable's default must be what config.js says; any
 // other variable must appear in one of the component's code files.
 {
@@ -215,7 +205,6 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
   assert.deepStrictEqual(arch.resolveCheck(A.health.ollama, cfg), { kind: 'http', url: 'http://127.0.0.1:11434/api/tags' });
   assert.deepStrictEqual(arch.resolveCheck(A.health.voice, cfg), { kind: 'http', url: 'http://127.0.0.1:47830/health' });
   assert.deepStrictEqual(arch.resolveCheck(A.health.whisper, cfg), { kind: 'tcp', host: '127.0.0.1', port: 47821 });
-  assert.deepStrictEqual(arch.resolveCheck(A.health['factory-serve'], cfg), { kind: 'http', url: 'http://127.0.0.1:7330/api/health', headers: { 'X-Factory': '1' } });
   assert.deepStrictEqual(arch.resolveCheck({ kind: 'machine' }, cfg), { kind: 'http', url: 'https://lab.example.ts.net:7443/api/health', remote: true });
   assert.deepStrictEqual(arch.resolveCheck({ kind: 'machine' }, { ...cfg, factory: { machine: 'local', path: '/x' } }), { kind: 'self' });
   assert.ok(arch.resolveCheck({ kind: 'http', url: 'http://evil.example/' }, cfg).error, 'a non-loopback URL is refused');
