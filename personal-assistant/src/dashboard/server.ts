@@ -511,6 +511,8 @@ const ROUTES: Route[] = [
   },
   // The "Proposed card changes" card (cardplan.client.js): card plans waiting for one yes, src/cardplans.ts.
   { method: 'GET', path: '/cardplan.js', handle: file('cardplan.client.js', JS) },
+  // The "Build agents need you" card (buildasks.client.js): open Build asks, answered through api/build/<run>/reply.
+  { method: 'GET', path: '/buildasks.js', handle: file('buildasks.client.js', JS) },
   { method: 'GET', path: '/api/cardplans', handle: async (c) => c.send(c.res, 200, { plans: await require('../cardplans.ts').list({ status: c.url.searchParams.get('status') || null }) }) },
   {
     method: 'POST',

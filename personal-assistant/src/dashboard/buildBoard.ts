@@ -113,6 +113,11 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
     send(res, 200, await status());
     return true;
   }
+  // The Plan page's "Build agents need you" card (buildasks.client.js): just the open asks, no run list.
+  if (req.method === 'GET' && url.pathname === '/api/build/needs') {
+    send(res, 200, { needs_you: await require('../build/messages.ts').needsYou() });
+    return true;
+  }
   if (req.method === 'GET' && url.pathname === '/build-board.js') {
     send(res, 200, fs.readFileSync(CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
     return true;

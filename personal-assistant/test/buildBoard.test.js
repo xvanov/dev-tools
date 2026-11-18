@@ -83,6 +83,10 @@ assert.deepStrictEqual(['2026-11-10T14:10:00Z', '2026-11-10T12:20:00Z', '2026-11
   new vm.Script(src, { filename: 'build.board.client.js' });
   assert.doesNotMatch(src, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
   assert.ok(!/fetch\('\//.test(src), 'relative URLs only (termhub /pa/ proxy)');
+  const plan = fs.readFileSync(path.join(dash, 'buildasks.client.js'), 'utf8');
+  new vm.Script(plan, { filename: 'buildasks.client.js' });
+  assert.doesNotMatch(plan, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
+  assert.ok(!/fetch\(['`]\//.test(plan), 'relative URLs only (termhub /pa/ proxy)');
 }
 
 // ---- the API ----------------------------------------------------------------------
@@ -159,6 +163,9 @@ async function main() {
     const dq = await repo.buildRuns.addMsg({ runId: b.id, dir: 'agent', kind: 'ask', body: JSON.stringify({ decisions: 1, questions: [{ id: 'db', text: 'DB?', options: ['sqlite', 'pg'], allowFree: false }, { id: 'n', text: 'Name?', options: [], allowFree: true }] }) });
     const pd = json(await call('GET', '/api/build?limit=50'));
     assert.deepStrictEqual(pd.needs_you.map((n) => [n.kind, n.questions.map((x) => x.id)]), [['decisions', ['db', 'n']]]);
+    // the Plan page's card reads just the asks, and its script is served
+    assert.deepStrictEqual(json(await call('GET', '/api/build/needs')).needs_you.map((n) => [n.kind, n.id]), [['decisions', dq.id]]);
+    assert.match((await call('GET', '/buildasks.js')).body, /api\/build\/\$\{run\}\/reply/);
     const dmsg = pd.runs.find((r) => r.id === b.id).messages.find((m) => m.id === dq.id);
     assert.deepStrictEqual([dmsg.questions.length, dmsg.text], [2, 'db: DB? [sqlite | pg]\nn: Name?']);
     assert.strictEqual((await call('POST', `/api/build/${b.id}/reply`, { headers: X, body: { answers: { db: 'mysql' } } })).status, 400, 'an option-only question refuses other text');

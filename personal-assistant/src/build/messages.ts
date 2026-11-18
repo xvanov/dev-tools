@@ -101,7 +101,9 @@ async function ask(
   } finally {
     // Back to work, unless the run ended while it waited; either way the wait comes off the wall clock.
     const r: Row | null = await repo().byId(runId);
-    if (r) {
+    // A second ask on the same run (a subagent's) still open keeps the run waiting and its clock running.
+    const another = (await repo().openAsks()).some((a: Row) => String(a.run_id) === String(runId) && a.id !== q.id);
+    if (r && !another) {
       const since = Date.parse(String(r.waiting_since));
       const patch: Row = { waiting_since: null };
       if (Number.isFinite(since)) patch.waiting_ms = Number(r.waiting_ms || 0) + Math.max(0, Date.now() - since);

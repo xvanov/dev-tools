@@ -618,7 +618,8 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   untouched. It blocks like a plain ask and prints one line per question plus a `JSON:` line; unanswered questions say so. On
   timeout the ask is closed (it leaves Needs you) and the agent reads "NO ANSWER YET … carry on with the safest default or
   stop". `needs_you` carries kind `decisions` with `questions`; the Build board shows one Decisions card per run (click an
-  option or type, one Submit, drafts survive redraws). Answer from anywhere through the same `reply`: the board's
+  option or type, one Submit, drafts survive redraws), and the Plan page shows the same open asks (plain ones too) as a
+  "Build agents need you" card (`buildasks.client.js`, `GET /api/build/needs`, same reply route). Answer from anywhere through the same `reply`: the board's
   `POST /api/build/<id>/reply {answers, ask?}`, the chat's `build_reply {run, answers? text?}` (the chat maps what the user
   said, spoken too, onto the question ids; a lone question takes plain `text`), `pa run reply <id> --answer q1=… --answer q2=…`.
   Option-only questions (`allowFree: false`) refuse anything else. The push is the usual `notify` (kind info, priority
