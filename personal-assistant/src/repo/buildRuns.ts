@@ -14,7 +14,7 @@ type Row = import('./types.ts').Row;
 const COLUMNS = [
   'commitment_id', 'task', 'model', 'repo_path', 'worktree_path', 'branch', 'cwd', 'machine', 'session_id',
   'claude_session', 'transcript_path', 'state', 'result', 'error', 'cost_cap_usd', 'wall_cap_min', 'cost_usd',
-  'tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'track', 'ended_at', 'last_activity_at', 'activity', 'idle_after_s',
+  'tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'track', 'ended_at', 'last_activity_at', 'activity', 'idle_after_s', 'profile', 'effort', 'permission_mode',
 ];
 /** States where the agent is still working or waiting on Jarvis. */
 const LIVE = ['starting', 'running', 'waiting', 'idle'];
@@ -26,9 +26,9 @@ function create(db: Db) {
     /** A new run, state `starting`: the row. */
     async insert(v: Row): Promise<Row> {
       const r = await db.query(
-        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, idle_after_s, started_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$9,$8,$8) returning *`,
-        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso(), v.idleAfterS ?? 240]
+        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, idle_after_s, profile, effort, permission_mode, started_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$9,$10,$11,$12,$8,$8) returning *`,
+        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso(), v.idleAfterS ?? 240, v.profile ?? null, v.effort ?? null, v.permissionMode ?? null]
       );
       return r.rows[0] as Row;
     },

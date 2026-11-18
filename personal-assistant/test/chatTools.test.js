@@ -80,8 +80,8 @@ async function main() {
     });
 
     const r = await T.handle('session_start', { card: '412', repo: 'acme/widget', prompt: 'Look into the flaky export test', model: 'haiku' });
-    assert.deepStrictEqual(r, { started: true, run: 21, route: 'build', model: 'haiku', branch: 'jarvis/21-x', session: 'http://hub/#session=s9', repo: 'acme/widget' });
-    assert.deepStrictEqual(started[0], { commitmentId: 412, task: 'Look into the flaky export test', repoPath: 'acme/widget', model: 'haiku', routeReason: 'the chat started a session' });
+    assert.deepStrictEqual(r, { started: true, run: 21, route: 'build', model: 'haiku', branch: 'jarvis/21-x', session: 'http://hub/#session=s9', repo: 'acme/widget', profile: null });
+    assert.deepStrictEqual(started[0], { commitmentId: 412, task: 'Look into the flaky export test', repoPath: 'acme/widget', model: 'haiku', profile: null, routeReason: 'the chat started a session' });
     await assert.rejects(() => T.handle('session_start', { card: 'p5', prompt: 'x' }), /an offer, not a card/);
     await assert.rejects(() => T.handle('session_start', { prompt: '  ' }), /needs a prompt/);
     for (const gone of ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'factory_jobs', 'factory_job']) {

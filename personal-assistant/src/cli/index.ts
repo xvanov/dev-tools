@@ -48,7 +48,7 @@ const HELP = `pa — your context layer
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
-    pa do <id> [--repo p] [--model m]  start one Build agent (one Claude Code agent) on a commitment
+    pa do <id> [--repo p] [--model m] [--profile chore|feature|research|quick] [--effort low|medium|high|xhigh|max]  start one Build agent (one Claude Code agent) on a commitment
     pa do --task "…" [--repo p] [--model haiku|sonnet|opus|fable]  …or on a task you word yourself
                      [--preview]  print the card the work would be offered as; start nothing
     pa done <id> [--dismiss|--reopen] close a commitment yourself
@@ -182,7 +182,7 @@ const GONE_FLAGS = ['mode', 'machine', 'via', 'delivery', 'pipeline', 'model-per
 function dispatchFlags(commitmentId: any, task: any, flags: any, lists: any) {
   const str = (name: any) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
   const gone = GONE_FLAGS.filter((f) => flags[f] !== undefined || (lists[f] || []).length);
-  if (gone.length) throw new Error(`--${gone.join(', --')}: no longer exist (every start is one Build agent; the software factory was removed). What is left: --repo, --model`);
+  if (gone.length) throw new Error(`--${gone.join(', --')}: no longer exist (every start is one Build agent; the software factory was removed). What is left: --repo, --model, --profile, --effort`);
   const models = lists.model || [];
   if (models.some((m: any) => String(m).includes('='))) throw new Error('--model persona=model is gone with the software factory: a Build model is haiku, sonnet, opus or fable');
   return {
@@ -190,6 +190,8 @@ function dispatchFlags(commitmentId: any, task: any, flags: any, lists: any) {
     task,
     repoPath: str('repo'),
     model: models.pop() || null,
+    profile: str('profile'),
+    effort: str('effort'),
   };
 }
 
@@ -554,7 +556,7 @@ const commands: Json = {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--repo p] [--model m] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--repo p] [--model m] [--profile name] [--effort e] | pa do --task "..."');
     let o: any;
     try {
       o = dispatchFlags(commitmentId, task, flags, lists);
@@ -563,7 +565,7 @@ const commands: Json = {
     }
     if (flagBool(flags, 'preview')) return printOffer(await require('../dispatch/offer.ts').prepare(o), { preview: true });
     const result = await dispatch.start(o);
-    out(`run #${result.id} · Build agent · ${result.model}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
+    out(`run #${result.id} · Build agent · ${result.model}${result.profile ? ` · profile ${result.profile}` : ''}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
     if (result.branch) out(`  branch   ${result.branch}`);
     out(`  session  ${result.url}`);
   },

@@ -60,6 +60,7 @@ const HANDLERS = {
       task: pl.task || null,
       repoPath: pl.repoPath || null,
       model: pl.model || null,
+      profile: pl.profile || null,
       repoVerified: true, // checked when the card was made, or just above
       routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
     });

@@ -926,11 +926,14 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 
 `pa do`, a card's **Do**, the planner, an accepted card and the chat's `build_start` / `session_start` all end in
 `dispatch.start`, which hands the task to **Build** (`src/build`, decision D30): one interactive Claude Code
-session in termhub on your subscription, model haiku, sonnet (default), opus or fable (a card setting), in a fresh
+session in termhub on your subscription, model haiku, sonnet (default), opus or fable (a profile or card setting), in a fresh
 worktree on a new branch when the card names a repo. Everything about it — the agent prompt, `pa run
 note|ask|done`, the heartbeat, kept runs, the Build page — is in AGENT.md, "Build: one Claude Code agent per task".
 
-`pa do <id> [--repo p] [--model m]` and `pa do --task "…"` start one; `pa propose …` puts it on a card instead
+`pa do <id> [--repo p] [--model m] [--profile chore|feature|research|quick] [--effort e]` and `pa do --task "…"` start one. A
+**profile** is a saved agent setup (model, effort, prompt, tools, subagents, caps): `research` runs read-only in Claude
+Code's plan permission mode and returns its report as the run result; a card's ☰ menu picks one, the planner picks one by task
+kind, and a card's own model / effort / cap overrides still win (AGENT.md, "Build"; docs/native/BUILD-ENRICHMENT.md A); `pa propose …` puts it on a card instead
 (dashboard → On me), frozen as shown; `pa do … --preview` prints that card. There is no route, end state, pipeline,
 runtime, kind or done-criteria to choose any more: those were the software factory's (PM → SM → dev → reviewer →
 merge gates, its own repo), which never worked well enough and was removed from the tree in D32 (git history keeps it:

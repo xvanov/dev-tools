@@ -626,9 +626,9 @@ const ROUTES: Route[] = [
       const body = await c.body();
       try {
         const run = await require('../build/index.ts').start({
-          commitmentId: Number(m?.[1]), model: body.model || null, costCapUsd: body.costCapUsd || null, wallCapMin: body.wallCapMin || null,
+          commitmentId: Number(m?.[1]), model: body.model || null, profile: body.profile || null, effort: body.effort || null, costCapUsd: body.costCapUsd || null, wallCapMin: body.wallCapMin || null,
         });
-        return send(res, 200, { id: run.id, model: run.model, state: run.state, url: run.url, branch: run.branch, repoPath: run.repo_path });
+        return send(res, 200, { id: run.id, model: run.model, profile: run.profile || null, state: run.state, url: run.url, branch: run.branch, repoPath: run.repo_path });
       } catch (e) {
         const err = e as HttpError & { status?: number };
         return send(res, err.status || (/no commitment/.test(err.message) ? 404 : 400), { error: err.message });

@@ -84,14 +84,16 @@ const READ_TOOLS = [
   {
     name: 'build_start',
     description:
-      "Start a Build agent (one Claude Code agent per task) — the user approves each call. From a Plan card (`card`: its summary and context become the brief and the card moves to dispatched) and/or the user's words (`task`). The agent works in a fresh worktree when the card or `repo` names a repo, may open a draft PR, never merges. `model`: haiku (docs, reports), sonnet (default), opus (hard), fable (claude-fable-5-1, the strongest; it has its own weekly limit). Returns the run; follow it with build_runs / build_run.",
+      "Start a Build agent (one Claude Code agent per task) — the user approves each call. From a Plan card (`card`: its summary and context become the brief and the card moves to dispatched) and/or the user's words (`task`). The agent works in a fresh worktree when the card or `repo` names a repo, may open a draft PR, never merges. `profile`: a saved agent setup (chore, feature, research = read-only, quick, or one the user saved): it sets model, effort, prompt, tools and caps; `model` / `effort` override it. `model`: haiku (docs, reports), sonnet (default), opus (hard), fable (claude-fable-5-2, the strongest; it has its own weekly limit). Returns the run; follow it with build_runs / build_run.",
     inputSchema: {
       type: 'object',
       properties: {
         card: { type: 'string', maxLength: 20, description: 'A Plan card id (commitment).' },
         task: { type: 'string', maxLength: 4000, description: "What to do, in the user's words; needed without a card." },
         repo: { type: 'string', maxLength: 300, description: "A known checkout; defaults to the card's repo." },
+        profile: { type: 'string', maxLength: 40, description: 'A Build profile: chore, feature, research (read-only), quick, or one saved.' },
         model: { type: 'string', enum: ['haiku', 'sonnet', 'opus', 'fable'] },
+        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: "Overrides the profile's effort." },
         idle_after_s: { type: 'integer', minimum: 30, maximum: 21600, description: 'Seconds of silence (no transcript, terminal or message activity) before the run counts as idle and you are told. Default 240; quick tasks 120; long builds or research 900+.' },
       },
       additionalProperties: false,
@@ -228,6 +230,7 @@ const ACTION_TOOLS = [
         prompt: { type: 'string', maxLength: 4000, description: "What the agent should do, in the user's words." },
         card: { type: 'string', maxLength: 20 },
         model: { type: 'string', maxLength: 120, description: 'Optional Build model: haiku, sonnet, opus or fable.' },
+        profile: { type: 'string', maxLength: 40, description: 'Optional Build profile: chore, feature, research (read-only), quick.' },
       },
       required: ['prompt'],
       additionalProperties: false,
@@ -449,7 +452,7 @@ async function sessionsTool({ machine = null, all = false }: { machine?: string 
 
 /** Pure. dispatch.start's result as the chat reports it. */
 function startedView(r: Json) {
-  return { started: true, run: r.id, route: r.route || 'build', model: r.model || null, branch: r.branch || null, session: r.url || null, repo: r.repoPath || null };
+  return { started: true, run: r.id, route: r.route || 'build', model: r.model || null, branch: r.branch || null, session: r.url || null, repo: r.repoPath || null, profile: r.profile || null };
 }
 
 async function sessionStartTool(args: Json) {
@@ -462,6 +465,7 @@ async function sessionStartTool(args: Json) {
     task: prompt,
     repoPath: args.repo ? String(args.repo).trim() : null,
     model: args.model || null,
+    profile: args.profile || null,
     routeReason: 'the chat started a session',
   };
   return startedView(await require('../dispatch').start(o));
@@ -508,7 +512,7 @@ async function handle(name: string, args: Json = {}) {
     case 'build_start': {
       const card = args.card != null ? parseCardId(args.card) : null;
       if (card?.proposal) throw new Error(`p${card.proposal} is an offer, not a card`);
-      const r = await require('../build/index.ts').start({ commitmentId: card ? card.commitment : null, task: args.task ? String(args.task) : null, repoPath: args.repo ? String(args.repo).trim() : null, model: args.model || null, idleAfterS: args.idle_after_s || null });
+      const r = await require('../build/index.ts').start({ commitmentId: card ? card.commitment : null, task: args.task ? String(args.task) : null, repoPath: args.repo ? String(args.repo).trim() : null, model: args.model || null, profile: args.profile || null, effort: args.effort || null, idleAfterS: args.idle_after_s || null });
       return { ...runView(r), url: r.url || null };
     }
     case 'build_set_idle': {

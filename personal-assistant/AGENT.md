@@ -571,15 +571,32 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 
 Do on a card (and `pa do`, the planner, accepted cards, the chat's start tools) calls `dispatch.start`, which
 hands to `src/build`: one interactive Claude Code session in termhub on the subscription, model haiku | sonnet |
-opus (card setting, default sonnet), in a fresh worktree on a new branch when the card names a repo. The agent
+opus | fable (a profile or card setting, default sonnet), in a fresh worktree on a new branch when the card names a repo. The agent
 prompt is one file, `src/build/agent-prompt.md`; edit it there. The software factory that used to sit beside it was removed in D32 (git history, `4eee22f`).
 
 - Rows: `build_run`, `build_msg` (`src/repo/buildRuns.ts`; the SQLite twin re-exports it, the SQL is portable).
+- **Profiles** (`src/build/profiles.ts`, table `build_profile`, `src/repo/buildProfiles.ts`; BUILD-ENRICHMENT.md A): a
+  saved, named agent: model, effort, permission mode, prompt (appended to `agent-prompt.md`), tools (MCP set,
+  allow/deny rules), subagent definitions, subagent model, caps, default repo. Seeds `chore`, `feature`,
+  `research` (read-only, plan permission mode), `quick` are written once and never over an edit. A null field falls
+  through; per field the order is **this call > the card's `build.card.<id>` > the profile > the defaults**, so a
+  run with no profile and no card setting launches exactly as before. Pick one with `build_start profile`,
+  `pa do --profile`, the card menu, or let the planner (task kind: investigate/review → research, coding →
+  feature, admin → chore; `dispatch.start mode: 'plan'` = research, which is how its eager research runs are
+  read-only). Real Claude Code flags only (checked against `claude --help`): `--model` (fable is `claude-fable-5-2`),
+  `--effort low|medium|high|xhigh|max`, `--permission-mode` (for `plan` the `--dangerously-skip-permissions` flag is
+  dropped, it would override it, and `Bash(node *pa.js* run *)` is allowed so the agent can still report),
+  `--strict-mcp-config` always plus `--mcp-config <file>` for the profile's `tools.mcp` (servers named in the
+  `build.mcp` setting), `--allowedTools`/`--disallowedTools`. The subagent model has no flag: env
+  `CLAUDE_CODE_SUBAGENT_MODEL`. Subagents are `.claude/agents/<name>.md` in the run's folder, listed in the
+  worktree's `info/exclude` so the agent never commits them; the repo's own agent of the same name wins. The profile
+  is on `build_run` and in `summary.json`. Settings UI and parity verbs are step B; for now profiles are edited
+  through `src/build/profiles.ts` `save` (and the store).
 - Agent verbs, run id from `$JARVIS_RUN_ID`: `pa run note "<text>"`, `pa run ask "<question>"` (blocks up to
   30 min, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
 - Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),
   `pa run send <id> "<text>"` (typed into the session). Chat tools: `build_runs`, `build_run`, `build_reply`,
-  `build_send`, `build_stop`, `build_start`, `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
+  `build_send`, `build_stop`, `build_start` (`profile`, `model`, `effort`), `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
 - A run whose session vanishes without `pa run done` is failed at once, with an urgent notice (heartbeat).
 - **Heartbeat** (`src/build/heartbeat.ts`, worker pass `build-heartbeat`, every 10 s): stat calls on the
   transcript and subagent transcripts, one sessiond list call (is the session alive, is the PTY busy), the
@@ -591,7 +608,7 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
 - **Kept runs** (`src/build/track.ts archive`, when a run ends, stops or fails): Claude Code prunes
   `~/.claude/projects` (`cleanupPeriodDays`), so `<dataDir>/build-runs/run-<id>/` holds a copy:
   `<session>.jsonl`, `<session>/subagents/`, `messages.json` (the build_msg rows) and `summary.json`
-  (run, card, task, model, repo, branch, state, result, error, started/ended, elapsed_s, tokens, cost_usd,
+  (run, card, task, model, profile, effort, permission_mode, repo, branch, state, result, error, started/ended, elapsed_s, tokens, cost_usd,
   agents, tool_calls by name, errors). `pa run export [--since <date>]` prints every summary.json as JSONL.
 - The Plan card of a task with a Build run shows its state chip, start to end and elapsed, cost, and
   links to the board card and the termhub session; several runs add the count, the span and the total

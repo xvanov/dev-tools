@@ -142,10 +142,14 @@ const sharedPushurls = (repo) => {
     });
     const before = store.queries.length;
     const r = await dispatch.start({ commitmentId: 7, task: 'fix the thing', mode: 'local', delivery: 'pr', model: 'opus', repoPath: '/r' });
-    assert.deepStrictEqual(seen, [{ commitmentId: 7, task: 'fix the thing', model: 'opus', repoPath: '/r' }]);
+    assert.deepStrictEqual(seen, [{ commitmentId: 7, task: 'fix the thing', model: 'opus', repoPath: '/r', profile: null, effort: null }]);
     assert.deepStrictEqual([r.id, r.route, r.model, r.branch, r.delivery], [41, 'build', 'opus', 'jarvis/41-x', null]);
     await dispatch.start({ task: 'x', model: 'gpt-9' });
     assert.strictEqual(seen[1].model, null, 'a model Build does not know is dropped, not passed on');
+    await dispatch.start({ task: 'look into it', mode: 'plan' });
+    assert.strictEqual(seen[2].profile, 'research', "mode 'plan' (the planner's research runs) is the read-only research profile");
+    await dispatch.start({ task: 'x', mode: 'plan', profile: 'quick', effort: 'high' });
+    assert.deepStrictEqual([seen[3].profile, seen[3].effort], ['quick', 'high'], 'a named profile wins over mode');
     assert.strictEqual(store.queries.length, before, 'nothing written here');
   }
 

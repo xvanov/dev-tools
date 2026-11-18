@@ -92,7 +92,7 @@ const proposals = require('../src/proposals');
   world.commitment = { ...world.commitment, summary: 'something else entirely' };
   const r = await proposals.decide(row.id, { accept: true });
   assert.match(r.result, /run #71 started \(one Claude Code agent, haiku\)/);
-  assert.deepStrictEqual(started.pop(), { commitmentId: 31, task: null, model: 'haiku', repoPath: '/repos/widget' }, 'exactly the card, not today\'s commitment');
+  assert.deepStrictEqual(started.pop(), { commitmentId: 31, task: null, model: 'haiku', repoPath: '/repos/widget', profile: null, effort: null }, 'exactly the card, not today\'s commitment');
   assert.strictEqual(world.proposals.find((p) => p.id === row.id).status, 'accepted');
 
   // A card from the factory era: the end state, app, pipeline and models are ignored; its repo is trusted as checked.
@@ -103,7 +103,14 @@ const proposals = require('../src/proposals');
   world.proposals.push(old);
   const r2 = await proposals.decide(old.id, { accept: true, delivery: 'pr' });
   assert.match(r2.result, /started \(one Claude Code agent/);
-  assert.deepStrictEqual(started.pop(), { commitmentId: 31, task: 'old task', model: null, repoPath: '/repos/widget' });
+  assert.deepStrictEqual(started.pop(), { commitmentId: 31, task: 'old task', model: null, repoPath: '/repos/widget', profile: null, effort: null });
+
+  // A profile is frozen into the offer, shown on its card, and handed to Build on yes.
+  const withProfile = await offer.propose({ commitmentId: 31, repoPath: '/repos/widget', profile: 'feature', dedupeKey: 'offer-run:31:profile' });
+  assert.strictEqual(withProfile.payload.profile, 'feature');
+  assert.match(withProfile.body, /Starts one Claude Code agent on the feature profile/);
+  await proposals.decide(withProfile.id, { accept: true });
+  assert.strictEqual(started.pop().profile, 'feature');
   await assert.rejects(proposals.decide(99, { accept: true, delivery: 'yolo' }), /unknown delivery/);
 
   // A card made before `--repo` had to be a known project is checked at accept, with the way out.

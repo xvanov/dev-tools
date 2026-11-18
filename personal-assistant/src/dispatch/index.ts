@@ -32,6 +32,9 @@ type StartOptions = {
   routeReason?: string | null;
   agent?: string | null;
   model?: string | null;
+  /** a Build profile (src/build/profiles.ts); `mode: 'plan'` without one means the read-only `research` profile */
+  profile?: string | null;
+  effort?: string | null;
   delivery?: string | null;
   deliverySource?: string | null;
   deliveryPhrase?: string | null;
@@ -212,10 +215,14 @@ async function briefFor(
  */
 async function start(o: StartOptions): Promise<Json> {
   const model = o.model && require('../build/index.ts').MODELS.includes(String(o.model)) ? String(o.model) : null;
-  const run: Json = await require('../build/index.ts').start({ commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null });
+  const run: Json = await require('../build/index.ts').start({
+    commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null,
+    // The planner's research runs say mode 'plan' (read-only): Build honours it through the research profile.
+    profile: o.profile || (o.mode === 'plan' ? 'research' : null), effort: o.effort || null,
+  });
   return {
     id: run.id, route: 'build', routeReason: 'one Claude Code agent (D30)', mode: null, machine: run.machine || null, url: run.url,
-    repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
+    repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, profile: run.profile || null, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
   };
 }
 

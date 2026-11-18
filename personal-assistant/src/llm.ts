@@ -226,6 +226,7 @@ function cliUsage(out: unknown): Usage {
 // current-generation prices; an unknown model records a null cost rather than
 // a guess. Cache writes are billed at 1.25x input, cache reads at 0.1x.
 const PRICES: Record<string, [number, number]> = {
+  'claude-fable-5-2': [10, 50],
   'claude-fable-5-1': [10, 50],
   'claude-fable-5': [10, 50],
   'claude-opus-5-5': [4, 20],

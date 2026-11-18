@@ -27,10 +27,11 @@ const termhub = require('../dispatch/termhub.ts');
 
 const log = logger('build');
 const repo = () => require('../repo').buildRuns;
+const P = () => require('./profiles.ts');
 
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
 /** Aliases Claude Code resolves itself; fable launches by its full id. */
-const MODEL_IDS: Record<string, string> = { fable: 'claude-fable-5-1' };
+const MODEL_IDS: Record<string, string> = { fable: 'claude-fable-5-2' };
 const DEFAULT_MODEL = 'sonnet';
 const LIVE = ['starting', 'running', 'waiting', 'idle'];
 const num = (v: unknown, d: number): number => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
@@ -50,7 +51,7 @@ const sh = (cwd: string, cmd: string, args: string[]): Promise<string> =>
 /** Pure: a model name checked against haiku|sonnet|opus|fable (the full fable id is accepted). */
 function checkModel(m: unknown): string {
   let v = String(m ?? '').trim().toLowerCase();
-  if (v === MODEL_IDS.fable) v = 'fable';
+  if (v === MODEL_IDS.fable || v === 'claude-fable-5-1') v = 'fable';
   if (!MODELS.includes(v)) throw Object.assign(new Error(`model must be ${MODELS.join(', ')}`), { status: 400 });
   return v;
 }
@@ -65,25 +66,37 @@ async function stored(commitmentId: number | string | null | undefined): Promise
   return v && typeof v === 'object' ? v : {};
 }
 
-/** GET: a card's effective settings, what it overrides, and the options. */
+/** GET: a card's effective settings (its profile's applied under its own overrides), what it overrides, and the options. */
 async function forCard(commitmentId: number | string): Promise<Json> {
   const o = await stored(commitmentId);
   const d = DEFAULTS();
+  const profiles = await P().list();
+  const p = o.profile ? profiles.find((x: Json) => x.name === o.profile) || null : null;
+  const r = P().resolve({ card: o, profile: p, defaults: d });
   return {
     card: Number(commitmentId),
-    settings: { model: o.model || d.model, costCapUsd: o.costCapUsd || d.costCapUsd, wallCapMin: o.wallCapMin || d.wallCapMin, idleAfterS: o.idleAfterS || d.idleAfterS },
+    settings: { profile: r.profile, model: r.model, effort: r.effort, costCapUsd: r.costCapUsd, wallCapMin: r.wallCapMin, idleAfterS: r.idleAfterS },
     overrides: o,
-    options: { models: MODELS, defaults: d },
+    options: { models: MODELS, efforts: P().EFFORTS, profiles: profiles.map((x: Json) => ({ name: x.name, description: x.description, model: x.model, effort: x.effort })), defaults: d },
   };
 }
 
-/** POST: store a card's model and caps (null or '' clears one), then answer as GET. */
+/** POST: store a card's profile, model, effort and caps (null or '' clears one), then answer as GET. */
 async function setForCard(commitmentId: number | string, patch: Json): Promise<Json> {
   await require('../dispatch').resolveTarget({ commitmentId }).catch((e: Error) => { throw Object.assign(e, { status: 404 }); });
   const merged: Json = { ...(await stored(commitmentId)) };
   if ('model' in patch) {
     if (patch.model == null || patch.model === '') delete merged.model;
     else merged.model = checkModel(patch.model);
+  }
+  if ('profile' in patch) {
+    if (patch.profile == null || patch.profile === '') delete merged.profile;
+    else merged.profile = (await P().need(String(patch.profile))).name;
+  }
+  if ('effort' in patch) {
+    if (patch.effort == null || patch.effort === '') delete merged.effort;
+    else if (!P().EFFORTS.includes(String(patch.effort))) throw Object.assign(new Error(`effort must be ${P().EFFORTS.join(', ')}`), { status: 400 });
+    else merged.effort = String(patch.effort);
   }
   for (const k of ['costCapUsd', 'wallCapMin', 'idleAfterS']) {
     if (!(k in patch)) continue;
@@ -151,21 +164,64 @@ function settingsFlag(): string {
   return ` --settings "${file}"`;
 }
 
+/** The MCP servers a profile names, from the `build.mcp` setting ({name: server config}); an unknown name is a 400. */
+async function mcpServers(names: string[]): Promise<Json> {
+  if (!names.length) return {};
+  const row = await require('../repo').system.setting('build.mcp').catch(() => null);
+  const known: Json = row?.value && typeof row.value === 'object' ? row.value : {};
+  const out: Json = {};
+  for (const n of names) {
+    if (!known[n]) throw Object.assign(new Error(`MCP server "${n}" is not in the build.mcp setting (known: ${Object.keys(known).join(', ') || 'none'})`), { status: 400 });
+    out[n] = known[n];
+  }
+  return out;
+}
+
+/** Writes a profile's subagent definitions into the run's folder, and keeps them out of git: a worktree's
+ *  .git is a file, so the exclude list is asked of git (info/exclude is shared by the repo's worktrees; the
+ *  path is anchored to .claude/agents so no other work is hidden). */
+async function writeSubagents(cwd: string, files: Array<{ path: string; text: string }>, isRepo: boolean): Promise<void> {
+  if (!files.length) return;
+  for (const f of files) {
+    const dest = path.join(cwd, f.path);
+    if (fs.existsSync(dest)) continue; // the repo's own agent of that name wins
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, f.text, 'utf8');
+  }
+  if (!isRepo) return;
+  const rel = (await sh(cwd, 'git', ['rev-parse', '--git-path', 'info/exclude'])).trim();
+  const file = path.resolve(cwd, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const have = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const lines = have.split(/\r?\n/);
+  if (!lines.includes('/.claude/agents/')) fs.appendFileSync(file, `${have && !have.endsWith('\n') ? '\n' : ''}/.claude/agents/\n`);
+}
+
 /** Starts a run. What it made is undone when the session does not open. */
-async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null }): Promise<Row> {
+async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; profile?: string | null; effort?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null }): Promise<Row> {
   const dispatch = require('../dispatch');
   const commitmentId = o.commitmentId || null;
   const card = await stored(commitmentId);
   const d = DEFAULTS();
-  const model = checkModel(o.model || card.model || d.model);
-  const costCapUsd = num(o.costCapUsd ?? card.costCapUsd, d.costCapUsd);
-  const wallCapMin = num(o.wallCapMin ?? card.wallCapMin, d.wallCapMin);
-  const idleAfterS = Math.min(21600, Math.max(30, num(o.idleAfterS ?? card.idleAfterS, d.idleAfterS)));
+  // Per field: this call > the card's stored settings > the profile (this call's, else the card's) > the defaults.
+  let profile = o.profile ? await P().need(String(o.profile)) : null;
+  if (!profile && card.profile) {
+    profile = await P().get(String(card.profile));
+    if (!profile) log.warn('the card names a profile that no longer exists; using the defaults', { card: commitmentId, profile: card.profile });
+  }
+  if (o.effort && !P().EFFORTS.includes(String(o.effort))) throw Object.assign(new Error(`effort must be ${P().EFFORTS.join(', ')}`), { status: 400 });
+  const r = P().resolve({ explicit: { model: o.model, effort: o.effort, costCapUsd: o.costCapUsd, wallCapMin: o.wallCapMin, idleAfterS: o.idleAfterS }, card, profile, defaults: d });
+  const model = checkModel(r.model);
+  const costCapUsd = num(r.costCapUsd, d.costCapUsd);
+  const wallCapMin = num(r.wallCapMin, d.wallCapMin);
+  const idleAfterS = Math.min(21600, Math.max(30, num(r.idleAfterS, d.idleAfterS)));
+  const mcp = await mcpServers(r.tools.mcp);
   if (commitmentId) {
     const live = await repo().liveForCommitment(commitmentId);
     if (live) throw new Error(`#${commitmentId} already has run #${live.id} (${live.state}) — open it, or stop it first`);
   }
-  const target = await dispatch.resolveTarget({ commitmentId, repoPath: o.repoPath || null });
+  let target = await dispatch.resolveTarget({ commitmentId, repoPath: o.repoPath || null });
+  if (!target.repoPath && r.repoPath) target = await dispatch.resolveTarget({ commitmentId, repoPath: r.repoPath });
   const task: string | null = o.task || target.commitment?.summary || null;
   if (!task) throw new Error('nothing to do — give a card or a task');
   const wanted: string | null = target.repoPath || null;
@@ -175,7 +231,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const timings: Record<string, number> = {};
   const mark = (k: string): void => { timings[k] = Date.now() - t0; };
   mark('resolved_ms');
-  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS });
+  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS, profile: r.profile, effort: r.effort, permissionMode: r.permissionMode });
   const cwd = path.join(config.worktreesRoot, `build-${run.id}`);
   let branch: string | null = null;
   let sessionId: string | null = null;
@@ -197,8 +253,20 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     const prompt = renderPrompt(fs.readFileSync(path.join(config.toolDir, 'src', 'build', 'agent-prompt.md'), 'utf8'), {
       run_id: String(run.id), task, context: briefContext(target), where, pa: paCommand(), reports_dir: reportsDir,
     });
+    const vars = { run_id: String(run.id), task, pa: paCommand(), reports_dir: reportsDir };
     const promptPath = path.join(config.worktreesRoot, `build-${run.id}.PROMPT.md`);
-    fs.writeFileSync(promptPath, prompt, 'utf8');
+    // The profile's text comes after the common prompt, with the same {{placeholders}}.
+    fs.writeFileSync(promptPath, r.prompt ? `${prompt.trimEnd()}
+
+${renderPrompt(r.prompt, vars)}
+` : prompt, 'utf8');
+    let mcpFile: string | null = null;
+    if (Object.keys(mcp).length) {
+      mcpFile = path.join(config.worktreesRoot, `build-${run.id}.mcp.json`);
+      fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers: mcp }), 'utf8');
+    }
+    const extra = P().launchFlags(r, { mcpFile });
+    await writeSubagents(cwd, extra.files, isRepo);
     try {
       require('../dispatch/trust.ts').ensureTrusted(config.worktreesRoot);
       require('../dispatch/trust.ts').ensureTrusted(cwd);
@@ -208,12 +276,13 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     mark('prompt_ms');
     const claudeSession = crypto.randomUUID();
     const launch = require('../dispatch/agent.ts').dispatchCommand({ agent: 'claude', model: MODEL_IDS[model] || model, prompt: null });
+    const line = P().withPermissionMode(launch.command, r.permissionMode);
     const session = await termhub.createSession({
       cwd,
       // The opening prompt is the command's argument: no waiting for the input box, no typing, no 6 s settle.
-      command: `${launch.command}${leanFlags(launch.command)}${settingsFlag()} --session-id ${claudeSession} "Read ${promptPath} for your full instructions, then do the task it describes."`,
+      command: `${line}${leanFlags(line)}${extra.flags}${settingsFlag()} --session-id ${claudeSession} "Read ${promptPath} for your full instructions, then do the task it describes."`,
       title: `jarvis#${run.id} ${task.slice(0, 40)}`,
-      env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}` },
+      env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}`, ...extra.env },
       links: { card: commitmentId, external: `build-${run.id}` },
     });
     sessionId = session.id;
@@ -238,7 +307,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
     }
     throw err;
   }
-  log.info('build run started', { run: run.id, model, repo: isRepo ? wanted : null, branch, ...timings });
+  log.info('build run started', { run: run.id, model, profile: r.profile, effort: r.effort, mode: r.permissionMode, repo: isRepo ? wanted : null, branch, ...timings });
   return { ...(await withUrl(await repo().byId(run.id))), timings };
 }
 
@@ -411,4 +480,4 @@ async function list(o: { live?: boolean; limit?: number; offset?: number } = {})
   return repo().list(o);
 }
 
-module.exports = { start, stop, removeWorktree, sweepWorktrees, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, MODEL_IDS, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };
+module.exports = { profiles: P, start, writeSubagents, mcpServers, stop, removeWorktree, sweepWorktrees, markIdle, unidle, setIdle, get, list, finish, done, reconcile, forCard, setForCard, stored, checkModel, MODEL_IDS, renderPrompt, projectDirName, transcriptPathFor, paCommand, MODELS, DEFAULT_MODEL, LIVE, DEFAULTS };

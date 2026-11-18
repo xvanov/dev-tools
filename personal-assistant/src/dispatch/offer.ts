@@ -29,6 +29,8 @@ type PrepareOptions = {
   repoPath?: string | null;
   /** the Build model (haiku | sonnet | opus | fable); unset: the card's build settings */
   model?: string | null;
+  /** a Build profile name (src/build/profiles.ts), frozen into the offer */
+  profile?: string | null;
   /** a line for the card (the planner's brief) */
   why?: string | null;
   suggestedBy?: string | null;
@@ -49,7 +51,7 @@ function clip(s: unknown, n: number): string {
   return `${t.slice(0, cut)}…`;
 }
 
-async function prepare({ commitmentId = null, task = null, repoPath = null, model = null, why = null, suggestedBy = null, title = null }: PrepareOptions): Promise<Offer> {
+async function prepare({ commitmentId = null, task = null, repoPath = null, model = null, profile = null, why = null, suggestedBy = null, title = null }: PrepareOptions): Promise<Offer> {
   const dispatch = require('./index.ts');
   if (repoPath) await dispatch.knownRepo(repoPath);
   const target: Target = await dispatch.resolveTarget({ commitmentId, repoPath });
@@ -69,6 +71,7 @@ async function prepare({ commitmentId = null, task = null, repoPath = null, mode
     // commitment's own project. Accept trusts this instead of re-judging.
     repoVerifiedAt: target.repoPath ? new Date().toISOString() : null,
     model: model || null,
+    profile: profile ? String(profile) : null,
   };
   return { title: `Start an agent: ${label}`.slice(0, 280), body: cardBody({ payload, why, target }), payload, target };
 }
@@ -80,7 +83,7 @@ function cardBody({ payload: p, why, target }: { payload: Payload; why?: string 
   // The planner's note is model text: one line, labelled, so it can never pose
   // as the card's own lines.
   if (why) L.push(`Planner's note: ${clip(why, 500)}`, '');
-  L.push(`Starts one Claude Code agent${p.model ? ` (${p.model})` : ''}${target?.project?.name ? ` in ${target.project.name}` : p.repoPath ? ` in ${p.repoPath}` : ''}, on its own branch in a fresh worktree when the card names a repo.`);
+  L.push(`Starts one Claude Code agent${p.profile ? ` on the ${p.profile} profile` : ''}${p.model ? ` (${p.model})` : ''}${target?.project?.name ? ` in ${target.project.name}` : p.repoPath ? ` in ${p.repoPath}` : ''}, on its own branch in a fresh worktree when the card names a repo.`);
   L.push('It ends with a draft pull request or a report, and never merges.');
   return L.join('\n');
 }

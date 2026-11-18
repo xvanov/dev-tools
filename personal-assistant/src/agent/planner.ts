@@ -61,7 +61,7 @@ async function act(p: Json) {
         // A research ask, read-only by intent: nothing the planner starts alone
         // may change code (the agent prompt for a question says so).
         const run = await require('../dispatch').start({
-          commitmentId: c.id, task: p.brief, mode: 'plan', routeReason: 'planner research run (read-only)',
+          commitmentId: c.id, task: p.brief, mode: 'plan', profile: require('../build/profiles.ts').profileForKind(p.kind) || 'research', routeReason: 'planner research run (read-only)',
         });
         plan.researchRunId = Number(run.id);
         await require('../notify').notify({
@@ -90,6 +90,7 @@ async function act(p: Json) {
     const offer = require('../dispatch/offer.ts');
     const o = {
       commitmentId: c.id,
+      profile: require('../build/profiles.ts').profileForKind(p.kind),
       why: p.brief,
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),

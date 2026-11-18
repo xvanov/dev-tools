@@ -26,7 +26,7 @@ const fresh = () => ({
   assert.strictEqual(M.summary(null), 'build settings…');
   assert.strictEqual(M.summary({ settings: { model: 'haiku', costCapUsd: 0.5, wallCapMin: 45 } }), 'haiku · $0.5 · 45 min');
   const rows = Object.fromEntries(M.rows(s).map((r) => [r.field, r]));
-  assert.deepStrictEqual(Object.keys(rows), ['model', 'costCapUsd', 'wallCapMin', 'idleAfterS']);
+  assert.deepStrictEqual(Object.keys(rows), ['profile', 'model', 'effort', 'costCapUsd', 'wallCapMin', 'idleAfterS']);
   assert.deepStrictEqual(rows.model.options.map((o) => o.value), ['', 'haiku', 'sonnet', 'opus']);
   assert.strictEqual(rows.model.options[0].label, 'default (sonnet)');
   assert.strictEqual(rows.costCapUsd.badge, 'default');
@@ -36,7 +36,7 @@ const fresh = () => ({
   assert.deepStrictEqual(M.patchFor(s, 'wallCapMin', ''), { wallCapMin: null }, 'empty resets');
   const drawn = M.optimistic(s, { model: 'opus', costCapUsd: 2 });
   assert.deepStrictEqual([drawn.settings.model, drawn.settings.costCapUsd, drawn.overrides], ['opus', 2, { model: 'opus', costCapUsd: 2 }]);
-  assert.strictEqual(M.rows(drawn)[0].badge, 'set on this card');
+  assert.strictEqual(M.rows(drawn).find((r) => r.field === 'model').badge, 'set on this card');
   const back = M.optimistic(drawn, { model: null });
   assert.deepStrictEqual([back.settings.model, back.overrides], ['sonnet', { costCapUsd: 2 }]);
   assert.deepStrictEqual(s.overrides, {}, 'the cached copy is not mutated');
@@ -82,17 +82,28 @@ async function main() {
     const X = { 'x-pa': '1' };
 
     const first = json(await call('GET', url));
-    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { model: 'sonnet', costCapUsd: 5, wallCapMin: 120, idleAfterS: 240 }, {}]);
+    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { profile: null, model: 'sonnet', effort: null, costCapUsd: 5, wallCapMin: 120, idleAfterS: 240 }, {}]);
     assert.deepStrictEqual(first.options.models, ['haiku', 'sonnet', 'opus', 'fable']);
 
     const set = json(await call('POST', url, { headers: X, body: M.patchFor(first, 'model', 'haiku') }));
     assert.deepStrictEqual([set.settings.model, set.overrides], ['haiku', { model: 'haiku' }]);
     json(await call('POST', url, { headers: X, body: { costCapUsd: 1.5, wallCapMin: 30 } }));
     const all = json(await call('GET', url));
-    assert.deepStrictEqual(all.settings, { model: 'haiku', costCapUsd: 1.5, wallCapMin: 30, idleAfterS: 240 }, 'stored: the next open shows the same');
+    assert.deepStrictEqual(all.settings, { profile: null, model: 'haiku', effort: null, costCapUsd: 1.5, wallCapMin: 30, idleAfterS: 240 }, 'stored: the next open shows the same');
     assert.strictEqual(M.summary(all), 'haiku · $1.5 · 30 min');
     const reset = json(await call('POST', url, { headers: X, body: M.patchFor(all, 'model', '') }));
     assert.deepStrictEqual([reset.settings.model, reset.overrides], ['sonnet', { costCapUsd: 1.5, wallCapMin: 30 }]);
+
+    // The profile picker: the profile's settings show under the card's own overrides; '' clears it.
+    assert.deepStrictEqual(first.options.profiles.map((p) => p.name), ['chore', 'feature', 'quick', 'research']);
+    const picked = json(await call('POST', url, { headers: X, body: M.patchFor(first, 'profile', 'feature') }));
+    assert.deepStrictEqual([picked.settings.profile, picked.settings.model, picked.settings.effort, picked.settings.costCapUsd, picked.overrides.profile], ['feature', 'opus', 'medium', 1.5, 'feature'], 'the profile fills what the card leaves unset; the caps the card set stay');
+    assert.strictEqual(M.summary(picked), 'feature · opus · medium · $1.5 · 30 min');
+    const eff = json(await call('POST', url, { headers: X, body: M.patchFor(picked, 'effort', 'high') }));
+    assert.deepStrictEqual([eff.settings.effort, eff.settings.model], ['high', 'opus'], 'a card override wins over the profile, field by field');
+    assert.strictEqual((await call('POST', url, { headers: X, body: { profile: 'nope' } })).status, 400);
+    assert.strictEqual((await call('POST', url, { headers: X, body: { effort: 'extreme' } })).status, 400);
+    json(await call('POST', url, { headers: X, body: { profile: null, effort: null } }));
 
     // What the menu reverts on: a bad value, an unknown card, a POST without X-PA.
     const bad = await call('POST', url, { headers: X, body: { model: 'gpt' } });

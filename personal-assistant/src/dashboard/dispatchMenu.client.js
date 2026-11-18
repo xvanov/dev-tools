@@ -1,8 +1,9 @@
 'use strict';
 
 // A Plan card's build settings, behind its ☰ button (PLAN.md D30). Do starts
-// ONE Claude Code agent (src/build): what is left to choose is the model
-// (haiku, sonnet, opus or fable; default sonnet) and, optionally, the run's caps — a
+// ONE Claude Code agent (src/build): what is left to choose is the profile (a saved
+// agent setup: chore, feature, research, quick), the model (haiku, sonnet, opus or
+// fable; default sonnet, or the profile's), the effort and, optionally, the run's caps — a
 // dollar cap and a wall-clock cap that stop the session. The card shows one
 // read-only line of what Do will start ("sonnet · $5 · 2 h"); the ☰ opens a
 // small menu, each setting saying whether it is the default or set on this
@@ -22,18 +23,18 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DispatchMenu = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const FIELDS = ['model', 'costCapUsd', 'wallCapMin', 'idleAfterS'];
-  const LABEL = { model: 'Model', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)' };
+  const FIELDS = ['profile', 'model', 'effort', 'costCapUsd', 'wallCapMin', 'idleAfterS'];
+  const LABEL = { profile: 'Profile', model: 'Model', effort: 'Effort', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)' };
   const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable', fable: 'fable — the strongest; its own weekly limit' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;
   const hours = (min) => (min % 60 === 0 ? `${min / 60} h` : `${min} min`);
 
-  /** The one line a card shows: "sonnet · $5 · 2 h". */
+  /** The one line a card shows: "sonnet · $5 · 2 h", or "feature · opus · medium · $8 · 3 h" with a profile. */
   function summary(s) {
     if (!s || !s.settings) return 'build settings…';
     const v = s.settings;
-    return [v.model, `$${v.costCapUsd}`, hours(Number(v.wallCapMin))].join(' · ');
+    return [v.profile, v.model, v.profile ? v.effort : null, `$${v.costCapUsd}`, hours(Number(v.wallCapMin))].filter(Boolean).join(' · ');
   }
 
   /** The menu's rows, pure: label, value ('' = the default), options for a select, where it came from. */
@@ -49,7 +50,11 @@
         badge: overridden ? 'set on this card' : 'default',
         options: f === 'model'
           ? [{ value: '', label: `default (${d.model || 'sonnet'})` }].concat(((s.options && s.options.models) || []).map((m) => ({ value: m, label: MODEL[m] || m })))
-          : null,
+          : f === 'effort'
+            ? [{ value: '', label: "default (the profile's, else Claude's)" }].concat(((s.options && s.options.efforts) || []).map((e) => ({ value: e, label: e })))
+            : f === 'profile'
+              ? [{ value: '', label: 'none (the defaults)' }].concat(((s.options && s.options.profiles) || []).map((p) => ({ value: p.name, label: p.description ? `${p.name} — ${p.description}` : p.name })))
+              : null,
         placeholder: d[f] != null ? String(d[f]) : '',
       };
     });
@@ -58,7 +63,7 @@
   /** The POST body for one change; '' clears it. */
   function patchFor(_s, field, value) {
     if (value === '' || value == null) return { [field]: null };
-    return { [field]: field === 'model' ? String(value) : Number(value) };
+    return { [field]: field === 'model' || field === 'effort' || field === 'profile' ? String(value) : Number(value) };
   }
 
   /** The settings as they will look once `patch` is stored: drawn before the server answers. */
@@ -236,7 +241,7 @@
       line.textContent = summary(e && e.data);
       const button = h('button', {
         type: 'button', class: 'dmenu-btn', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-controls': `dmenu-${id}`,
-        title: 'Build settings: model and caps', 'aria-label': `Build settings for #${id}`, text: '☰',
+        title: 'Build settings: profile, model, effort and caps', 'aria-label': `Build settings for #${id}`, text: '☰',
       });
       const wrap = h('span', { class: 'dmenu-wrap' }, button);
       button.addEventListener('click', () => toggle(id, wrap, button));

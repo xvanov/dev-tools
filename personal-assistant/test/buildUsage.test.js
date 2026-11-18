@@ -47,12 +47,14 @@ const B = require('../src/build/index.ts');
 assert.ok(B.MODELS.includes('fable'));
 assert.strictEqual(B.checkModel('Fable'), 'fable');
 assert.strictEqual(B.checkModel('claude-fable-5-1'), 'fable');
-assert.strictEqual(B.MODEL_IDS.fable, 'claude-fable-5-1');
+assert.strictEqual(B.checkModel('claude-fable-5-2'), 'fable');
+assert.strictEqual(B.MODEL_IDS.fable, 'claude-fable-5-2');
 const tools = fs.readFileSync(path.join(__dirname, '..', 'src', 'mcp', 'chatTools.ts'), 'utf8');
 assert.match(tools, /enum: \['haiku', 'sonnet', 'opus', 'fable'\]/);
 assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'factory.html'), 'utf8'), /<option value="fable">/);
 assert.ok(require('../src/dashboard/dispatchMenu.client.js').rows({ settings: { model: 'fable' }, options: { models: B.MODELS } }));
 assert.strictEqual(require('../src/build/track.ts').priceOf('claude-fable-5-1').in, 10);
+assert.strictEqual(require('../src/build/track.ts').priceOf('claude-fable-5-2').in, 10);
 
 // Fetch: token re-read from the file each time, cached a minute, a 429 backs off serving the last good numbers stale, failures are {ok:false}, token never returned.
 async function main() {
