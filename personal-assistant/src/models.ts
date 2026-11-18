@@ -151,6 +151,7 @@ const PURPOSES: Purpose[] = [
   { key: 'draft', env: 'PA_DRAFT_MODEL', needs: 'text', ...at('drafts.model'), what: 'reply drafts' },
   { key: 'routine', env: 'PA_ROUTINE_MODEL', needs: 'text', ...at('routines.model'), what: 'routines: parse, reports, suggestions' },
   { key: 'eval', env: 'PA_EVAL_MODEL', needs: 'json', ...at('eval.model'), what: 'retrieval evals' },
+  { key: 'summary', env: 'PA_SUMMARY_MODEL', needs: 'text', ...at('build.summaryModel'), what: 'Build runs: one sentence per few tool calls' },
   { key: 'fast-lane', env: 'PA_FAST_MODEL', needs: 'text', ...at('fastLane.model'), what: 'voice fast lane: quick replies and routing' },
   { key: 'fast-lane-fallback', env: 'PA_FAST_FALLBACK_MODEL', needs: 'text', ...at('fastLane.fallback'), what: 'voice fast lane when the local model is down or slow' },
 ];
@@ -205,7 +206,8 @@ function report({ c = config, claudeAvailable = true, read = secret }: { c?: Con
 //
 // Env stays the default. The dashboard's Agents page (and `pa agents set`, the chat's
 // agent_settings_set) writes overrides to the `agent.settings` setting:
-//   { chatModel?: string, passModels?: { <purpose key>: <model string> } }
+//   { chatModel?: string, passModels?: { <purpose key>: <model string> }, summaryEvery?: n, summaryLines?: n }
+// (the two numbers are the Build tool-summary cadence and visible lines, `numbers()`; BUILD-ENRICHMENT C)
 // A pass reads its model from `config` (config.drafts.model, …) at call time, so an override is
 // applied by writing the same field, once the store is read: refresh() does that, at most every
 // TTL_MS, and the worker calls it before every pass (src/util/exclusive.ts `before`) and `pa`
@@ -215,7 +217,12 @@ function report({ c = config, claudeAvailable = true, read = secret }: { c?: Con
 
 const SETTING = 'agent.settings';
 const TTL_MS = 10_000;
-type Stored = { chatModel?: string; passModels?: Record<string, string> };
+type Stored = { chatModel?: string; passModels?: Record<string, string>; summaryEvery?: number; summaryLines?: number };
+/** Whole-number settings stored beside the models: key, env variable, config field, allowed range (BUILD-ENRICHMENT C). */
+const NUMBERS: Array<{ key: 'summaryEvery' | 'summaryLines'; env: string; field: string; min: number; max: number; what: string }> = [
+  { key: 'summaryEvery', env: 'PA_SUMMARY_EVERY', field: 'summaryEvery', min: 1, max: 100, what: 'tool calls of a Build run per summary sentence' },
+  { key: 'summaryLines', env: 'PA_SUMMARY_LINES', field: 'summaryLines', min: 1, max: 10, what: 'summary lines shown on a Build run card' },
+];
 const CHAT = 'chat';
 const baseline = new WeakMap<object, Record<string, string>>();
 let stored: Stored = {};
@@ -236,6 +243,21 @@ function parseStored(v: unknown): Stored {
       if (PURPOSES.some((p) => p.key === k) && typeof val === 'string' && val.trim()) m[k] = val.trim();
     }
     if (Object.keys(m).length) out.passModels = m;
+  }
+  for (const k of NUMBERS) {
+    const v = Number(raw[k.key]);
+    if (Number.isInteger(v) && v >= k.min && v <= k.max) out[k.key] = v;
+  }
+  return out;
+}
+
+/** The whole-number settings in force: the store's value, else the environment's or the built-in default, with where it came from. */
+function numbers(c: Config = config): Record<string, { value: number; source: string; env: string; min: number; max: number; what: string }> {
+  const out: Record<string, { value: number; source: string; env: string; min: number; max: number; what: string }> = {};
+  const { env } = require('./config.ts');
+  for (const k of NUMBERS) {
+    const ov = stored[k.key];
+    out[k.key] = { value: ov ?? Number(c.build[k.field]), source: ov !== undefined ? 'store' : env(k.env) ? 'env' : 'default', env: k.env, min: k.min, max: k.max, what: k.what };
   }
   return out;
 }
@@ -308,8 +330,16 @@ function checkChatModel(value: unknown, agent: string | null = config.chat.agent
 }
 
 /** Stores a patch ({chatModel?, passModels?: {key: model | null}}; null or '' clears one) and applies it now. Returns the overrides. */
-async function save(patch: { chatModel?: string | null; passModels?: Record<string, string | null> }): Promise<Stored> {
+async function save(patch: { chatModel?: string | null; passModels?: Record<string, string | null>; summaryEvery?: number | null; summaryLines?: number | null }): Promise<Stored> {
   const next: Stored = { ...parseStored(stored) };
+  for (const k of NUMBERS) {
+    const v = patch[k.key];
+    if (v === undefined) continue;
+    if (v === null) { delete next[k.key]; continue; }
+    const num = Number(v);
+    if (!Number.isInteger(num) || num < k.min || num > k.max) throw Object.assign(new Error(`${k.key} must be a whole number from ${k.min} to ${k.max} (${k.what})`), { status: 400 });
+    next[k.key] = num;
+  }
   if (patch.chatModel !== undefined) {
     if (patch.chatModel === null || String(patch.chatModel).trim() === '') delete next.chatModel;
     else next.chatModel = checkChatModel(patch.chatModel);
@@ -360,5 +390,5 @@ function resetOverrides(): void { stored = {}; loadedAt = 0; inflight = null; }
 
 module.exports = {
   PROVIDERS, COMPAT, PURPOSES, KEY_NAMES, parseModel, capabilities, route, providerKey, parsePrices, purpose, modelFor, report,
-  SETTING, parseStored, applyStored, refresh, overrides, checkPassModel, checkChatModel, save, effective, resetOverrides,
+  SETTING, NUMBERS, numbers, parseStored, applyStored, refresh, overrides, checkPassModel, checkChatModel, save, effective, resetOverrides,
 };

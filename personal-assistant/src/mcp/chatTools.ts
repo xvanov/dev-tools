@@ -120,7 +120,7 @@ const READ_TOOLS = [
   {
     name: 'build_run',
     description:
-      'One Build agent run in detail: state, cost and tokens, its agents (main and subagents) and last tool calls, and every message it and Jarvis exchanged (notes, asks, replies), plus the termhub link.',
+      'One Build agent run in detail: state, cost and tokens, `context` (tokens in its context against the model window), `summaries` (the newest one-sentence summaries of what it has been doing, oldest first: start there for "what is run 42 doing?"), its agents (main and subagents) and last tool calls, and every message it and Jarvis exchanged (notes, asks, replies), plus the termhub link.',
     inputSchema: { type: 'object', properties: { run: { type: 'integer', minimum: 1 } }, required: ['run'], additionalProperties: false },
   },
   {
@@ -239,12 +239,14 @@ const ACTION_TOOLS = [
   {
     name: 'agent_settings_set',
     description:
-      "Set the PA chat's model and/or a background pass's model (the user approves each call). `chat_model`: a Claude model (haiku, sonnet, opus, fable or a full id), applied when the chat session next starts. `pass_models`: {pass: model}, a pass from agent_settings_get; a model is `provider/model` (azure/pa, local/llama3.2:3b, cli/claude-opus-5) or a bare Claude name; the connector pass must stay on Claude. null clears an override (back to the environment's value). Returns the settings.",
+      "Set the PA chat's model and/or a background pass's model, and the Build tool-summary numbers (the user approves each call). `chat_model`: a Claude model (haiku, sonnet, opus, fable or a full id), applied when the chat session next starts. `pass_models`: {pass: model}, a pass from agent_settings_get (the `summary` pass writes the one-line summaries of Build runs); a model is `provider/model` (azure/pa, local/llama3.2:3b, cli/claude-opus-5) or a bare Claude name; the connector pass must stay on Claude. `summary_every`: tool calls of a Build run per summary sentence (1-100, default 5). `summary_lines`: summary lines shown on a run's card (1-10, default 3). null clears an override (back to the environment's value). Returns the settings.",
     inputSchema: {
       type: 'object',
       properties: {
         chat_model: { type: ['string', 'null'], maxLength: 120 },
         pass_models: { type: 'object', additionalProperties: { type: ['string', 'null'], maxLength: 120 }, description: '{ "planner": "claude-opus-5-5", "brief": null }' },
+        summary_every: { type: ['integer', 'null'], minimum: 1, maximum: 100 },
+        summary_lines: { type: ['integer', 'null'], minimum: 1, maximum: 10 },
       },
       additionalProperties: false,
     },
@@ -603,9 +605,12 @@ async function buildRunTool({ run }: { run?: number }) {
   if (!r) throw new Error(`no run #${run}`);
   let track: Json | null = null;
   try { track = r.track ? JSON.parse(String(r.track)) : null; } catch { /* a half-written view: none */ }
-  const msgs: Row[] = await repository.buildRuns.msgs(r.id);
+  const all: Row[] = await repository.buildRuns.msgs(r.id);
+  await require('../models.ts').refresh();
+  const S = require('../build/summaries.ts');
+  const { messages: msgs, summaries }: { messages: Row[]; summaries: Json[] } = S.split(all, S.settings().lines);
   return {
-    ...runView(r), url: r.url || null, tokens: { in: Number(r.tokens_in), out: Number(r.tokens_out), cache_read: Number(r.tokens_cache_read), cache_write: Number(r.tokens_cache_write) },
+    ...runView(r), url: r.url || null, context: track?.context || null, summaries: summaries.map((s: Json) => ({ at: s.at, text: s.text })), tokens: { in: Number(r.tokens_in), out: Number(r.tokens_out), cache_read: Number(r.tokens_cache_read), cache_write: Number(r.tokens_cache_write) },
     caps: { cost_usd: Number(r.cost_cap_usd), wall_min: Number(r.wall_cap_min) },
     agents: track?.agents || [],
     messages: msgs.map((m) => ({ id: m.id, from: m.dir, kind: m.kind, text: m.body, answer: m.answer || null, at: m.created_at })),
@@ -683,6 +688,8 @@ async function handle(name: string, args: Json = {}) {
       const patch: Json = {};
       if (args.chat_model !== undefined) patch.chatModel = args.chat_model;
       if (args.pass_models !== undefined) patch.passModels = args.pass_models;
+      if (args.summary_every !== undefined) patch.summaryEvery = args.summary_every;
+      if (args.summary_lines !== undefined) patch.summaryLines = args.summary_lines;
       return require('../agentSettings.ts').setAgents(patch);
     }
     case 'build_stop': {

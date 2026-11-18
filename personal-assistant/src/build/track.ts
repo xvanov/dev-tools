@@ -59,6 +59,23 @@ function costOf(u: Usage, model: string | null | undefined, fallback?: string | 
 
 const n = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
+/**
+ * Context window in tokens per model id, first match wins. Claude Code's long-context variants carry
+ * `[1m]` (or `-1m`) in the model id; everything else is taken as 200k. Unverified for Fable 5 and the 5.5
+ * family: `windowOf` raises a window the transcript has already exceeded, so a wrong row cannot show over 100%.
+ */
+const WINDOWS: Array<{ match: RegExp; tokens: number }> = [
+  { match: /\[1m\]|-1m\b/i, tokens: 1_000_000 },
+];
+const DEFAULT_WINDOW = 200_000;
+
+/** Pure: the context window for a model id; `used` (tokens already in context) lifts it past one it exceeds. */
+function windowOf(model: string | null | undefined, used = 0): number {
+  const w = WINDOWS.find((x) => model && x.match.test(model))?.tokens ?? DEFAULT_WINDOW;
+  if (used <= w) return w;
+  return used <= 1_000_000 ? 1_000_000 : Math.ceil(used / 1_000_000) * 1_000_000;
+}
+
 /** Pure: a tool call's input as a short string. */
 function shortArgs(name: string, input: Json | null | undefined): string {
   const i = input || {};
@@ -80,6 +97,7 @@ function parseAgent(text: string, fallbackModel?: string | null): Json {
   let last: string | null = null;
   let model: string | null = null;
   let turns = 0;
+  let context = 0; // tokens in the context at the newest assistant message: its input + cache read + cache write
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
     let o: Json;
@@ -99,6 +117,7 @@ function parseAgent(text: string, fallbackModel?: string | null): Json {
           model: m.model || null,
           usage: { in: n(u.input_tokens), out: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheWrite5m: w5 + w1 ? w5 : n(u.cache_creation_input_tokens), cacheWrite1h: w1 },
         });
+        context = n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens);
       }
       if (Array.isArray(m.content)) {
         for (const c of m.content) {
@@ -127,7 +146,7 @@ function parseAgent(text: string, fallbackModel?: string | null): Json {
     cost += costOf(usage, mm || model, fallbackModel);
   }
   return {
-    model, turns, started_at: started, last_at: last, cost_usd: cost, messages: msgs.size,
+    model, turns, started_at: started, last_at: last, cost_usd: cost, messages: msgs.size, context_tokens: context,
     tokens: { in: total.in, out: total.out, cache_read: total.cacheRead, cache_write: total.cacheWrite5m + total.cacheWrite1h },
     calls,
   };
@@ -157,8 +176,12 @@ function summarize(agents: Array<{ id: string; kind: 'main' | 'subagent'; type?:
     };
   });
   const sum = (f: (a: Json) => number) => out.reduce((t, a) => t + f(a), 0);
+  const main = agents.find((a) => a.kind === 'main');
+  const used = n(main?.parsed.context_tokens);
+  const win = windowOf(main?.parsed.model, used);
   return {
     agents: out,
+    context: { tokens: used, window: win, pct: Math.min(100, Math.round((used / win) * 100)), model: main?.parsed.model || null },
     totals: {
       cost_usd: sum((a) => a.cost_usd), in: sum((a) => a.tokens.in), out: sum((a) => a.tokens.out),
       cache_read: sum((a) => a.tokens.cache_read), cache_write: sum((a) => a.tokens.cache_write), calls: sum((a) => a.call_count),
@@ -322,6 +345,11 @@ async function tick(now = Date.now()): Promise<{ updated: number; stopped: numbe
       cost_usd: t.cost_usd, tokens_in: t.in, tokens_out: t.out, tokens_cache_read: t.cache_read, tokens_cache_write: t.cache_write, track: JSON.stringify(track),
     });
     updated++;
+    // Tool summaries (src/build/summaries.ts): never awaited while the run is live, so a slow or failing model
+    // cannot hold up this pass; the one flush after the run ended is awaited so messages.json keeps it.
+    const sm = require('./summaries.ts');
+    if (live) void sm.maybe(run, view, { final: false });
+    else await sm.maybe(run, view, { final: true });
     if (!live) { await archive(run, view); continue; }
     const why = overCap(run, t, now);
     if (why) {
@@ -333,4 +361,4 @@ async function tick(now = Date.now()): Promise<{ updated: number; stopped: numbe
   return { updated, stopped };
 }
 
-module.exports = { parseAgent, priceOf, costOf, summarize, shortArgs, findTranscript, readRun, archive, activityMs, exportSummaries, overCap, tick, PRICES };
+module.exports = { parseAgent, priceOf, costOf, summarize, shortArgs, findTranscript, readRun, archive, activityMs, exportSummaries, overCap, tick, PRICES, windowOf, WINDOWS };

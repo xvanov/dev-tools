@@ -122,7 +122,7 @@ async function needsYou(): Promise<Row[]> {
   for (const r of await repo().list({ live: true, limit: 50 })) {
     if (r.state !== 'idle') continue;
     let a: Json = {};
-    try { a = JSON.parse(String(r.activity)); } catch { /* none */ }
+    try { a = JSON.parse(String(r.activity)) || {}; } catch { /* none */ }
     out.push({ id: null, run: r.id, task: r.task, kind: 'idle', question: `Idle ${Math.round(Number(a.idle_s || 0) / 60)} min. Last tool call: ${a.last_tool || 'none'}. Last output: ${a.last_line || '(blank)'}`, ...a, asked_at: a.since || r.updated_at });
   }
   return out;

@@ -599,8 +599,9 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   Build) edits every Build profile (model, effort, permission mode, subagent model, caps, repo, the prompt appended to the read-only
   base prompt, MCP servers, allow/deny rules, subagents; reset a built-in one to what ships; a built-in one cannot be deleted, the planner names it), the PA chat's model and each worker
   pass's model. Profiles live in `build_profile`; the chat and pass models are overrides in the `agent.settings` setting
-  (`{chatModel, passModels}`), and **env stays the default**: `src/models.ts` `refresh()` reads the setting at most every 10 s (the
-  worker before each pass, `pa` before each command) and writes it into the config field the pass reads, keeping the env/default value
+  (`{chatModel, passModels, summaryEvery, summaryLines}`), and **env stays the default**: `src/models.ts` `refresh()` reads the setting at most every 10 s (the
+  worker before each pass, `pa` before each command that can pick a model, `NO_MODELS` in `src/cli/index.ts` lists the ones that
+  skip it: `pa run` is the agent's own hot path and the read costs ~1.7 s when it is the first thing to open the store) and writes it into the config field the pass reads, keeping the env/default value
   so clearing an override restores it. Every value is shown with its source (store | env | default). **Parity rule:** every
   dashboard write has a chat tool and a `pa` verb doing the same through shared code, reads allowed and writes asking
   (`profile_list|get|set|delete|reset`, `agent_settings_get|set`; `pa profile list|get|set|delete|reset`, `pa agents get|set`);
@@ -620,6 +621,23 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   `pa run idle <id> <s>`) while `running` makes it `idle`: an urgent notice, and `build_run.activity`
   (last tool call, last output line, idle duration) in `build_runs.needs_you` and on the board. Any sign
   of life puts it back to `running`. A `waiting` run (open `pa run ask`) is never idle.
+- **Tool summaries** (`src/build/summaries.ts`; BUILD-ENRICHMENT.md C): every N new tool calls of a live run (`summaryEvery`,
+  default 5, `PA_SUMMARY_EVERY`) the new calls from the track view go to the `summary` pass's cheap model (`PA_SUMMARY_MODEL`,
+  default `azure/pa`; overridable per pass on `/agents`) and come back as one plain sentence, stored as a `build_msg` row of
+  kind `summary` (dir `jarvis`, body `{upto, text}`: the cursor travels with the text, so there is no table and a restart
+  loses nothing; heartbeat ignores them, board and chat show them apart from the conversation). The card shows the newest
+  `summaryLines` (default 3); `build_run` returns them with `context`, so Talk can answer "what is run 42 doing?". Cost guards,
+  all in `maybe()`: nothing new or under N calls is no call; a finished run flushes the rest once; at most
+  `PA_SUMMARY_MAX_PER_RUN` (40) per run; one call in flight per run; the newest 40 calls per batch; 30 s timeout; exponential
+  backoff after a failure; purpose `build-summary` is in `PA_BUDGET_DISCRETIONARY`, so the daily cap pauses it first;
+  `PA_SUMMARY=0` stops it. `track.tick` never awaits it for a live run and it never throws. Spend lands in `llm_spend`.
+  `summaryEvery` and `summaryLines` are edited like the models: `/agents`, `agent_settings_set` (`summary_every`,
+  `summary_lines`), `pa agents set --summary-every n --summary-lines n`.
+- **Context meter and live status:** the track view carries `context {tokens, window, pct}` (tokens in context at the newest
+  assistant message; the window from `WINDOWS` in `track.ts`: `[1m]` models 1M, else 200k, raised when the transcript has
+  already passed it, so a wrong row cannot show over 100%). `GET /api/build/status` (cached 5 s) feeds the pill beside the »
+  toggle on every page (`nav.js`: the shell polls, frames get it by postMessage): running, need you, Build spend today;
+  zero parts hidden. Spend there is notional (runs started today); Jarvis's own model spend today is in its tooltip.
 - **Kept runs** (`src/build/track.ts archive`, when a run ends, stops or fails): Claude Code prunes
   `~/.claude/projects` (`cleanupPeriodDays`), so `<dataDir>/build-runs/run-<id>/` holds a copy:
   `<session>.jsonl`, `<session>/subagents/`, `messages.json` (the build_msg rows) and `summary.json`

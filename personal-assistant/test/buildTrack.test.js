@@ -16,6 +16,7 @@ process.env.PA_SQLITE_PATH = path.join(dir, 'pa_test_build_track.sqlite');
 process.env.PA_SQLITE_KEY = 'build-track-test-key';
 process.env.PA_WORKTREES_ROOT = dir;
 process.env.PA_DATA_DIR = path.join(dir, 'data');
+process.env.PA_SUMMARY = '0'; // tool summaries are test/buildSummaries.test.js's; no model call from a tick here
 
 const T = require('../src/build/track.ts');
 const { available } = require('../src/db/sqlite.ts');

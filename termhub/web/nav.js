@@ -302,6 +302,68 @@
     if (!frames[id] && reachable(id)) frameFor(id);
   }
 
+  // ---- live Build status: running agents, ones waiting for you, spend today ------------
+  // One cheap API (api/build/status, cached a few seconds server side), polled by the shell only and
+  // handed to every kept-alive frame by postMessage, so six open destinations make one request.
+  // A part that is zero is not shown; with nothing to show the pill is hidden.
+  var statusEls = [];
+  var statusNow = null;
+  function statusText(s) {
+    var parts = [];
+    if (s && s.running > 0) parts.push({ t: s.running + ' running' });
+    if (s && s.needs_you > 0) parts.push({ t: s.needs_you + ' need' + (s.needs_you === 1 ? 's' : '') + ' you', need: true });
+    if (s && s.spend_usd > 0) parts.push({ t: '$' + (s.spend_usd >= 10 ? s.spend_usd.toFixed(0) : s.spend_usd.toFixed(2)) + ' today' });
+    return parts;
+  }
+  function paintStatus(a) {
+    var parts = statusText(statusNow);
+    a.hidden = !parts.length;
+    a.textContent = '';
+    parts.forEach(function (p, i) {
+      if (i) a.appendChild(document.createTextNode(' · '));
+      var span = document.createElement('span');
+      if (p.need) span.className = 'jnav-need';
+      span.textContent = p.t;
+      a.appendChild(span);
+    });
+    a.href = hrefFor('factory');
+    var tip = 'Build agents';
+    if (statusNow && statusNow.pa_spend_usd > 0) tip += ' · spend is notional at API prices; Jarvis’s own model calls today: $' + statusNow.pa_spend_usd.toFixed(2);
+    a.title = tip;
+    a.setAttribute('aria-label', parts.map(function (p) { return p.t; }).join(', ') || 'Build agents');
+  }
+  function setStatus(s) {
+    if (!s || typeof s !== 'object') return;
+    statusNow = s;
+    statusEls.forEach(paintStatus);
+    for (var k in frames) { try { frames[k].contentWindow.postMessage({ jarvis: 'status', s: s }, '*'); } catch (e) { /* ignore */ } }
+  }
+  function fetchStatus() {
+    if (framed || document.hidden || !paUp || focusId) return;
+    fetch(paBase + 'api/build/status', { cache: 'no-store', credentials: 'include' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(setStatus, function () { /* PA away: keep the last numbers */ });
+  }
+  function statusPill() {
+    var a = document.createElement('a');
+    a.className = 'jnav-status';
+    a.setAttribute('data-dest', 'factory');
+    a.hidden = true;
+    statusEls.push(a);
+    return a;
+  }
+  if (framed) {
+    window.addEventListener('message', function (e) {
+      var d = e.data;
+      if (e.source !== window.parent || !d || d.jarvis !== 'status' || !d.s) return;
+      statusNow = d.s;
+      statusEls.forEach(paintStatus);
+    });
+  } else {
+    setInterval(fetchStatus, 15000);
+    document.addEventListener('visibilitychange', fetchStatus);
+  }
+
   // ---- staying current: an update reaches pages that are already open -------------
   // The shell asks each server which commit it serves (api/version) every minute and
   // when the window comes back. Once one changes, frames you are not looking at are
@@ -596,6 +658,10 @@
         if (own) openUpdate();
         return;
       }
+      if (d && d.jarvis === 'status?') {
+        if (statusNow) { try { e.source.postMessage({ jarvis: 'status', s: statusNow }, '*'); } catch (err) { /* gone */ } }
+        return;
+      }
       if (!d || (d.jarvis !== 'go' && d.jarvis !== 'warm') || typeof d.id !== 'string') return;
       var mine = false;
       for (var k in frames) if (frames[k].contentWindow === e.source) mine = true;
@@ -640,6 +706,10 @@
       t.addEventListener('click', function () { setSettings(!settingsOpen); });
       toggles.push(t);
       document.body.appendChild(t);
+      var pill = statusPill();
+      document.body.appendChild(pill);
+      paintStatus(pill);
+      if (framed) { try { window.parent.postMessage({ jarvis: 'status?' }, '*'); } catch (e) { /* no shell */ } }
 
       // On a phone the panel is an overlay: a tap outside it (and off the toggle) closes it.
       document.addEventListener('pointerdown', function (e) {
@@ -654,6 +724,7 @@
     fetchSession().then(function () {
       paint();
       if (framed) return;
+      fetchStatus();
       // Warm the other destinations once this page has painted and gone quiet.
       var idle = window.requestIdleCallback || function (fn) { setTimeout(fn, 1200); };
       idle(prefetch, { timeout: 3000 });

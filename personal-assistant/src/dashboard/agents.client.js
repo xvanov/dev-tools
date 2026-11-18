@@ -176,7 +176,28 @@
     ]);
   }
 
+  // The whole-number settings (summaryEvery, summaryLines): value now, where it comes from, and an override.
+  function numberRow(key, row) {
+    const input = el('input', { type: 'number', min: row.min, max: row.max, step: 1, value: row.source === 'store' ? row.value : '', placeholder: String(row.value) });
+    const msg = el('span', { className: 'muted' });
+    const save = async (value) => {
+      try { await api('api/agents/settings', { [key]: value }); toast(`${key} ${value === null ? 'cleared' : 'set'}`); await load(); } catch (e) { msg.textContent = e.message; msg.className = 'err'; }
+    };
+    return el('tr', {}, [
+      el('td', {}, [el('b', { textContent: key }), el('div', { className: 'muted', textContent: `${row.what} (${row.env}; ${row.min}-${row.max})` })]),
+      el('td', { className: 'mono', textContent: String(row.value) }),
+      el('td', {}, [sourceChip(row.source)]),
+      el('td', {}, [input, msg]),
+      el('td', {}, [el('button', { className: 'primary', textContent: 'Set', onclick: () => save(num(input.value)) }), ' ',
+        el('button', { textContent: 'Clear', disabled: row.source !== 'store', onclick: () => save(null) })]),
+    ]);
+  }
+
   function renderModels() {
+    document.getElementById('numbers').replaceChildren(el('table', {}, [
+      el('thead', {}, [el('tr', {}, ['Setting', 'Now', 'From', 'Override', ''].map((h) => el('th', { textContent: h })))]),
+      el('tbody', {}, Object.entries(data.settings || {}).map(([k, row]) => numberRow(k, row))),
+    ]));
     document.getElementById('modelhints').replaceChildren(...HINTS.map((h) => el('option', { value: h })));
     const c = data.chat;
     document.getElementById('chat').replaceChildren(table([

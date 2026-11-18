@@ -4,7 +4,9 @@
 // build.board.client.js at /build-board.js): one card per Build agent run, with
 // its agents' timeline, tool calls, cost, messages and result.
 //
-//   GET  /api/build?page=1&limit=10     {runs, total, live, needs_you, today_usd, now}
+//   GET  /api/build?page=1&limit=10     {runs, total, live, needs_you, today_usd, now}; a run carries `summaries`
+//                                       (its newest tool-call sentences) and `context` ({tokens, window, pct})
+//   GET  /api/build/status              {running, needs_you, spend_usd, pa_spend_usd, at}: the nav's live status, cached 5 s
 //   POST /api/build/runs                {task, model?, repo?, costCapUsd?, wallCapMin?}: a run with no card
 //   POST /api/build/<id>/stop           kill its session
 //   POST /api/build/<id>/reply          {text}: answer its open question
@@ -28,12 +30,19 @@ const path = require('path');
 const CLIENT = path.join(__dirname, 'build.board.client.js');
 const CALLS_SHOWN = 40;
 
-/** Pure: a run row, its messages and its parsed track as the card's view. */
-function view(r: Row, msgs: Row[], url: string | null): Json {
+/**
+ * Pure: a run row, its messages and its parsed track as the card's view. `lines` is how many tool summaries to
+ * show (the Agents page's setting); they come out of the messages, which keep only the agent/Jarvis conversation.
+ */
+function view(r: Row, msgs: Row[], url: string | null, lines = 3): Json {
   let track: Json | null = null;
   try { track = r.track ? JSON.parse(String(r.track)) : null; } catch { track = null; }
   const agents = ((track?.agents as Json[]) || []).map((a) => ({ ...a, calls: (a.calls || []).slice(-CALLS_SHOWN) }));
+  const split = require('../build/summaries.ts').split(msgs, lines);
+  msgs = split.messages;
   return {
+    summaries: split.summaries.map((s: Json) => ({ at: s.at, text: s.text })),
+    context: track?.context || null,
     id: Number(r.id), card: r.commitment_id ? Number(r.commitment_id) : null, task: r.task, model: r.model, state: r.state,
     repo: r.repo_path || null, branch: r.branch || null, result: r.result || null, error: r.error || null,
     cost_usd: Number(r.cost_usd || 0), cost_cap_usd: Number(r.cost_cap_usd || 0), wall_cap_min: Number(r.wall_cap_min || 0),
@@ -54,14 +63,49 @@ async function data(url: URL): Promise<Json> {
   for (const m of msgs) by.set(String(m.run_id), [...(by.get(String(m.run_id)) || []), m]);
   const base = require('../dispatch/termhub.ts');
   const hub = await base.sessionUrl('x').then((u: string) => u.replace(/#session=x$/, '')).catch(() => null);
-  const runs = rows.map((r) => view(r, by.get(String(r.id)) || [], r.session_id && hub ? `${hub}#session=${encodeURIComponent(String(r.session_id))}` : null));
+  await require('../models.ts').refresh();
+  const lines = require('../build/summaries.ts').settings().lines;
+  const runs = rows.map((r) => view(r, by.get(String(r.id)) || [], r.session_id && hub ? `${hub}#session=${encodeURIComponent(String(r.session_id))}` : null, lines));
   const since = Date.now() - 24 * 3600_000;
   const recent: Row[] = await repo.list({ limit: 100 });
   const today = recent.filter((r) => Date.parse(String(r.started_at)) >= since).reduce((t, r) => t + Number(r.cost_usd || 0), 0);
   return { runs, total, live, page, limit, needs_you: await require('../build/messages.ts').needsYou(), today_usd: today, now: new Date().toISOString() };
 }
 
+const STATUS_TTL_MS = 5000;
+let statusCache: { at: number; value: Json } | null = null;
+
+/**
+ * What the global nav shows on every page: Build runs running (starting or working), ones that need you (an
+ * open question, or idle), and today's Build spend (notional, runs started since local midnight); `pa_spend_usd`
+ * is Jarvis's own model calls today (llm_spend) for the tooltip. Cached a few seconds: every open page asks.
+ */
+async function status(now = Date.now()): Promise<Json> {
+  if (statusCache && now - statusCache.at < STATUS_TTL_MS) return statusCache.value;
+  const repo = require('../repo').buildRuns;
+  const live: Row[] = await repo.list({ live: true, limit: 50 });
+  const needs: Row[] = await require('../build/messages.ts').needsYou();
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  const recent: Row[] = await repo.list({ limit: 100 });
+  const spend = recent.filter((r) => Date.parse(String(r.started_at)) >= midnight.getTime()).reduce((t, r) => t + Number(r.cost_usd || 0), 0);
+  const pa = await require('../budget.ts').spentToday().catch(() => 0);
+  const value = {
+    running: live.filter((r) => r.state === 'starting' || r.state === 'running').length,
+    needs_you: needs.length,
+    spend_usd: Math.round(spend * 100) / 100,
+    pa_spend_usd: Math.round(Number(pa || 0) * 100) / 100,
+    at: new Date(now).toISOString(),
+  };
+  statusCache = { at: now, value };
+  return value;
+}
+
 async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: Ctx['send']; readJson: Ctx['readJson'] }): Promise<boolean> {
+  if (req.method === 'GET' && url.pathname === '/api/build/status') {
+    send(res, 200, await status());
+    return true;
+  }
   if (req.method === 'GET' && url.pathname === '/build-board.js') {
     send(res, 200, fs.readFileSync(CLIENT, 'utf8'), 'text/javascript; charset=utf-8');
     return true;
@@ -106,4 +150,4 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
   }
 }
 
-module.exports = { route, data, view };
+module.exports = { route, data, view, status, resetStatus: () => { statusCache = null; } };

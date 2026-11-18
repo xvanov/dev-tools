@@ -26,7 +26,9 @@ const HELP = `
     pa profile reset <name>                a built-in profile (chore, feature, research, quick) back to what ships, or restore a deleted one
     pa agents get [--json]                 the PA chat's model and each worker pass's model: effective value and its source (store, env, default)
     pa agents set [--chat-model m] [--pass <pass>=<model>]… [--clear-chat-model] [--clear-pass <pass>]…
-                                           a model is provider/model (azure/pa, local/llama3.2:3b, cli/claude-opus-5) or a bare Claude name
+                  [--summary-every n] [--summary-lines n]   (--no-summary-every / --no-summary-lines: back to the default)
+                                           a model is provider/model (azure/pa, local/llama3.2:3b, cli/claude-opus-5) or a bare Claude name;
+                                           the summary pass writes the Build runs' one-line summaries, every n tool calls, lines shown on a card
 `;
 
 const FIELDS: Array<[flag: string, key: string, kind: 'text' | 'num']> = [
@@ -100,7 +102,15 @@ function agentsPatch(flags: Json, lists: Json): { patch: Json } | { error: strin
   for (const k of lists['clear-pass'] || []) passModels[String(k)] = null;
   if (flags.pass === true || flags['clear-pass'] === true) return { error: '--pass wants <pass>=<model>, --clear-pass wants a pass name' };
   if (Object.keys(passModels).length) patch.passModels = passModels;
-  if (!Object.keys(patch).length) return { error: 'nothing to set: give --chat-model, --pass <pass>=<model>, --clear-chat-model or --clear-pass <pass>' };
+  for (const [flag, key] of [['summary-every', 'summaryEvery'], ['summary-lines', 'summaryLines']] as const) {
+    const v = flags[flag];
+    if (v === undefined) continue;
+    if (v === false) { patch[key] = null; continue; } // --no-summary-every: back to the default
+    const n = Number(v);
+    if (v === true || !Number.isInteger(n) || n < 1) return { error: `--${flag} wants a whole number (--no-${flag} puts it back to the default)` };
+    patch[key] = n;
+  }
+  if (!Object.keys(patch).length) return { error: 'nothing to set: give --chat-model, --pass <pass>=<model>, --summary-every n, --summary-lines n, --clear-chat-model or --clear-pass <pass>' };
   return { patch };
 }
 
@@ -163,10 +173,11 @@ function make(out: (t: string) => void, fail: (m: string) => void) {
     if (sub === 'help') return out(HELP);
     if (sub === 'get') {
       const v = await A().summary();
-      if (flags.json) return out(JSON.stringify({ chat: v.chat, passes: v.passes }, null, 2));
+      if (flags.json) return out(JSON.stringify({ chat: v.chat, passes: v.passes, settings: v.settings }, null, 2));
       const c = v.chat;
       out(`chat        ${String(c.model || '(Claude Code default)').padEnd(28)} ${c.source}${c.source === 'store' ? ` (without it: ${c.default || 'Claude Code default'})` : ''}`);
       for (const p of v.passes) out(`${p.key.padEnd(18)} ${String(p.model).padEnd(28)} ${p.source}${p.source === 'store' ? ` (without it: ${p.default})` : ''}`);
+      for (const [k, s] of Object.entries(v.settings || {}) as Array<[string, Json]>) out(`${k.padEnd(18)} ${String(s.value).padEnd(28)} ${s.source}  ${s.what}`);
       return;
     }
     if (sub === 'set') {
@@ -178,6 +189,7 @@ function make(out: (t: string) => void, fail: (m: string) => void) {
         const p = v.passes.find((x: Json) => x.key === k);
         if (p) out(`${k} ${p.model} (${p.source})`);
       }
+      for (const k of ['summaryEvery', 'summaryLines']) if (r.patch[k] !== undefined) out(`${k} ${v.settings[k].value} (${v.settings[k].source})`);
       return;
     }
     return fail('usage: pa agents get | set [--chat-model m] [--pass <pass>=<model>]… [--clear-chat-model] [--clear-pass <pass>]…');

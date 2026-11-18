@@ -59,6 +59,16 @@
   .chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .chip { background: var(--surface-2); border-radius: var(--radius-pill); padding: 1px 8px; font-size: var(--text-xs); color: var(--ink-2); }
   .chip.mono { font-family: var(--font-mono); }
+  /* Context meter and tool summaries on a run's card (BUILD-ENRICHMENT C). */
+  .ctx { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: var(--text-xs); color: var(--ink-2); }
+  .ctx .ctxbar { flex: 0 1 140px; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .ctx .ctxbar i { display: block; height: 100%; background: var(--ok); }
+  .ctx.warn .ctxbar i { background: var(--amber); }
+  .ctx.crit .ctxbar i { background: var(--bad); }
+  ul.sums { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; font-size: var(--text-sm); color: var(--ink); }
+  ul.sums li { display: flex; gap: 8px; }
+  ul.sums li:not(:last-child) { color: var(--ink-2); }
+  ul.sums .meta { flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--text-xs); }
   .chip.s-needs_human, .chip.s-waiting, .chip.s-idle { color: var(--amber); background: var(--amber-soft); }
   .chip.s-failed, .chip.s-stopped { color: var(--bad); }
   .chip.s-done { color: var(--ok); }

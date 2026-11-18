@@ -1648,6 +1648,9 @@ const HELP_TOPICS: Record<string, string> = {
   profile: './agents.ts', profiles: './agents.ts', agents: './agents.ts',
 };
 
+/** Commands that never choose a model (or that read the store's model settings themselves): `main` skips models.refresh() for them. */
+const NO_MODELS = ['help', 'migrate', 'db', 'backup', 'restore', 'doctor', 'run', 'agents', 'profile', 'profiles', 'secret', 'secrets', 'passkeys', 'turns', 'audit', 'spend'];
+
 async function main(argv: string[]) {
   const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
@@ -1665,8 +1668,11 @@ async function main(argv: string[]) {
   }
 
   try {
-    // The Agents page's model overrides (src/models.ts), for the commands that make model calls and have a store.
-    if (!['help', 'migrate', 'db', 'backup', 'restore', 'doctor'].includes(name)) await require('../models.ts').refresh();
+    // The Agents page's model overrides (src/models.ts): a read of the store, ~1.7 s when this is the command that
+    // opens it. Only commands that can pick a model need it, so the rest skip it: the agent's own `pa run note|ask|done`
+    // (every call of a live Build agent), `pa agents|profile` (they read or merge the store themselves, src/agentSettings.ts)
+    // and the ones with no model call at all.
+    if (!NO_MODELS.includes(name)) await require('../models.ts').refresh();
     await handler(args, flags, lists);
   } catch (err: any) {
     if (err.name === 'NeedsLogin') fail(`${err.message}`);
@@ -1677,4 +1683,4 @@ async function main(argv: string[]) {
   }
 }
 
-module.exports = { main, commands, HELP, HELP_TOPICS, maskUrl };
+module.exports = { main, commands, HELP, HELP_TOPICS, maskUrl, NO_MODELS };

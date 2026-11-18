@@ -6,7 +6,7 @@
 // test/dashboardParity.test.js fails when a route here has neither).
 //
 //   GET  /api/agents                       { profiles, missingSeeds, chat, passes, options }
-//   POST /api/agents/settings              { chatModel?, passModels?: {pass: model | null} }   null clears an override
+//   POST /api/agents/settings              { chatModel?, passModels?: {pass: model | null}, summaryEvery?, summaryLines? }   null clears an override
 //   POST /api/agents/profiles/<name>       { model?, effort?, permissionMode?, prompt?, tools?, subagents?,
 //                                            subagentModel?, costCapUsd?, wallCapMin?, idleAfterS?, repoPath?, description? }
 //                                          create or change (only the fields sent change; null clears one)

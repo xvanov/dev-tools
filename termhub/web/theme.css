@@ -192,6 +192,20 @@ button, .j-btn, [role="button"] { touch-action: manipulation; -webkit-tap-highli
   .jnav-toggle svg { width: 18px; height: 18px; }
 }
 
+/* Live Build status beside the toggle (nav.js): running, waiting for you, spend today. Hidden at zero. */
+.jnav-status {
+  position: fixed; top: 8px; left: 44px; z-index: 30; display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-1) 80%, transparent); color: var(--ink-2);
+  font: var(--text-xs)/1 var(--font-mono); text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.jnav-status[hidden] { display: none; }
+.jnav-status:hover, .jnav-status:focus-visible { color: var(--ink); }
+.jnav-status .jnav-need { color: var(--amber); font-weight: 600; }
+@media (max-width: 760px) {
+  .jnav-status { top: calc(6px + env(safe-area-inset-top, 0px)); left: calc(48px + env(safe-area-inset-left, 0px)); height: 36px; }
+}
+
 .jpanel-nav { display: flex; flex-direction: column; gap: 6px; }
 .jpanel-top { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-height: 28px; }
 .jpanel-update { display: inline-flex; align-items: center; width: auto; padding: 0 8px; gap: 8px; font: var(--text-sm)/1 var(--font-sans, inherit); }

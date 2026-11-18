@@ -335,6 +335,26 @@
     return d;
   }
 
+  // Tokens in the run's context right now against its model's window (src/build/track.ts WINDOWS).
+  function ctxMeter(run) {
+    var c = run.context;
+    if (!c || !c.window || !c.tokens) return null;
+    var k = function (n) { return n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : Math.round(n / 1000) + 'k'; };
+    var cls = c.pct >= 90 ? ' crit' : c.pct >= 70 ? ' warn' : '';
+    return el('div', { class: 'ctx' + cls, title: 'Tokens in context at the last model message, against the model’s window (' + (c.model || 'model unknown') + ')' },
+      el('span', { text: 'context ' + k(c.tokens) + ' / ' + k(c.window) + ' (' + c.pct + '%)' }),
+      el('span', { class: 'ctxbar' }, el('i', { style: 'width:' + Math.min(100, c.pct) + '%' })));
+  }
+
+  // The newest tool-call sentences, oldest first; the last one is what the agent is doing now.
+  function summaries(run) {
+    var s = run.summaries || [];
+    if (!s.length) return null;
+    return el.apply(null, ['ul', { class: 'sums', 'aria-label': 'What the agent has been doing' }].concat(s.map(function (x) {
+      return el('li', {}, el('span', { class: 'meta', text: clock(x.at) }), el('span', { text: x.text }));
+    })));
+  }
+
   function card(run, now) {
     var live = isLive(run);
     var open = run.messages.filter(function (m) { return m.kind === 'ask' && !m.answered; });
@@ -358,6 +378,8 @@
           'in ' + run.tokens.in + ' · out ' + run.tokens.out + ' · cache read ' + run.tokens.cache_read + ' · cache write ' + run.tokens.cache_write),
         subs ? chip(subs + ' subagent' + (subs > 1 ? 's' : ''), 'mono') : null,
         run.branch ? chip(run.branch, 'mono') : null),
+      ctxMeter(run),
+      summaries(run),
       run.result ? el('div', { class: 'why result' }, 'Result: ', link ? el('a', { href: link, target: '_blank', rel: 'noopener noreferrer', text: link }) : el('span', { text: run.result })) : null,
       run.error ? el('div', { class: 'why err', text: run.error }) : null,
       el('div', { class: 'actions' },

@@ -936,7 +936,12 @@ Code's dontAsk permission mode and returns its report as the run result; a card'
 kind, and a card's own model / effort / cap overrides still win (AGENT.md, "Build"; docs/native/BUILD-ENRICHMENT.md A). Profiles, the chat's model and
 each worker pass's model are edited on the dashboard's **Agents** page (`/agents`, from Build) — or from the chat (`profile_set`,
 `agent_settings_set`, … each asks first) or the terminal: `pa profile list|get|set|delete|reset`, `pa agents get|set` (`pa help profile`).
-A stored model wins over `PA_*_MODEL`, which stays the default; `pa agents get` shows each value and where it comes from (B). `pa propose …` puts it on a card instead
+A stored model wins over `PA_*_MODEL`, which stays the default; `pa agents get` shows each value and where it comes from (B).
+A live run's card also shows a **context meter** (tokens in its context against the model's window) and the newest one-line
+**summaries** of what it is doing, written by a cheap model every few tool calls (`PA_SUMMARY_MODEL`, default `azure/pa`;
+`PA_SUMMARY_EVERY` 5 calls, `PA_SUMMARY_LINES` 3 lines, both editable on `/agents` or with `pa agents set --summary-every n`;
+`PA_SUMMARY=0` turns them off), and the chat's `build_run` returns them ("what is run 42 doing?"). A small pill beside the »
+toggle on every page counts running agents, ones that need you and Build spend today (C). `pa propose …` puts it on a card instead
 (dashboard → On me), frozen as shown; `pa do … --preview` prints that card. There is no route, end state, pipeline,
 runtime, kind or done-criteria to choose any more: those were the software factory's (PM → SM → dev → reviewer →
 merge gates, its own repo), which never worked well enough and was removed from the tree in D32 (git history keeps it:

@@ -51,6 +51,7 @@ async function get(): Promise<Json> {
     missingSeeds: v.missingSeeds,
     chat,
     passes,
+    settings: models().numbers(),
     options: {
       models: P.MODELS,
       subagentModels: [...P.MODELS, 'inherit'],
@@ -92,14 +93,20 @@ async function resetProfile(name: string): Promise<Json> {
   return getProfile(p.name);
 }
 
-/** Sets the chat model and/or pass models ({chatModel?, passModels?: {pass: model | null}}); null clears an override. */
+/**
+ * Sets the chat model, pass models and the Build summary numbers ({chatModel?, passModels?: {pass: model | null},
+ * summaryEvery?, summaryLines?}); null clears an override.
+ */
 async function setAgents(patch: Json): Promise<Json> {
-  const keys = Object.keys(patch || {}).filter((k) => !['chatModel', 'passModels'].includes(k));
-  if (keys.length) throw Object.assign(new Error(`not a setting: ${keys.join(', ')} (chatModel, passModels)`), { status: 400 });
-  if (patch.chatModel === undefined && patch.passModels === undefined) throw Object.assign(new Error('nothing to set: give chatModel and/or passModels'), { status: 400 });
+  const known = ['chatModel', 'passModels', ...models().NUMBERS.map((k: Json) => k.key)];
+  const keys = Object.keys(patch || {}).filter((k) => !known.includes(k));
+  if (keys.length) throw Object.assign(new Error(`not a setting: ${keys.join(', ')} (${known.join(', ')})`), { status: 400 });
+  if (!known.some((k) => patch[k] !== undefined)) throw Object.assign(new Error(`nothing to set: give ${known.join(', ')}`), { status: 400 });
+  // save() merges into what it last read: a fresh process (`pa agents set`) must read the store first or it would drop the other overrides.
+  await models().refresh();
   await models().save(patch);
   const { chat, passes } = models().effective();
-  return { chat, passes };
+  return { chat, passes, settings: models().numbers() };
 }
 
 /** The same as get() for the chat tool, without the long lists (the base prompt and the full profiles). */
@@ -109,6 +116,7 @@ async function summary(): Promise<Json> {
     profiles: v.profiles.map((p: Json) => profileLine(p)),
     chat: v.chat,
     passes: v.passes,
+    settings: v.settings,
   };
 }
 

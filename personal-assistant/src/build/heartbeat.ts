@@ -73,7 +73,8 @@ async function tick(now = Date.now()): Promise<{ sampled: number; idle: number; 
   const bySession = new Map((sessions || []).map((s) => [String(s.id), s]));
   const msgs: Row[] = await repo().msgsFor(live.map((r) => r.id));
   const newestMsg = new Map<string, number>();
-  for (const m of msgs) newestMsg.set(String(m.run_id), Math.max(newestMsg.get(String(m.run_id)) || 0, Date.parse(String(m.created_at)) || 0));
+  // A tool summary is Jarvis writing about the run, not the run showing life (src/build/summaries.ts).
+  for (const m of msgs) if (m.kind !== 'summary') newestMsg.set(String(m.run_id), Math.max(newestMsg.get(String(m.run_id)) || 0, Date.parse(String(m.created_at)) || 0));
 
   const failed = sessions ? (await B.reconcile(sessions)).failed : 0;
   let idle = 0;

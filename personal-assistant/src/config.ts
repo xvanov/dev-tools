@@ -621,6 +621,19 @@ const config = {
     model: env('PA_CARD_CONTEXT_MODEL') || reconcileModel,
   },
 
+  // Build tool summaries (src/build/summaries.ts, BUILD-ENRICHMENT C): every `every` new tool calls of a
+  // live Build run become one plain sentence from a cheap model (purpose build-summary, discretionary
+  // spend); `lines` of them show on the run's card. `every` and `lines` are also settings on the Agents
+  // page (agent.settings), which win over these; the model is the `summary` pass there.
+  // PA_SUMMARY=0 stops it; at most maxPerRun sentences per run, one model call in flight per run.
+  build: {
+    summaryEnabled: env('PA_SUMMARY', '1') !== '0',
+    summaryModel: modelEnv('PA_SUMMARY_MODEL', 'azure/pa'),
+    summaryEvery: envInt('PA_SUMMARY_EVERY', 5),
+    summaryLines: envInt('PA_SUMMARY_LINES', 3),
+    summaryMaxPerRun: envInt('PA_SUMMARY_MAX_PER_RUN', 40),
+  },
+
   // Jarvis pages (src/pages): one JSON file per page under PA_PAGES_DIR, rendered
   // in the dashboard and exported as one HTML file. The worker's `pages` pass
   // re-exports a page whose cards changed every PA_PAGES_SYNC_SECONDS and
@@ -675,7 +688,7 @@ const config = {
       return Number.isFinite(n) ? n : 15;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe,build-summary').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // OpenTelemetry into Meter (plan 7.5; src/telemetry). Spans of the main hops
