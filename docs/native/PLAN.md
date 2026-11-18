@@ -1974,7 +1974,7 @@ not in the Map is not done, and a new one gets added there first.
     / CI / CodeRabbit, cost vs cap; a job's steps as a persona-lane timeline; click a step for
     an inline run viewer that streams its turns), proxied through `/api/factory/board` and
     `/api/factory/steps/<id>/events`.
-  - [ ] **8.8.3 Tool-call ticks on the timeline's step blocks** (as the sssf visualizer draws
+  - [x] (7ed8a43: Build runs carry tool-call summaries, context meter and live status; BUILD-ENRICHMENT C) **8.8.3 Tool-call ticks on the timeline's step blocks** (as the sssf visualizer draws
     them): needs a per-step summary (tool-call count and error positions) in `job board`
     without reading every stream on each snapshot.
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
