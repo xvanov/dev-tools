@@ -241,6 +241,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS, profile: r.profile, effort: r.effort, permissionMode: r.permissionMode, origin: o.origin || null });
   const cwd = path.join(config.worktreesRoot, `build-${run.id}`);
   let branch: string | null = null;
+  let baseSha: string | null = null;
   let sessionId: string | null = null;
   try {
     fs.mkdirSync(config.worktreesRoot, { recursive: true });
@@ -249,6 +250,8 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
       const base = await baseRef(wanted as string);
       mark('base_ref_ms');
       await sh(wanted as string, 'git', ['worktree', 'add', '--no-track', '-b', branch, cwd, base]);
+      // The commit the run starts from: `pa eval build` replays the task from it (BUILD-ENRICHMENT F).
+      baseSha = (await sh(cwd, 'git', ['rev-parse', 'HEAD']).catch(() => '')).trim() || null;
       mark('worktree_ms');
     } else {
       fs.mkdirSync(cwd, { recursive: true });
@@ -295,7 +298,7 @@ ${renderPrompt(r.prompt, vars)}
     sessionId = session.id;
     mark('session_ms');
     await repo().update(run.id, {
-      state: 'running', session_id: session.id, claude_session: claudeSession, cwd, worktree_path: isRepo ? cwd : null, branch,
+      state: 'running', session_id: session.id, claude_session: claudeSession, cwd, worktree_path: isRepo ? cwd : null, branch, base_sha: baseSha,
       transcript_path: transcriptPathFor(cwd, claudeSession),
     });
     if (commitmentId) {

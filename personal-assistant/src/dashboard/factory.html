@@ -26,6 +26,10 @@
   .usageline .chip.sev-warning { color: var(--amber); }
   .usageline .chip.sev-critical { color: var(--bad); }
   .usage { display: grid; gap: 8px; }
+  .evalbox table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  .evalbox th { text-align: left; font-weight: 500; color: var(--ink-2, var(--ink)); }
+  .evalbox th, .evalbox td { padding: 2px 6px 2px 0; }
+  .evalbox td.num, .evalbox th.num { text-align: right; font-family: var(--font-mono); }
   .meter { display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; border-radius: var(--radius); }
   .meter .mh { display: flex; justify-content: space-between; font-size: var(--text-sm); }
   .meter .mh b { font-family: var(--font-mono); }
@@ -138,6 +142,11 @@
 <div>
   <h2>Agents</h2>
   <div class="spend" id="spend"></div>
+</div>
+<div id="evalsec" hidden>
+  <h2>Profile eval</h2>
+  <div id="evalbox" class="evalbox" aria-live="polite"></div>
+  <span class="meta">pa eval build, per profile: pass rate, median cost and time</span>
 </div>
 <div>
   <h2>Settings</h2>

@@ -6,7 +6,8 @@
 //
 //   GET  /api/build?page=1&limit=10     {runs, total, live, needs_you, today_usd, now}; a run carries `summaries`
 //                                       (its newest tool-call sentences) and `context` ({tokens, window, pct})
-//   GET  /api/build/status              {running, needs_you, spend_usd, pa_spend_usd, at}: the nav's live status, cached 5 s
+//   GET  /api/build/eval                {eval_id, evals, trials, profiles, recent}: the profile eval's per-profile table
+//   GET  /api/build/status            {running, needs_you, spend_usd, pa_spend_usd, at}: the nav's live status, cached 5 s
 //   POST /api/build/runs                {task, model?, repo?, costCapUsd?, wallCapMin?}: a run with no card
 //   POST /api/build/<id>/stop           kill its session
 //   POST /api/build/<id>/reply          {text} or {answers: {<question id>: answer}, text?, ask?}: answer its open
@@ -113,6 +114,11 @@ async function status(now = Date.now()): Promise<Json> {
 async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: Ctx['send']; readJson: Ctx['readJson'] }): Promise<boolean> {
   if (req.method === 'GET' && url.pathname === '/api/build/status') {
     send(res, 200, await status());
+    return true;
+  }
+  // The profile eval's table (BUILD-ENRICHMENT F): read-only. Launching an eval is the CLI's `pa eval build --yes`.
+  if (req.method === 'GET' && url.pathname === '/api/build/eval') {
+    send(res, 200, await require('../eval/buildEval.ts').reportData({ evalId: url.searchParams.get('eval') || null }));
     return true;
   }
   // The Plan page's "Build agents need you" card (buildasks.client.js): just the open asks, no run list.

@@ -11,7 +11,7 @@
 // that starts work.
 //
 //   reads    board, card, sessions, build_runs, build_run, card_plan_propose, profile_list, profile_get,
-//            agent_settings_get
+//            agent_settings_get, eval_build_report (the profile eval's results; launching one is CLI-only)
 //            (card_plan_propose only STORES a proposed set of card changes for the user to
 //            approve on the dashboard: it changes no card, so it runs unasked; the profile and
 //            agent-settings reads are the Agents page's reads)
@@ -44,7 +44,7 @@ type Json = Record<string, any>;
 
 const repository = require('../repo');
 
-const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose', 'profile_list', 'profile_get', 'agent_settings_get'];
+const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose', 'profile_list', 'profile_get', 'agent_settings_get', 'eval_build_report'];
 const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_build_settings', 'card_plan_apply', 'profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set'];
 
 const READ_TOOLS = [
@@ -176,6 +176,12 @@ const READ_TOOLS = [
     description:
       "The PA chat's model and each background pass's model (distill, brief, planner, drafts, the voice fast lane, …), each with where the value comes from: `store` (set on the Agents page or by agent_settings_set), `env` (an environment variable) or `default`, and what it would be without the override. Also the Build profiles in short. Call it for \"what model does X use\".",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'eval_build_report',
+    description:
+      "The Build profile eval's results (`pa eval build`: finished runs replayed headless on other profiles and scored): per profile the number of trials, pass rate (tests pass and a non-empty diff for a code task), median cost and wall time, median lines changed, timeouts and failures, plus the ten newest trials with the original run's PR verdict. Read-only: launching an eval spends the subscription and is the owner's `pa eval build --yes` command. Call it for \"which profile is cheapest that still passes\" or \"how did quick do\". `eval` narrows to one launch id.",
+    inputSchema: { type: 'object', properties: { eval: { type: 'string', maxLength: 40, description: 'A launch id from the report (e20261118153012345); default: every stored trial.' } }, additionalProperties: false },
   },
 ];
 
@@ -672,6 +678,7 @@ async function handle(name: string, args: Json = {}) {
     }
     case 'profile_get': return require('../agentSettings.ts').getProfile(String(args.name || ''));
     case 'agent_settings_get': return require('../agentSettings.ts').summary();
+    case 'eval_build_report': return require('../eval/buildEval.ts').reportData({ evalId: args.eval ? String(args.eval) : null });
     case 'profile_set': {
       const { name, ...patch } = args;
       return require('../agentSettings.ts').setProfile(String(name || ''), patch);

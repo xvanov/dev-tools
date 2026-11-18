@@ -72,6 +72,20 @@
 
   function pageCount(total, size) { return Math.max(1, Math.ceil(num(total) / (size || PAGE))); }
 
+  /** The profile eval's table rows (api/build/eval `profiles`): text cells, pass rate as "passed/scored pct%", "-" where unknown. */
+  function evalRows(profiles) {
+    return (profiles || []).map(function (p) {
+      var wall = p.median_wall_s == null ? null : num(p.median_wall_s);
+      return {
+        profile: String(p.profile),
+        n: String(num(p.n)),
+        pass: p.pass_rate == null ? '-' : num(p.passed) + '/' + num(p.scored) + ' ' + Math.round(num(p.pass_rate) * 100) + '%',
+        cost: p.median_cost_usd == null ? '-' : money(p.median_cost_usd),
+        wall: wall == null ? '-' : wall >= 90 ? Math.round(wall / 60) + 'm' : Math.round(wall) + 's'
+      };
+    });
+  }
+
   /**
    * The timeline: one lane per agent on a shared time axis from the run's
    * start to its end (or now). A lane's bar runs from its agent's first line to
@@ -168,7 +182,7 @@
     return out;
   }
 
-  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, decisionAnswers: decisionAnswers, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
+  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, decisionAnswers: decisionAnswers, resultLink: resultLink, pageCount: pageCount, evalRows: evalRows, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
   if (typeof document === 'undefined') return pure;
 
   // ---- the browser half ------------------------------------------------------------
@@ -265,6 +279,23 @@
     return fetch('api/factory/usage').then(function (r) { return r.json(); }).then(function (d) { state.usage = d; drawUsage(); drawUsageLine(); })
       .catch(function () { state.usage = { ok: false }; drawUsage(); drawUsageLine(); })
       .then(function () { state.usageTimer = setTimeout(loadUsage, 30000); });
+  }
+
+  // The profile eval's table (pa eval build): shown once there are trials; textContent only.
+  function loadEval() {
+    var sec = document.getElementById('evalsec');
+    var box = document.getElementById('evalbox');
+    if (!sec || !box) return Promise.resolve();
+    return fetch('api/build/eval').then(function (r) { return r.json(); }).then(function (d) {
+      var rows = evalRows(d.profiles);
+      sec.hidden = !rows.length;
+      if (!rows.length) return;
+      var th = function (t, c) { return el('th', { class: c || '', text: t }); };
+      var td = function (t, c) { return el('td', { class: c || '', text: t }); };
+      var table = el('table', {}, el('tr', {}, th('profile'), th('n', 'num'), th('pass', 'num'), th('cost', 'num'), th('time', 'num')));
+      rows.forEach(function (r) { table.append(el('tr', {}, td(r.profile), td(r.n, 'num'), td(r.pass, 'num'), td(r.cost, 'num'), td(r.wall, 'num'))); });
+      box.replaceChildren(table);
+    }).catch(function () { /* the table is optional */ });
   }
 
   function load() {
@@ -506,7 +537,8 @@
 
   load();
   loadUsage();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { load(); loadUsage(); } });
+  loadEval();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { load(); loadUsage(); loadEval(); } });
   window.addEventListener('focus', loadUsage);
   return Object.assign({ load: load }, pure);
 });

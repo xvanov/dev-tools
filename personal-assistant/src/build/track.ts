@@ -278,7 +278,7 @@ async function archive(run: Row, view: Json | null): Promise<string | null> {
     for (const a of agents) for (const [k, v] of Object.entries(a.by_name || {})) by[k] = (by[k] || 0) + Number(v);
     const ended = run.ended_at ? Date.parse(String(run.ended_at)) : Date.now();
     const summary = {
-      run: Number(run.id), card: run.commitment_id || null, task: run.task, model: run.model, profile: run.profile || null, effort: run.effort || null, permission_mode: run.permission_mode || null, origin: require('./origin.ts').label(run.origin), routine: require('./origin.ts').parse(run.origin)?.routine ?? null, repo: run.repo_path || null, branch: run.branch || null,
+      run: Number(run.id), card: run.commitment_id || null, task: run.task, model: run.model, profile: run.profile || null, effort: run.effort || null, permission_mode: run.permission_mode || null, origin: require('./origin.ts').label(run.origin), routine: require('./origin.ts').parse(run.origin)?.routine ?? null, repo: run.repo_path || null, branch: run.branch || null, base_sha: run.base_sha || null,
       state: run.state, result: run.result || null, error: run.error || null, started_at: run.started_at, ended_at: run.ended_at || null,
       elapsed_s: Math.max(0, Math.round((ended - Date.parse(String(run.started_at))) / 1000)),
       tokens: { in: Number(run.tokens_in || 0), out: Number(run.tokens_out || 0), cache_read: Number(run.tokens_cache_read || 0), cache_write: Number(run.tokens_cache_write || 0) },

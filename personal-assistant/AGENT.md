@@ -662,8 +662,29 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
 - **Kept runs** (`src/build/track.ts archive`, when a run ends, stops or fails): Claude Code prunes
   `~/.claude/projects` (`cleanupPeriodDays`), so `<dataDir>/build-runs/run-<id>/` holds a copy:
   `<session>.jsonl`, `<session>/subagents/`, `messages.json` (the build_msg rows) and `summary.json`
-  (run, card, task, model, profile, effort, permission_mode, repo, branch, state, result, error, started/ended, elapsed_s, tokens, cost_usd,
+  (run, card, task, model, profile, effort, permission_mode, repo, branch, base_sha, state, result, error, started/ended, elapsed_s, tokens, cost_usd,
   agents, tool_calls by name, errors). `pa run export [--since <date>]` prints every summary.json as JSONL.
+  `base_sha` (also `build_run.base_sha`, sql/050 + sql-sqlite/022) is the commit the worktree started from, set when it is made.
+- **Profile eval** (`src/eval/buildEval.ts`, `src/cli/evalBuild.ts`; BUILD-ENRICHMENT.md F): `pa eval build --profiles a,b[,model:effort]
+  [--runs ids|--since d|--last N] [--budget-usd X] [--wall-min m] [--no-link-deps] [--yes]` replays finished runs (done, with a PR or report,
+  repo still a checkout, base commit known: `base_sha`, else the merge-base of an unmerged branch that still exists, else skipped with the
+  reason) on other profiles: a detached throwaway worktree at the base under the worktrees root (`eval-<id>-<n>`), `claude -p
+  --output-format json` with the profile's `launchFlags` and a per-trial `--settings` file, scored by the repo's tests (the `build.eval`
+  setting `{"tests": {"<path or folder>": "<cmd>"}}`, else `npm test -- --changed` for dev-tools, else `npm test` where package.json is),
+  the diff against the base, cost/tokens/turns from claude's JSON, wall time and the original PR's merged/closed state (`gh`, best effort),
+  then removed. **No flag launches anything: without `--yes` (or with `--dry-run`) it prints the trial plan and an estimate.** Guards, layered
+  because a replay must never touch a real branch or PR: no branch is made; every remote's push URL in the worktree is the dead address
+  (`dispatch/remote.ts blockPush`, read back); the session env has no GitHub/GitLab tokens or ssh agent and an empty gh config (`noPushEnv`);
+  the settings file denies `git push` and `gh pr` for both shells on top of the profile's own rules; the prompt says no pushing. Spend: budget
+  (`--budget-usd`, `PA_BUILD_EVAL_BUDGET_USD`, default $10) is checked before every trial against its projected cost (median of that profile's
+  finished trials, else the original run's cost, bounded by the profile cap), and claude's own `--max-budget-usd` is min(profile cap, budget
+  left). A code task passes with a non-empty diff and passing tests (no test command: unscored, `passed` null); a report on being delivered, so
+  read the reports in the JSONL. Known limits: tests run once on the result with no baseline run of the base commit; `node_modules` of the
+  checkout (root and one level down) are junctioned into the replay so tests can run, so an agent's `npm install` would write through to the
+  checkout (`--no-link-deps` turns that off and the tests then usually fail to start). Results: `build_eval_trial` and
+  `<dataDir>/build-eval/<id>.jsonl` (with each agent's last message); `pa eval build --report [--eval id] [-v]`, the chat's `eval_build_report`
+  (a read, allowed) and the Build board sidebar's table (`GET /api/build/eval`). Launching is CLI-only on purpose (no mutating route, so no
+  parity exception): it spends the subscription.
 - The Plan card of a task with a Build run shows its state chip, start to end and elapsed, cost, and
   links to the board card and the termhub session; several runs add the count, the span and the total
   (`src/dashboard/cards.ts buildSummary`).

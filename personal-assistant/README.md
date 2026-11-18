@@ -1272,6 +1272,22 @@ threshold can be calibrated. `--judge` also answers each question from the top-k
 model and grades the answer. It's slow, so it's occasional. The worker runs the cheap
 deterministic eval once a day.
 
+**Build profile eval.** Which profile should a task kind default to? `pa eval build` replays finished
+Build runs from their base commit on other profiles (or `model:effort` pairs) and scores them:
+
+```
+pa eval build --profiles chore,feature,sonnet:high --last 3 --budget-usd 5          # dry run: the plan and an estimate
+pa eval build --profiles chore,feature,sonnet:high --last 3 --budget-usd 5 --yes    # runs it
+pa eval build --report [-v]                  # per profile: n, pass rate, median cost, median wall time
+```
+
+Each trial is a throwaway worktree at the run's recorded `base_sha`, claude headless with the profile's
+flags, no push and no PR (tokens stripped, push URLs blocked, `git push` and `gh pr` denied), scored by the
+repo's tests (`npm test -- --changed` for this monorepo; the `build.eval` setting overrides per repo), the
+diff, cost, turns and wall time, and the original PR's merged or closed state. It never runs without `--yes`
+and stops before the budget. Results go to `<data dir>/build-eval/<id>.jsonl`, the Build board's sidebar and
+the chat's `eval_build_report`.
+
 The cases are real questions about real mail, so **they live in the database only**: never in
 fixtures, tests or commits. A new retriever is one `register(...)` line in
 `src/eval/retrievers.ts`. `--retriever search-fused` runs search with the reranker off, to

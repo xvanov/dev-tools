@@ -42,7 +42,7 @@
         "search_context", "get_thread", "open_commitments", "who_is", "repo_state",
         "pa", "task_add",
         "board", "card", "sessions", "build_runs", "build_run", "card_plan_propose",
-        "profile_list", "profile_get", "agent_settings_get"
+        "profile_list", "profile_get", "agent_settings_get", "eval_build_report"
       ],
       "actions": ["call"],
       "decision": "allow",

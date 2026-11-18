@@ -132,6 +132,7 @@ const HELP = `pa — your context layer
     pa doctor                       what is configured, what is stale, what is broken
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
+    pa eval build --profiles a,b    replay finished Build runs on other profiles, scored (dry run unless --yes)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
     pa turns [show <id>] [--eval]   the turn log: what was said to Jarvis, how it was routed, the answer (pa help turns)
     pa eval answerer                voice fast lane answerer: right day, every meeting, titles as titles
@@ -1058,6 +1059,8 @@ const commands: Json = {
       E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold({ ...config.fastLane, router: 'logprob' }), guard, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
       return;
     }
+    // Build profile eval (BUILD-ENRICHMENT F): replay finished runs on other profiles. Dry-run unless --yes.
+    if (action === 'build') return require('./evalBuild.ts').run(args, flags, out, fail);
     // And its answerer: is what it says true to the snapshot (src/eval/answerer-cases.json)?
     if (action === 'answerer') {
       const E = require('../eval/answerer.ts');
@@ -1153,6 +1156,8 @@ const commands: Json = {
     pa eval run [--retriever search] [--k 10] [--threshold x] [--judge] [--misses]
     pa eval router [--repeat 3] [--fit] [--misses] [--model local/x] [--router decision]   the voice fast lane's router: accuracy, latency
     pa eval answerer [--repeat 2] [-v] [--model local/x]   its answerer: right day, every meeting, titles as titles
+    pa eval build --profiles a,b[,model:effort] [--runs ids|--since d|--last N] [--budget-usd X] [--yes]   replay finished Build runs on profiles, scored (dry run without --yes; pa eval build --help)
+    pa eval build --report [--eval id] [-v]    its results: pass rate, median cost and wall time per profile
   retrievers: ${ev.retrievers.names().join(', ')}`);
   },
 
