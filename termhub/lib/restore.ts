@@ -93,7 +93,8 @@ function restoreClaudeCommand(command: any, agentSessionId: any) {
   } else if (!/(^|\s)(--resume|-r|--continue|-c)(\s|=|$)/.test(cmd)) {
     cmd = injectAfterClaudeExe(cmd, '--resume');
   }
-  if (!/--dangerously-skip-permissions\b/.test(cmd)) cmd += ' --dangerously-skip-permissions';
+  // A command that picked a permission mode (a read-only Build run: dontAsk) keeps it; bypass would override it.
+  if (!/--dangerously-skip-permissions\b/.test(cmd) && !/--permission-mode\b/.test(cmd)) cmd += ' --dangerously-skip-permissions';
   return cmd;
 }
 

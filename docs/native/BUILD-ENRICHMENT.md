@@ -33,7 +33,7 @@ the planner picks a default from the task kind; per-card overrides of model/effo
 Existing `build.card.<id>` settings keep working. Verify the real Claude Code flags/env for effort and
 subagent model with `claude --help` before wiring them.
 
-The `research` profile runs read-only (Claude Code's plan permission mode). The planner's eager research
+The `research` profile runs read-only (Claude Code's dontAsk permission mode: `plan` ignores allow rules for commands that write, so the agent could not run `pa run done`). The planner's eager research
 runs pass `mode: 'plan'`, which Build has ignored since D30, so they are not read-only today: honour it
 through the profile.
 

@@ -578,16 +578,20 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
 - **Profiles** (`src/build/profiles.ts`, table `build_profile`, `src/repo/buildProfiles.ts`; BUILD-ENRICHMENT.md A): a
   saved, named agent: model, effort, permission mode, prompt (appended to `agent-prompt.md`), tools (MCP set,
   allow/deny rules), subagent definitions, subagent model, caps, default repo. Seeds `chore`, `feature`,
-  `research` (read-only, plan permission mode), `quick` are written once and never over an edit. A null field falls
+  `research` (read-only, `dontAsk` permission mode), `quick` are written once and never over an edit. A null field falls
   through; per field the order is **this call > the card's `build.card.<id>` > the profile > the defaults**, so a
   run with no profile and no card setting launches exactly as before. Pick one with `build_start profile`,
   `pa do --profile`, the card menu, or let the planner (task kind: investigate/review → research, coding →
   feature, admin → chore; `dispatch.start mode: 'plan'` = research, which is how its eager research runs are
   read-only). Real Claude Code flags only (checked against `claude --help`): `--model` (fable is `claude-fable-5-2`),
-  `--effort low|medium|high|xhigh|max`, `--permission-mode` (for `plan` the `--dangerously-skip-permissions` flag is
-  dropped, it would override it, and `Bash(node *pa.js* run *)` is allowed so the agent can still report),
+  `--effort low|medium|high|xhigh|max`, `--permission-mode` (for any mode but bypass the `--dangerously-skip-permissions` flag is
+  dropped, it would override it; `dontAsk` denies everything not read-only and allows the exact `node "<pa.js>" run *`
+  command, Bash and PowerShell rules, so the agent can still report. Verified on claude 2.1.327: `plan` ignores an
+  allow rule for a command that writes, so it cannot be a research mode; a mid-rule wildcard such as `*pa.js*` is
+  refused by the CLI; and termhub's restore keeps a `--permission-mode`),
   `--strict-mcp-config` always plus `--mcp-config <file>` for the profile's `tools.mcp` (servers named in the
-  `build.mcp` setting), `--allowedTools`/`--disallowedTools`. The subagent model has no flag: env
+  `build.mcp` setting); allow/deny rules go in the run's `--settings` file (`<worktrees>/build-<run>.settings.json`,
+  `permissions.allow/deny`), not as flags: rules hold quotes and spaces that do not survive the pwsh command line. The subagent model has no flag: env
   `CLAUDE_CODE_SUBAGENT_MODEL`. Subagents are `.claude/agents/<name>.md` in the run's folder, listed in the
   worktree's `info/exclude` so the agent never commits them; the repo's own agent of the same name wins. The profile
   is on `build_run` and in `summary.json`. Settings UI and parity verbs are step B; for now profiles are edited

@@ -132,7 +132,7 @@ const fromRow = (r: Row): Profile => normalize(String(r.name), r);
 
 const RESEARCH_PROMPT = `## This is a read-only research run
 
-You run in Claude Code's plan permission mode: you can read, search and run read-only commands, and you cannot edit or write files. That overrides the "Research, review or report" bullet above: do not write a report file.
+You run in Claude Code's dontAsk permission mode: you can read, search and run read-only commands, and anything else is denied: you cannot edit or write files. That overrides the "Research, review or report" bullet above: do not write a report file.
 
 Find the answer, then deliver the report in the result of your last command: \`{{pa}} run done --result "<the report>"\`. The report is plain text or markdown, up to about 40 lines: the answer first, then the evidence (file paths, line numbers, commands you ran), then what you could not verify. The \`{{pa}} run note|ask|done\` commands are pre-approved. Never change code, open a pull request or push.`;
 
@@ -149,8 +149,8 @@ const SEEDS: Array<Json> = [
   { name: 'chore', description: 'Small, well-understood changes: docs, config, a rename, a one-file fix.', model: 'sonnet', effort: 'low', costCapUsd: 2, wallCapMin: 45 },
   { name: 'feature', description: 'New behaviour or a real fix: reads the code first, tests, a draft PR.', model: 'opus', effort: 'medium', subagents: [FEATURE_EXPLORER], costCapUsd: 8, wallCapMin: 180 },
   {
-    name: 'research', description: 'Read-only investigation. Plan permission mode; the report comes back as the run result.', model: 'sonnet', effort: 'medium',
-    permissionMode: 'plan', prompt: RESEARCH_PROMPT, subagents: [FEATURE_EXPLORER], costCapUsd: 3, wallCapMin: 60,
+    name: 'research', description: 'Read-only investigation. dontAsk permission mode; the report comes back as the run result.', model: 'sonnet', effort: 'medium',
+    permissionMode: 'dontAsk', prompt: RESEARCH_PROMPT, subagents: [FEATURE_EXPLORER], costCapUsd: 3, wallCapMin: 60,
   },
   { name: 'quick', description: 'A one-file edit or a lookup. Cheapest and fastest; do not explore.', model: 'haiku', effort: 'low', costCapUsd: 1, wallCapMin: 20, idleAfterS: 120 },
 ];
@@ -162,6 +162,12 @@ async function ensureSeeds(): Promise<void> {
   for (const s of SEEDS) {
     const p = normalize(s.name, s);
     await repo().insertIfAbsent(p.name, toRow(p));
+  }
+  // 4bb5989 seeded research in `plan` mode, where the agent cannot run `pa run done`; move that untouched row to dontAsk.
+  const old = await repo().byName('research');
+  if (old && old.permission_mode === 'plan' && String(old.prompt || '').includes("plan permission mode")) {
+    const s = SEEDS.find((x) => x.name === 'research') as Json;
+    await repo().upsert('research', toRow(normalize('research', s)));
   }
   seeded = true;
 }
@@ -265,19 +271,22 @@ function withPermissionMode(line: string, mode: string | null): string {
  * the --mcp-config file the caller wrote when tools.mcp is not empty; `pa` is the run's pa command's
  * script name, for the read-only allow rule.
  */
-function launchFlags(r: Resolved, { mcpFile = null }: { mcpFile?: string | null } = {}): { flags: string; env: Record<string, string>; files: Array<{ path: string; text: string }> } {
+function launchFlags(r: Resolved, { mcpFile = null, pa = null }: { mcpFile?: string | null; pa?: string | null } = {}): { flags: string; env: Record<string, string>; files: Array<{ path: string; text: string }>; permissions: { allow: string[]; deny: string[] } } {
   let flags = '';
   const env: Record<string, string> = {};
   if (r.effort) flags += ` --effort ${r.effort}`;
   if (mcpFile) flags += ` --mcp-config ${quote(mcpFile)}`;
   const allow = [...r.tools.allow];
-  // Plan mode runs nothing that is not read-only, and the agent's way home is the `pa run` verbs.
-  if (r.permissionMode === 'plan') allow.push('Bash(node *pa.js* run *)');
-  if (allow.length) flags += ` --allowedTools ${quote(allow.join(' '))}`;
-  if (r.tools.deny.length) flags += ` --disallowedTools ${quote(r.tools.deny.join(' '))}`;
+  // A read-only mode runs nothing that writes, and the agent's way home is the `pa run` verbs. Verified against
+  // claude 2.1.327: `plan` ignores an allow rule for a command that writes (the model refuses it), `dontAsk`
+  // honours it and denies everything else not read-only. The rule is the exact command line the prompt gives
+  // the agent (a wildcard before `run` is refused by the CLI), for both shell tools Claude Code has on Windows.
+  if ((r.permissionMode === 'dontAsk' || r.permissionMode === 'plan') && pa) allow.push(`Bash(${pa} run *)`, `PowerShell(${pa} run *)`);
   if (r.subagentModel && r.subagentModel !== 'inherit') env.CLAUDE_CODE_SUBAGENT_MODEL = r.subagentModel;
   const files = r.subagents.map((s) => ({ path: `.claude/agents/${s.name}.md`, text: agentFile(s) }));
-  return { flags, env, files };
+  // Rules go to the run's --settings file, not --allowedTools: they hold quotes and spaces, and the command is
+  // typed into pwsh, where a quote inside a quoted argument does not survive.
+  return { flags, env, files, permissions: { allow, deny: [...r.tools.deny] } };
 }
 
 /** Pure: a subagent definition as Claude Code reads it (.claude/agents/<name>.md). */

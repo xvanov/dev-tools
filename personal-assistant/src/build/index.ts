@@ -158,9 +158,13 @@ function leanFlags(line: string): string {
 
 /** User settings are not loaded (see leanFlags), so the one-time bypass-permissions confirmation the owner
  *  accepted there would block the session on a prompt: carry just that flag in a small settings file. */
-function settingsFlag(): string {
-  const file = path.join(config.worktreesRoot, 'build-settings.json');
-  fs.writeFileSync(file, JSON.stringify({ skipDangerousModePermissionPrompt: true }), 'utf8');
+function settingsFlag(runId?: number | string, perms: { allow: string[]; deny: string[] } = { allow: [], deny: [] }): string {
+  // A profile's tool rules ride in a per-run file (quotes and spaces do not survive the pwsh command line as flags).
+  const own = perms.allow.length > 0 || perms.deny.length > 0;
+  const file = path.join(config.worktreesRoot, own ? `build-${runId}.settings.json` : 'build-settings.json');
+  const settings: Json = { skipDangerousModePermissionPrompt: true };
+  if (own) settings.permissions = { ...(perms.allow.length ? { allow: perms.allow } : {}), ...(perms.deny.length ? { deny: perms.deny } : {}) };
+  fs.writeFileSync(file, JSON.stringify(settings), 'utf8');
   return ` --settings "${file}"`;
 }
 
@@ -265,7 +269,7 @@ ${renderPrompt(r.prompt, vars)}
       mcpFile = path.join(config.worktreesRoot, `build-${run.id}.mcp.json`);
       fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers: mcp }), 'utf8');
     }
-    const extra = P().launchFlags(r, { mcpFile });
+    const extra = P().launchFlags(r, { mcpFile, pa: paCommand() });
     await writeSubagents(cwd, extra.files, isRepo);
     try {
       require('../dispatch/trust.ts').ensureTrusted(config.worktreesRoot);
@@ -280,7 +284,7 @@ ${renderPrompt(r.prompt, vars)}
     const session = await termhub.createSession({
       cwd,
       // The opening prompt is the command's argument: no waiting for the input box, no typing, no 6 s settle.
-      command: `${line}${leanFlags(line)}${extra.flags}${settingsFlag()} --session-id ${claudeSession} "Read ${promptPath} for your full instructions, then do the task it describes."`,
+      command: `${line}${leanFlags(line)}${extra.flags}${settingsFlag(run.id, extra.permissions)} --session-id ${claudeSession} "Read ${promptPath} for your full instructions, then do the task it describes."`,
       title: `jarvis#${run.id} ${task.slice(0, 40)}`,
       env: { JARVIS_RUN_ID: String(run.id), PA_DISPATCHED_RUN: `build-${run.id}`, ...extra.env },
       links: { card: commitmentId, external: `build-${run.id}` },

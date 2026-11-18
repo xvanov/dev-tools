@@ -3,7 +3,7 @@
 --
 --   build_profile  name (the key), description; model (haiku|sonnet|opus|fable), effort
 --                  (low|medium|high|xhigh|max), permission_mode (null = Build's default, bypass;
---                  `plan` = read-only); prompt appended to src/build/agent-prompt.md; tools, subagents
+--                  `dontAsk` = read-only); prompt appended to src/build/agent-prompt.md; tools, subagents
 --                  as JSON text (MCP servers / tool rules; subagent definitions written into the run's
 --                  worktree as .claude/agents/*.md); subagent_model; the caps and a default repo. A
 --                  null column falls through to the next layer (src/build/profiles.ts `resolve`).

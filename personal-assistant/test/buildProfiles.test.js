@@ -80,14 +80,17 @@ assert.deepStrictEqual(['investigate', 'review', 'coding', 'admin', 'reply', nul
   assert.deepStrictEqual([none.flags, none.env, none.files], ['', {}, []], 'no profile adds nothing');
 
   const research = P.resolve({ profile: P.normalize('research', P.SEEDS.find((s) => s.name === 'research')), defaults: DEFAULTS });
-  const r = P.launchFlags(research);
+  const PA = 'node "C:\\repos\\x\\bin\\pa.js"';
+  const r = P.launchFlags(research, { pa: PA });
   assert.match(r.flags, / --effort medium/);
-  assert.match(r.flags, / --allowedTools "Bash\(node \*pa\.js\* run \*\)"/, 'plan mode keeps the pa run verbs usable');
+  assert.ok(!/allowedTools/.test(r.flags), 'rules go to the settings file, not the pwsh command line');
+  assert.deepStrictEqual(r.permissions.allow, [`Bash(${PA} run *)`, `PowerShell(${PA} run *)`], 'dontAsk keeps the pa run verbs usable: the exact command, no mid-rule wildcard');
   assert.deepStrictEqual(r.files.map((f) => f.path), ['.claude/agents/explorer.md']);
 
   const rich = P.resolve({ profile: P.normalize('x', { subagentModel: 'haiku', tools: { mcp: ['m'], allow: ['Read', 'Grep'], deny: ['WebFetch'] }, effort: 'xhigh' }), defaults: DEFAULTS });
   const f = P.launchFlags(rich, { mcpFile: 'C:\\wt\\m.json' });
-  assert.strictEqual(f.flags, ' --effort xhigh --mcp-config "C:\\wt\\m.json" --allowedTools "Read Grep" --disallowedTools "WebFetch"');
+  assert.strictEqual(f.flags, ' --effort xhigh --mcp-config "C:\\wt\\m.json"');
+  assert.deepStrictEqual(f.permissions, { allow: ['Read', 'Grep'], deny: ['WebFetch'] });
   assert.deepStrictEqual(f.env, { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' });
   assert.deepStrictEqual(P.launchFlags(P.resolve({ profile: P.normalize('x', { subagentModel: 'inherit' }), defaults: DEFAULTS })).env, {}, 'inherit sets nothing');
 
@@ -125,7 +128,16 @@ async function main() {
     assert.deepStrictEqual((await P.list()).map((p) => p.name), ['chore', 'feature', 'quick', 'research']);
     const chore = await P.get('chore');
     assert.deepStrictEqual([chore.model, chore.effort], ['sonnet', 'low']);
-    assert.deepStrictEqual([(await P.get('quick')).model, (await P.get('research')).permissionMode], ['haiku', 'plan']);
+    assert.deepStrictEqual([(await P.get('quick')).model, (await P.get('research')).permissionMode], ['haiku', 'dontAsk']);
+    // The research row 4bb5989 seeded in `plan` mode (where `pa run done` cannot run) moves to dontAsk; an edited one is left alone.
+    const research0 = await P.get('research');
+    await P.save('research', { ...research0, permissionMode: 'plan', prompt: 'You run in Claude Code\'s plan permission mode' });
+    P.resetSeeds();
+    assert.strictEqual((await P.get('research')).permissionMode, 'dontAsk');
+    await P.save('research', { ...research0, permissionMode: 'plan', prompt: 'my own words' });
+    P.resetSeeds();
+    assert.strictEqual((await P.get('research')).permissionMode, 'plan', 'an edited profile is not touched');
+    await P.save('research', research0);
     await P.save('chore', { ...chore, effort: 'medium', description: 'edited' });
     P.resetSeeds();
     assert.strictEqual((await P.get('chore')).effort, 'medium', 'seeding again does not overwrite an edit');
@@ -164,10 +176,14 @@ async function main() {
     // research: read-only. Plan permission mode, never bypass; the pa verbs allowed; the report goes in the result.
     const res = await B.start({ task: 'research task', profile: 'research' });
     const rc = created[4].command;
-    assert.strictEqual(res.permission_mode, 'plan');
-    assert.match(rc, / --permission-mode plan/);
+    assert.strictEqual(res.permission_mode, 'dontAsk');
+    assert.match(rc, / --permission-mode dontAsk/);
     assert.ok(!/dangerously-skip-permissions/.test(rc), rc);
-    assert.match(rc, / --allowedTools "Bash\(node \*pa\.js\* run \*\)"/);
+    const rs = JSON.parse(read(path.join(wt, `build-${res.id}.settings.json`)));
+    assert.ok(rc.includes(`--settings "${path.join(wt, `build-${res.id}.settings.json`)}"`), rc);
+    assert.strictEqual(rs.permissions.allow.length, 2);
+    assert.ok(rs.permissions.allow.every((x) => / run \*\)$/.test(x) && !x.includes('*pa.js*')), rs.permissions.allow.join(' | '));
+    assert.ok(!rc.includes('--allowedTools'));
     assert.match(rc, / --effort medium/);
     const prompt = read(path.join(wt, `build-${res.id}.PROMPT.md`));
     assert.match(prompt, /^# Jarvis task #/);
@@ -201,10 +217,10 @@ async function main() {
 
     // The run row and summary.json record the profile.
     const row = await repo.buildRuns.byId(res.id);
-    assert.deepStrictEqual([row.profile, row.effort, row.permission_mode], ['research', 'medium', 'plan']);
+    assert.deepStrictEqual([row.profile, row.effort, row.permission_mode], ['research', 'medium', 'dontAsk']);
     const dest = await require('../src/build/track.ts').archive(row, null);
     const summary = JSON.parse(read(path.join(dest, 'summary.json')));
-    assert.deepStrictEqual([summary.profile, summary.effort, summary.permission_mode, summary.model], ['research', 'medium', 'plan', 'sonnet']);
+    assert.deepStrictEqual([summary.profile, summary.effort, summary.permission_mode, summary.model], ['research', 'medium', 'dontAsk', 'sonnet']);
 
     // Subagent files stay out of git: a real worktree's exclude list (its .git is a file).
     const main = path.join(dir, 'repo');

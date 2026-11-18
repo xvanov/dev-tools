@@ -88,6 +88,10 @@ eq('--fork-session is dropped (forking would start a new, untracked id)',
   restoreClaudeCommand(`claude -r ${ID2} --fork-session`, ID),
   `claude --resume ${ID} --dangerously-skip-permissions`);
 
+eq('a chosen permission mode survives a restore (bypass would override a read-only run)',
+  restoreClaudeCommand(`claude --permission-mode dontAsk --session-id ${ID}`, ID),
+  `claude --resume ${ID} --permission-mode dontAsk`);
+
 eq('=-form flag values are stripped too',
   restoreClaudeCommand(`claude --session-id=${ID}`, ID),
   `claude --resume ${ID} --dangerously-skip-permissions`);
