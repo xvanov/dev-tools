@@ -106,26 +106,11 @@ Changes to `scripts/run-tests.js`, the tool's `package.json`/lockfile or `runner
 everything. Nothing changed, nothing runs. A change to a module most of the app imports selects
 most tests, so a leaf edit takes seconds and a core edit takes a normal suite run.
 
-Software-factory has the same thing for pytest: `python scripts/changed-pytest.py [--list] [--since REF] [--all] [-- pytest args]`
-When a change selects more than 40 test files (or a shared file such as `conftest.py` changed), it
-runs only the 5 smallest selected files as a smoke subset and leaves the full suite to CI; `--all`
-runs the whole selection.
-(import graph by regex, `conftest.py` and fixture-file-name edges, no plugins).
-
-### Factory gate (`gate-changed.js`)
-
-`node scripts/gate-changed.js [--since REF]` is the software-factory's test gate for stories on this
-repo (`software-factory/apps/dev-tools/config.yaml`): the changed-files mode above, against the merge
-base with `REF` (default `origin/main`), for every touched tool. Unlike the hook it installs a tool's
-dependencies when the story worktree has none (`npm ci`, `uv sync --all-extras`) instead of
-skipping it, and a tool that cannot run fails the gate.
-
 ## Pre-commit hook
 
 `scripts/hooks/pre-commit` runs the public-repo guard (`guard: N files clean`, ios-messages), then
-`scripts/pre-commit-tests.js`: changed-files mode for every tool that uses this runner plus
-software-factory, in parallel. A Node tool without `node_modules` is skipped with a note. The
-software-factory leg runs in `software-factory/.venv` and never installs anything: a commit whose worktree has no pytest there (an agent's fresh worktree) skips that leg with a one-line note (`--no-sync`; CI runs the suite; `gate-changed.js` still syncs). A commit that changes only markdown/LICENSE skips the tests entirely (~1 s). Install (or update) it into the shared `.git/hooks` with:
+`scripts/pre-commit-tests.js`: changed-files mode for every tool that uses this runner,
+in parallel. A Node tool without `node_modules` is skipped with a note. A commit that changes only markdown/LICENSE skips the tests entirely (~1 s). Install (or update) it into the shared `.git/hooks` with:
 
 ```
 node scripts/install-hooks.js

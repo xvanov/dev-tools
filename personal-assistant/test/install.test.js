@@ -121,7 +121,6 @@ function tree({ fresh }) {
       { TaskName: 'pa-capture-loopback', State: 'Running', Arguments: 'audio\\capture.py --stream loopback' },
       { TaskName: 'Termhub', State: 'Ready', Arguments: `conhost.exe --headless powershell.exe -File "${root}\\termhub\\windows\\start.ps1"` },
       { TaskName: 'TermhubWatchdog', State: 'Ready', Arguments: `-File "${root}\\termhub\\watchdog\\watchdog.ps1"` },
-      { TaskName: 'factory-serve', State: 'Running', Arguments: `${root}\\software-factory\\.venv\\Scripts\\python.exe -m factory serve` },
     ];
   }
   json(path.join(root, 'facts.json'), facts);
@@ -150,7 +149,7 @@ function snapshot(dir, onlyOurs = false) {
 
 function dryRun(t, args = []) {
   const env = { ...process.env };
-  for (const k of Object.keys(env)) if (/^(PA_|TERMHUB_|FACTORY_|DEVTOOLS_)/.test(k)) delete env[k];
+  for (const k of Object.keys(env)) if (/^(PA_|TERMHUB_|DEVTOOLS_)/.test(k)) delete env[k];
   Object.assign(env, {
     DEVTOOLS_INSTALL_ROOT: t.root,
     DEVTOOLS_INSTALL_TASKS_FILE: t.tasksFile,
@@ -159,7 +158,6 @@ function dryRun(t, args = []) {
     TERMHUB_DATA_DIR: path.join(t.local, 'termhub'),
     PA_DISPATCH_PORT: CLOSED,
     TERMHUB_PTYD_PORT: CLOSED,
-    FACTORY_SERVE_PORT: CLOSED,
   });
   const before = { root: snapshot(t.root), local: snapshot(t.local, true) };
   return new Promise((resolve) => {
@@ -205,17 +203,12 @@ const woulds = (out) => out.split(/\r?\n/).filter((l) => /^install: would /.test
     // Tasks registered from an elevated shell (their files belong to Administrators).
     const elevated = make({ fresh: false });
     const elevatedTasks = JSON.parse(fs.readFileSync(elevated.tasksFile, 'utf8')).map((t) => (
-      ['pa-worker', 'TermhubWatchdog', 'factory-serve'].includes(t.TaskName) ? { ...t, Admin: true } : t));
-    elevatedTasks.find((t) => t.TaskName === 'factory-serve').Arguments = 'C:\\elsewhere\\.venv\\Scripts\\python.exe -m factory serve';
+      ['pa-worker', 'TermhubWatchdog'].includes(t.TaskName) ? { ...t, Admin: true } : t));
     json(elevated.tasksFile, elevatedTasks);
 
-    const customServe = make({ fresh: false });
-    json(customServe.tasksFile, JSON.parse(fs.readFileSync(customServe.tasksFile, 'utf8')).map((t) => (
-      t.TaskName === 'factory-serve' ? { ...t, Arguments: `${t.Arguments} --supervise --interval 120 --app sample` } : t)));
-
-    const [a, b, c, d, e, f, g, h, k] = await Promise.all([
+    const [a, b, c, d, e, f, g, h] = await Promise.all([
       dryRun(fresh), dryRun(done), dryRun(postgresLine), dryRun(postgresInstalled), dryRun(keyless), dryRun(adopt),
-      dryRun(done, ['-Reinstall']), dryRun(elevated, ['-Reinstall']), dryRun(customServe, ['-Reinstall']),
+      dryRun(done, ['-Reinstall']), dryRun(elevated, ['-Reinstall']),
     ]);
 
     // A fresh tree: everything to do, each by its own tool.
@@ -234,10 +227,8 @@ const woulds = (out) => out.split(/\r?\n/).filter((l) => /^install: would /.test
     has(a, /would run personal-assistant\\windows\\install\.ps1 -SkipDatabase.* \(pa-worker is missing\)/, "fresh: the PA's installer");
     has(a, /would run termhub\\windows\\ptyd\.ps1 -Ensure/, 'fresh: ptyd');
     has(a, /would run termhub\\windows\\install\.ps1 \(the Termhub task is missing\)/, "fresh: termhub's installer");
-    has(a, /would run software-factory\\scripts\\windows\\install-serve\.ps1 -SkipSync \(factory-serve is missing\)/, "fresh: the factory's installer");
     has(a, /PA: nothing answers on :1; would run windows\\redeploy\.ps1 -Restart/, 'fresh: the PA started');
     has(a, /termhub: sessiond down, front down; would run windows\\start\.ps1/, 'fresh: termhub started');
-    has(a, /factory: nothing answers on :1; would run Start-ScheduledTask factory-serve/, 'fresh: serve started');
 
     // Installed: every setup step finds its work done (the services themselves are down here).
     const setup = section(b, 'settings', 'start');
@@ -248,7 +239,6 @@ const woulds = (out) => out.split(/\r?\n/).filter((l) => /^install: would /.test
     has(b, /personal-assistant: node_modules matches package-lock\.json/, 'installed: deps kept');
     has(b, /jarvisd: jarvisd-abc1234\.exe is built/, 'installed: the build kept');
     has(b, /pa-worker runs this checkout's windows\\pa-launch\.ps1/, 'installed: pa-worker kept');
-    has(b, /factory-serve runs this checkout's factory serve: kept/, 'installed: factory-serve kept');
 
     // A PA_DB line is never overridden, whatever it says.
     has(c, /PA_DB=postgres \(personal-assistant\\\.env\): kept/, 'PA_DB=postgres kept');
@@ -277,7 +267,6 @@ const woulds = (out) => out.split(/\r?\n/).filter((l) => /^install: would /.test
     has(g, /would build jarvisd/, 'reinstall: rebuilds jarvisd');
     has(g, /would run personal-assistant\\windows\\install\.ps1 -SkipDatabase.* \(reinstall\)/, "reinstall: the PA's installer");
     has(g, /would run termhub\\watchdog\\install-watchdog\.ps1 \(re-register\)/, 'reinstall: the watchdog');
-    has(g, /would run software-factory\\scripts\\windows\\install-serve\.ps1 -SkipSync \(reinstall\)/, "reinstall: the factory's installer");
     hasNot(g, /would (npm |add |generate |create the encrypted)/, 'reinstall: no deps, settings or keys redone');
     hasNot(g, /would run termhub\\windows\\install\.ps1/, "reinstall: termhub's installer (it stops the tiers) not rerun over a good task");
 
@@ -287,12 +276,7 @@ const woulds = (out) => out.split(/\r?\n/).filter((l) => /^install: would /.test
     has(h, /would run personal-assistant\\windows\\install\.ps1 -SkipDatabase -NoWorker/, 'the PA installer leaves pa-worker alone');
     has(h, /TermhubWatchdog runs this checkout's watchdog\.ps1; registered from an elevated shell: kept/, 'elevated watchdog kept');
     hasNot(h, /would run termhub\\watchdog\\install-watchdog\.ps1/, 'elevated watchdog not re-registered');
-    has(h, /needs you: factory-serve is elsewhere and was registered from an elevated shell/, 'a wrong elevated task is named');
-    hasNot(h, /would run software-factory\\scripts\\windows\\install-serve\.ps1/, 'and not re-registered');
 
-    // install-serve.ps1 registers its defaults: a serve task with its own --app/--interval is kept.
-    has(k, /factory-serve runs this checkout's factory serve with its own --app\/--interval: kept/, 'custom serve args kept');
-    hasNot(k, /would run software-factory\\scripts\\windows\\install-serve\.ps1/, 'custom serve not re-registered');
 
     console.log('install.test.js: ok');
   } finally {

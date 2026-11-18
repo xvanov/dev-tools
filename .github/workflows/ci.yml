@@ -30,7 +30,6 @@ jobs:
     outputs:
       pa: ${{ steps.f.outputs.pa }}
       termhub: ${{ steps.f.outputs.termhub }}
-      factory: ${{ steps.f.outputs.factory }}
       ios: ${{ steps.f.outputs.ios }}
       ptyd: ${{ steps.f.outputs.ptyd }}
       build: ${{ steps.f.outputs.build }}
@@ -46,7 +45,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -u
-          all() { for k in pa termhub factory ios ptyd build jarvisd; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          all() { for k in pa termhub ios ptyd build jarvisd; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
           [ "$EVENT" = "workflow_dispatch" ] && all
           if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BEFORE"; fi
           # New branch / forced push / unknown base: run everything (fail safe).
@@ -55,11 +54,9 @@ jobs:
           echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
           echo "$CHANGED" | grep -q '^\.github/workflows/ci\.yml$' && all
           hit() { echo "$CHANGED" | grep -qE "$1" && echo true || echo false; }
-          # schemas/ is the PA <-> factory contract (plan 1.1): both sides test against it.
           # The root install.ps1 (plan 7.7) is tested by personal-assistant/test/install.test.js.
           echo "pa=$(hit '^(personal-assistant|schemas)/|^install\.ps1$|^scripts/install-facts\.js$')" >> "$GITHUB_OUTPUT"
           echo "termhub=$(hit '^termhub/')" >> "$GITHUB_OUTPUT"
-          echo "factory=$(hit '^(software-factory|schemas)/')" >> "$GITHUB_OUTPUT"
           echo "ios=$(hit '^ios-messages/')" >> "$GITHUB_OUTPUT"
           # The conformance suite holds ptyd to sessiond's protocol: a change to either side reruns it.
           echo "ptyd=$(hit '^(ptyd|termhub)/')" >> "$GITHUB_OUTPUT"
@@ -409,75 +406,6 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
-
-  software-factory:
-    needs: changes
-    if: needs.changes.outputs.factory == 'true'
-    name: software-factory (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    # Linux gates. The FULL Windows suite stays informational: on a hosted Windows
-    # runner it takes far longer than on Linux (it was killed at 25 min mid-pytest
-    # on every run), so it gets 60 min and never fails the run. The Windows gate is
-    # `software-factory-windows-2x` below: the files that cover the native-Windows
-    # factory (plan 2.x) and the JOBS-API (Exit 2).
-    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 25 }}
-    defaults:
-      run:
-        working-directory: software-factory
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: software-factory/uv.lock
-          python-version: "3.12"
-      - name: bubblewrap for the agent sandbox tests (plan 5.2)
-        if: runner.os == 'Linux'
-        # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bwrap needs them.
-        run: |
-          sudo apt-get install -y bubblewrap
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      - run: uv sync --all-extras
-      # The dev-tools app's lint gate runs this on every story: a red main fails every
-      # story's gate, so CI catches it first (Linux only; ruff is OS-independent).
-      - if: runner.os == 'Linux'
-        run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run ruff check .
-        shell: bash
-      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist loadfile
-        shell: bash
-
-  software-factory-windows-2x:
-    # Gating on Windows (plan 2.x / Exit 2): the native-Windows factory and the
-    # JOBS-API. The full Windows suite runs above, informational.
-    needs: changes
-    if: needs.changes.outputs.factory == 'true'
-    name: software-factory (windows-latest, 2.x gate)
-    runs-on: windows-latest
-    timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: software-factory
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: software-factory/uv.lock
-          python-version: "3.12"
-      - run: uv sync --all-extras
-      - name: 2.x tests (oscompat, serve + API, claude_session rounds, JOBS-API, delivery, gh auth, power)
-        shell: bash
-        run: >-
-          bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist load
-          -m "not slow and not flaky_under_load"
-          tests/test_oscompat.py tests/test_serve.py tests/test_serve_api.py
-          tests/test_claude_session.py tests/test_claude_session_round.py tests/test_text_run_watch.py
-          tests/test_jobs_*.py tests/test_delivery_*.py tests/test_gh_auth.py tests/test_power.py
 
   ios-messages:
     needs: changes

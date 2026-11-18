@@ -1,7 +1,7 @@
 # Generic words that a contact name or config term happens to contain; never real identifiers.
 partners meta roomster buildium console ting power realty carpenter mills mason turner cooper parker
 taylor brooks star iris lily cliff misty sandy trinity rose mexican india bulgarian french peru trail
-parkway north florida california washington xvanov
+parkway north florida california washington xvanov arm64 amd64
 python3 iPhone SpareRoom GitHub Wi-Fi 6-digit FIRST WARNING iMessage OpenAI README king
 delta reply system today brain fidelity raven lifetime changed
 shell delete corporate final start display 2-minute race dirty every without bluetooth nik nick handoff order
@@ -22,7 +22,7 @@ SSH_AUTH_SOCK destroyed
 after
 ISSUE
 TOUCH NVIDIA 64-bit
-# software-factory (2026-11-06): ordinary words in its code, docs and tests
+# More ordinary words in code, docs and tests (added for the since-removed software-factory; PA files still use them)
 30-day
 30-min
 30-minute

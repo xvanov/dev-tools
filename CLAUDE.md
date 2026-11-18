@@ -10,9 +10,7 @@ before changing that tool.
 
 Coding work runs as **one Claude Code agent per task** in a termhub session
 (`personal-assistant/src/build`, see `personal-assistant/AGENT.md` "Build"). That is the way: improve it.
-`software-factory/` is **frozen** — the multi-persona chain did not work. Do not extend it, route work to
-it, or copy its patterns; leave it untouched unless asked to remove it. This repo is public: never track
-a registered app's config under `software-factory/apps/`.
+The multi-persona `software-factory` was removed from the tree (recoverable from git at `4eee22f`).
 
 ## Ship every unit of work
 

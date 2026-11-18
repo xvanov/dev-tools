@@ -4,8 +4,7 @@
 //   node scripts/pre-commit-tests.js
 //
 // For every tool whose `npm test` is scripts/run-tests.js, runs `run-tests.js --changed` (tests that
-// transitively import a file changed against HEAD, staged or not). For software-factory, runs
-// scripts/changed-pytest.py the same way. Tools run in parallel; typical commit: a few seconds.
+// transitively import a file changed against HEAD, staged or not). Tools run in parallel; typical commit: a few seconds.
 // CI still runs the full suites.
 //
 // Emergency skip (humans only; agents never skip, and never use --no-verify):
@@ -65,11 +64,6 @@ for (const d of fs.readdirSync(top, { withFileTypes: true })) {
     continue;
   }
   jobs.push(run(d.name, process.execPath, [path.join(top, 'scripts', 'run-tests.js'), '--changed', '--timeout', '300'], path.join(top, d.name)));
-}
-const factoryTouched = [...changed].some((f) => f.startsWith('software-factory/') || f === 'scripts/changed-pytest.py');
-if (factoryTouched) {
-  const py = process.platform === 'win32' ? ['python'] : ['python3', 'python'];
-  jobs.push(run('software-factory', py[0], [path.join(top, 'scripts', 'changed-pytest.py'), '--no-sync'], top));
 }
 
 Promise.all(jobs).then((results) => {

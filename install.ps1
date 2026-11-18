@@ -1,6 +1,6 @@
 # One command that installs, or reinstalls, the whole stack on this Windows machine (plan 7.7,
-# decision D23): the personal assistant on jarvisd, termhub (jarvisd front, ptyd), the factory
-# (factory serve), their scheduled tasks, started and verified.
+# decision D23): the personal assistant on jarvisd, termhub (jarvisd front, ptyd), their
+# scheduled tasks, started and verified.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File <checkout>\install.ps1 [-DryRun] [-Reinstall] [-Voice]
 #
@@ -14,13 +14,12 @@
 #
 # What it installs itself: npm dependencies (npm ci when node_modules is missing, npm install when
 # it no longer matches the lockfile; never npm ci over a live install, where Windows locks loaded
-# files), the pinned Bun, `uv sync`, the jarvisd and ptyd builds. What it cannot (git, Node 24+,
-# uv, Rust with MSVC, Tailscale, the Claude Code and gh logins) it checks and names.
+# files), the pinned Bun, the jarvisd and ptyd builds. What it cannot (git, Node 24+,
+# Rust with MSVC, Tailscale, the Claude Code and gh logins) it checks and names.
 #
 # The tasks are registered by each tool's own installer, never here: personal-assistant\windows\
 # install.ps1 (pa-worker via pa-launch.ps1, capture), termhub\windows\install.ps1 (Termhub, the
-# watchdog), termhub\windows\ptyd.ps1 (termhub-ptyd), software-factory\scripts\windows\
-# install-serve.ps1 (factory-serve).
+# watchdog), termhub\windows\ptyd.ps1 (termhub-ptyd).
 #
 # Test hooks (personal-assistant/test/install.test.js): DEVTOOLS_INSTALL_ROOT names another
 # checkout to inspect; DEVTOOLS_INSTALL_TASKS_FILE is a JSON array of {TaskName, State, Arguments,
@@ -35,7 +34,6 @@ $Root = if ($env:DEVTOOLS_INSTALL_ROOT) { (Resolve-Path $env:DEVTOOLS_INSTALL_RO
 $PaDir = Join-Path $Root 'personal-assistant'
 $ThDir = Join-Path $Root 'termhub'
 $JdDir = Join-Path $Root 'jarvisd'
-$SfDir = Join-Path $Root 'software-factory'
 $FactsJs = Join-Path $Here 'scripts\install-facts.js'
 $PaEnv = Join-Path $PaDir '.env'
 $ThEnv = Join-Path $ThDir '.env'
@@ -164,16 +162,7 @@ function Get-Json([string]$Url, [hashtable]$Headers = @{}, [int]$TimeoutSec = 3)
   return $null
 }
 
-function Get-FactoryJobList {
-  if (-not (Test-Listening $FsPort)) { return $null }
-  try {
-    $r = Invoke-WebRequest -UseBasicParsing -Method Post -TimeoutSec 60 -Headers @{ 'X-Factory' = '1' } -ContentType 'application/json' `
-      -Body '{"argv": ["job", "list", "--json"]}' "http://127.0.0.1:$FsPort/api/cli"
-    return ($r.Content | ConvertFrom-Json)
-  } catch { return $null }
-}
-
-$TaskNames = @('pa-worker', 'pa-capture-mic', 'pa-capture-loopback', 'pa-voice', 'Termhub', 'TermhubWatchdog', 'termhub-ptyd', 'factory-serve')
+$TaskNames = @('pa-worker', 'pa-capture-mic', 'pa-capture-loopback', 'pa-voice', 'Termhub', 'TermhubWatchdog', 'termhub-ptyd')
 function Get-Tasks {
   if ($env:DEVTOOLS_INSTALL_TASKS_FILE) { return @(Get-Content -Raw $env:DEVTOOLS_INSTALL_TASKS_FILE | ConvertFrom-Json) }
   return @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $TaskNames -contains $_.TaskName } | ForEach-Object {
@@ -247,8 +236,6 @@ $nodeMajor = if ($nodeVer -match '^v(\d+)\.') { [int]$Matches[1] } else { 0 }
 Report 'node 24+' ($nodeMajor -ge 24) "$nodeVer $($script:NodeExe)" "install Node.js 24 or newer into $env:ProgramFiles\nodejs (https://nodejs.org)$(if ($nodeVer) { "; found $nodeVer" })" -Required
 $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
 Report 'npm' ([bool]$npm) "$(if ($npm) { $npm.Source })" 'comes with Node.js' -Required
-$uv = Get-Command uv -ErrorAction SilentlyContinue
-Report 'uv' ([bool]$uv) "$(if ($uv) { $uv.Source })" 'install uv (https://docs.astral.sh/uv/getting-started/installation/); it fetches the Python the factory needs' -Required
 $tailscale = Get-Command tailscale -ErrorAction SilentlyContinue
 Report 'tailscale' ([bool]$tailscale) "$(if ($tailscale) { $tailscale.Source })" 'install Tailscale and sign in (termhub is published with Tailscale Serve)' -Required
 $cargo = Get-Command cargo -ErrorAction SilentlyContinue
@@ -267,7 +254,7 @@ if ($claude) {
   $st = Invoke-Capture -Exe $claude.Source -Arguments @('auth', 'status', '--json')
   try { $j = ($st.Lines -join "`n") | ConvertFrom-Json; $claudeIn = [bool]$j.loggedIn; $claudeDetail = "logged in ($($j.authMethod))" } catch { }
 }
-if (-not $skipLogins) { Report 'claude login' $claudeIn $claudeDetail $(if ($claude) { 'run: claude auth login (the factory, the PA''s connector passes and termhub''s Claude sessions use it)' } else { 'install Claude Code (https://claude.ai/install.ps1), then: claude auth login' }) }
+if (-not $skipLogins) { Report 'claude login' $claudeIn $claudeDetail $(if ($claude) { 'run: claude auth login (the PA''s connector passes and termhub''s Claude sessions use it)' } else { 'install Claude Code (https://claude.ai/install.ps1), then: claude auth login' }) }
 $ghIn = $false
 $ghDetail = ''
 if ($gh) {
@@ -286,7 +273,7 @@ if ($gh) {
     $ghDetail = 'logged in'
   }
 }
-if (-not $skipLogins) { Report 'gh login' $ghIn $ghDetail $(if ($gh) { 'run: gh auth login (the factory and the PA''s GitHub pass use it)' } else { 'install the GitHub CLI (https://cli.github.com), then: gh auth login' }) }
+if (-not $skipLogins) { Report 'gh login' $ghIn $ghDetail $(if ($gh) { 'run: gh auth login (the PA''s GitHub pass uses it)' } else { 'install the GitHub CLI (https://cli.github.com), then: gh auth login' }) }
 $script:Elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($env:DEVTOOLS_INSTALL_TASKS_FILE) { $script:Elevated = $false }
 Say "elevated: $($script:Elevated)$(if (-not $script:Elevated) { ' (tasks registered from an elevated shell are kept, not re-registered; termhub uses a Startup launcher when it has no task)' })"
@@ -349,17 +336,6 @@ if (Test-Path $launchJs) {
   if ($code -ne 0 -and -not $DryRun) { Fail-Step 'Bun' "node termhub\lib\launch.js ensure-bun exited $code" }
 }
 
-if ((Test-Path (Join-Path $SfDir 'pyproject.toml')) -and $uv) {
-  $check = Invoke-Capture -Exe $uv.Source -Arguments @('sync', '--all-extras', '--check') -Cwd $SfDir
-  if ($check.Code -eq 0) { Say "software-factory: the venv matches uv.lock" }
-  elseif ($DryRun) { Would "uv sync --all-extras --compile-bytecode in software-factory (the venv does not match uv.lock)" }
-  else {
-    Say "software-factory: uv sync --all-extras"
-    # --compile-bytecode: the first ticks otherwise compile thousands of .pyc under AV scanning.
-    $code = Invoke-Run -Exe $uv.Source -Arguments @('sync', '--all-extras', '--compile-bytecode') -Cwd $SfDir
-    if ($code -ne 0) { Fail-Step 'uv sync' "exit $code" }
-  }
-}
 
 # ---------------------------------------------------------------- builds
 
@@ -527,21 +503,6 @@ if ($th -ne 'ok' -and (Test-Blocked 'Termhub')) {
   }
 }
 
-# The factory: factory-serve runs this checkout's venv (uv sync ran above).
-$fs = Get-TaskStatus 'factory-serve' @("$SfDir\.venv\Scripts\python.exe")
-$fsArgs = "$(($script:Tasks | Where-Object { $_.TaskName -eq 'factory-serve' } | Select-Object -First 1).Arguments)"
-# install-serve.ps1 registers --interval 300 and no --app unless told: a re-register would drop them.
-$fsCustom = $fsArgs -match '--app\s' -or ($fsArgs -match '--interval\s+(\d+)' -and $Matches[1] -ne '300')
-if (Test-Blocked 'factory-serve') {
-  if ($fs -eq 'ok') { Say "factory-serve runs this checkout's factory serve; registered from an elevated shell: kept" }
-  else { Need-Owner "factory-serve is $fs and was registered from an elevated shell: run software-factory\scripts\windows\install-serve.ps1 from an elevated PowerShell" }
-} elseif ($fs -eq 'ok' -and $fsCustom) {
-  Say "factory-serve runs this checkout's factory serve with its own --app/--interval: kept (re-run install-serve.ps1 with -Apps/-IntervalSeconds to change it)"
-} elseif ($Reinstall -or $fs -ne 'ok') {
-  Say "$verb software-factory\scripts\windows\install-serve.ps1 -SkipSync ($(if ($Reinstall) { 'reinstall' } else { "factory-serve is $fs" }))"
-  if (-not $DryRun -and (Invoke-Script (Join-Path $SfDir 'scripts\windows\install-serve.ps1') @('-SkipSync')) -ne 0) { Fail-Step 'factory install' 'install-serve.ps1 failed (above)' }
-} else { Say "factory-serve runs this checkout's factory serve: kept" }
-
 # ---------------------------------------------------------------- start
 
 Section 'start'
@@ -552,7 +513,6 @@ $thData = if ($env:TERMHUB_DATA_DIR) { $env:TERMHUB_DATA_DIR } else { Join-Path 
 $thState = @{ sessiondPort = 7010; activeFrontPort = 7000; publishPort = 7000 }
 try { $j = Get-Content -Raw (Join-Path $thData 'state.json') | ConvertFrom-Json; foreach ($k in @($thState.Keys)) { if ($j.$k) { $thState[$k] = [int]$j.$k } } } catch { }
 $PtydPort = if ($env:TERMHUB_PTYD_PORT) { [int]$env:TERMHUB_PTYD_PORT } else { 7020 }
-$FsPort = if ($env:FACTORY_SERVE_PORT) { [int]$env:FACTORY_SERVE_PORT } else { 7330 }
 $short = { param($c) if ($c) { "$c".Substring(0, [Math]::Min(7, "$c".Length)) } else { 'unknown' } }
 
 # The PA: windows\redeploy.ps1 brings it to HEAD (a roll, or the restart a runtime switch needs).
@@ -604,30 +564,6 @@ if ($sess -and $wantPtyd -and "$($sess.ptyHost)" -ne 'ptyd') {
   Need-Owner "move termhub's terminals into ptyd once: termhub\windows\restart-sessiond.ps1 from a plain PowerShell window (it ends the live terminals this one time)"
 }
 
-# The factory: serve follows HEAD by itself (it exits for new code and its task restarts it).
-$fsHealth = Get-Json "http://127.0.0.1:$FsPort/api/health" @{ 'X-Factory' = '1' }
-$ticks = 0
-if ($fsHealth -and $fsHealth.running) { $ticks = if ($fsHealth.running -is [array]) { $fsHealth.running.Count } else { @($fsHealth.running.PSObject.Properties).Count } }
-if (-not $fsHealth) {
-  if ((Get-TaskStatus 'factory-serve' @('factory')) -eq 'missing' -and -not $DryRun) { Warn "factory: no factory-serve task; not started" }
-  else {
-    Say "factory: nothing answers on :$FsPort; $verb Start-ScheduledTask factory-serve"
-    if (-not $DryRun) { Start-ScheduledTask -TaskName 'factory-serve' }
-  }
-} elseif ($Reinstall -and $ticks -eq 0) {
-  # Stopping drains running ticks first; with none running that is immediate.
-  Say "factory: no tick running; $verb Stop-ScheduledTask/Start-ScheduledTask factory-serve"
-  if (-not $DryRun) {
-    Stop-ScheduledTask -TaskName 'factory-serve' -ErrorAction SilentlyContinue
-    for ($i = 0; $i -lt 60 -and (Get-Process -Id ([int]$fsHealth.pid) -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
-    Start-ScheduledTask -TaskName 'factory-serve'
-  }
-} elseif ($Reinstall) {
-  Warn "factory: $ticks tick(s) running; not restarted (stopping serve drains them first). It restarts itself when HEAD moves"
-} elseif ($head -and $fsHealth.head -ne $head) {
-  Say "factory: serve runs $(& $short $fsHealth.head); it restarts itself within about a minute of HEAD moving"
-} else { Say "factory: serve runs HEAD: nothing to do" }
-
 # ---------------------------------------------------------------- verify
 
 Section $(if ($DryRun) { 'now (a dry run verifies nothing)' } else { 'verify' })
@@ -664,9 +600,6 @@ if ($wantPtyd) {
   Check 'sessiond' ([bool]($sp -and "$($sp.ptyHost)" -eq 'ptyd')) "$(if ($sp) { "pty host $($sp.ptyHost)" } else { 'down' }) on :$($thState.sessiondPort)"
 }
 
-$jl = Wait-Until { $x = Get-FactoryJobList; if ($x -and $x.code -eq 0) { $x } } 120
-$fsNow = Get-Json "http://127.0.0.1:$FsPort/api/health" @{ 'X-Factory' = '1' }
-Check 'factory' ([bool]$jl) "job list $(if ($jl) { "answered in $($jl.ms) ms" } else { 'did not answer' }) on :$FsPort$(if ($fsNow) { ", serve at $(& $short $fsNow.head)" })"
 
 # ---------------------------------------------------------------- summary
 

@@ -23,15 +23,13 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs each tool's tests on Linux and
 Windows in parallel (no macOS, plan D14), only for the tools a change touched (path-filtered; "Run
 workflow" runs all). Covers personal-assistant, termhub, ptyd (cargo fmt/clippy/test, then the
-termhub protocol conformance suite against the built binary), software-factory (pytest via uv;
-informational until its tests are repo-portable and it is ported to Windows, plan phase 2.3) and
-ios-messages. No secrets are used.
+termhub protocol conformance suite against the built binary), and ios-messages. No secrets are used.
 
 ## Install (the whole stack, Windows)
 
 One command installs or reinstalls the stack on a Windows machine: the personal assistant on
-jarvisd, termhub (jarvisd front, ptyd), the factory (`factory serve`) and their scheduled tasks,
-then starts and verifies them (plan 7.7). It needs git, Node 24+, uv and Tailscale, checks for
+jarvisd, termhub (jarvisd front, ptyd), and their scheduled tasks,
+then starts and verifies them (plan 7.7). It needs git, Node 24+ and Tailscale, checks for
 Rust with MSVC and the Claude Code and gh logins, and names anything it cannot install itself.
 
 ```powershell

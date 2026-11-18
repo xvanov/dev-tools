@@ -52,19 +52,6 @@ if [ "$PULL" = 1 ]; then
 fi
 HEAD_SHA="$(git -C "$PA_DIR" rev-parse HEAD 2>/dev/null)"
 
-# The factory runs per tick (uv run), so a pull is live on its next tick; only its
-# locked dependencies need syncing.
-if changed software-factory/uv.lock && [ -d "$REPO_DIR/software-factory/.venv" ]; then
-  UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
-  if [ -x "$UV" ]; then
-    if [ "$DRY" = 1 ]; then say "would run: uv sync (software-factory)"
-    else
-      say "software-factory dependencies: uv sync"
-      ( cd "$REPO_DIR/software-factory" && "$UV" sync --quiet ) || say "uv sync reported a problem - continuing."
-    fi
-  fi
-fi
-
 if unit pa-voice.service && changed personal-assistant/voice; then
   if [ "$DRY" = 1 ]; then say "would restart pa-voice"
   else

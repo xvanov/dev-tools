@@ -22,7 +22,7 @@ const claudeCli = require('./claudeCli.ts');
 
 const PROJECT_DIR = path.join(__dirname, '..'); // .../termhub
 // The parts of the repo one update deploys.
-const STACK_PARTS = ['termhub', 'personal-assistant', 'software-factory'];
+const STACK_PARTS = ['termhub', 'personal-assistant'];
 
 // Re-running `git fetch` on every poll is wasteful; serve a recent result unless
 // the caller forces a refresh (the "Check again" button).

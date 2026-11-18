@@ -16,11 +16,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\install.p
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\install.ps1
 ```
 
-It installs what it can (npm dependencies, the pinned Bun, `uv sync`, the jarvisd and ptyd
+It installs what it can (npm dependencies, the pinned Bun, the jarvisd and ptyd
 builds), writes the new-system `.env` defaults only where nothing sets them, creates the SQLite
 store and its vault keys on a fresh machine, registers the tasks through each tool's own
-installer (PA, termhub and its watchdog, ptyd, `factory serve`), starts everything and checks it
-answers at HEAD. It cannot install git, Node 24+, uv, Tailscale or Rust with the MSVC build tools,
+installer (PA, termhub and its watchdog, ptyd), starts everything and checks it
+answers at HEAD. It cannot install git, Node 24+, Tailscale or Rust with the MSVC build tools,
 or log in to Claude Code and gh: it names those under "Needs you" and stops before changing
 anything if a required one is missing. Re-running is safe; `-Reinstall` re-registers the tasks
 and restarts the services, keeping the store, `.env` files and vault entries.
