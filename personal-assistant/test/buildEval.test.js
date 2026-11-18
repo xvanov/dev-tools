@@ -197,7 +197,8 @@ async function main() {
       setting: async () => null,
       verdict: async (url) => (url.endsWith('/1') ? 'merged' : null),
       claude: async (o) => {
-        claudeCalls.push({ ...o, exists: fs.existsSync(o.cwd), headBase: git(o.cwd, 'rev-parse', 'HEAD'), pushUrl: git(o.cwd, 'remote', 'get-url', '--push', 'origin'), settings: JSON.parse(fs.readFileSync(o.args[o.args.indexOf('--settings') + 1], 'utf8')) });
+        const tryGit = (...a) => { try { return git(o.cwd, ...a); } catch { return null; } }; // null in a stand-in tree (quick())
+        claudeCalls.push({ ...o, exists: fs.existsSync(o.cwd), headBase: tryGit('rev-parse', 'HEAD'), pushUrl: tryGit('remote', 'get-url', '--push', 'origin'), settings: JSON.parse(fs.readFileSync(o.args[o.args.indexOf('--settings') + 1], 'utf8')) });
         if (!stub.noWrite) fs.writeFileSync(path.join(o.cwd, `change-${claudeCalls.length}.txt`), 'a\nb\nc\n');
         if (stub.timeout) return { code: null, out: '', err: '', timedOut: true };
         return { code: 0, out: JSON.stringify({ type: 'result', subtype: stub.subtype || 'success', is_error: false, result: 'summary of work', total_cost_usd: cost, num_turns: 4, usage: { input_tokens: 100, output_tokens: 20 } }), err: '', timedOut: false };
@@ -205,7 +206,39 @@ async function main() {
       // testsFail: true fails the baseline and the replay; 'regress' fails only once the agent has written its change.
       tests: async (o) => { testCalls.push(o); const fail = stub.testsFail === 'regress' ? fs.readdirSync(o.cwd).some((f) => f.startsWith('change-')) : Boolean(stub.testsFail); return { code: fail ? 1 : 0, out: fail ? 'FAIL x' : 'ok', err: '', timedOut: false }; },
     };
-    const deps = () => ({ ...E.defaults(), ...stub });
+    // Planning asks the same read-only questions of the same repo again and again (which base commit, which branch,
+    // the merge-base): each answer is a git process, so each is asked once. Nothing below changes the repo's history.
+    const realGit = E.defaults().git;
+    const memo = new Map();
+    const memoGit = async (cwd, a) => {
+      if (!(['cat-file', 'symbolic-ref', 'merge-base'].includes(a[0]) || (a[0] === 'rev-parse' && a[1] === '--verify'))) return realGit(cwd, a);
+      const key = [cwd, ...a].join('\0');
+      if (!memo.has(key)) memo.set(key, realGit(cwd, a).then((v) => ({ v }), (e) => ({ e })));
+      const r = await memo.get(key);
+      if (r.e) throw r.e;
+      return r.v;
+    };
+    const deps = () => ({ ...E.defaults(), git: memoGit, ...stub });
+    // Speed: every git step is a process (~0.15 s idle, several times that on a loaded CI box) and a trial runs a dozen,
+    // so the first launches below use real repos and worktrees (the guards, the base commit, the cleanup, the junction)
+    // and the scenarios that test scoring, caps and the budget use quick(): the same pipeline over a plain folder with an
+    // in-process stand-in for the handful of git commands a trial issues (the diff counts the files the claude stub wrote).
+    const fakeGit = async (cwd, a) => {
+      // Planning asks the real repo (which base commit, which branch); only a trial's own steps are stood in for.
+      if (['cat-file', 'symbolic-ref', 'merge-base'].includes(a[0]) || (a[0] === 'rev-parse' && a[1] === '--verify')) return memoGit(cwd, a);
+      if (a[0] === 'worktree' && a[1] === 'add') { const wt = a[a.length - 2]; fs.mkdirSync(wt, { recursive: true }); fs.writeFileSync(path.join(wt, 'package.json'), '{"name":"proj"}'); return ''; }
+      if (a[0] === 'worktree' && a[1] === 'remove') { fs.rmSync(a[a.length - 1], { recursive: true, force: true }); return ''; }
+      if (a[0] === 'diff') return fs.readdirSync(cwd).filter((f) => f.startsWith('change-')).map((f) => `3\t0\t${f}`).join('\n');
+      return '';
+    };
+    const quick = () => ({ ...deps(), git: fakeGit, blockPush: async () => {} });
+    // The first trial of a launch real, the later ones quick: a trial's tree is named eval-<id>-<n>.
+    const treeOf = (cwd, a) => (a[0] !== 'worktree' ? cwd : a[1] === 'add' ? a[a.length - 2] : a[1] === 'remove' ? a[a.length - 1] : '');
+    const later = (p) => /eval-[^\\/]*-([2-9]|\d\d+)$/.test(String(p));
+    const hybrid = () => {
+      const d = deps();
+      return { ...d, git: (cwd, a) => (later(treeOf(cwd, a)) ? fakeGit(cwd, a) : d.git(cwd, a)), blockPush: (repoPath, wt) => (later(wt) ? Promise.resolve() : d.blockPush(repoPath, wt)) };
+    };
 
     // ---- plan selection and the base-commit fallbacks ---------------------------------------
     const planned = await E.plan({ runs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, deps());
@@ -244,7 +277,7 @@ async function main() {
     process.env.GH_TOKEN = 'a-real-token';
     process.env.GITHUB_TOKEN = 'another-real-token';
     cost = 0.5;
-    const r = await E.launch({ runs: [1, 2], profiles: 'chore', yes: true, budgetUsd: 20, noLink: true }, deps());
+    const r = await E.launch({ runs: [1, 2], profiles: 'chore', yes: true, budgetUsd: 20, noLink: true }, hybrid());
     assert.strictEqual(r.dry, false);
     assert.strictEqual(r.trials.length, 2);
     assert.ok(!r.stopped);
@@ -291,7 +324,7 @@ async function main() {
     fs.writeFileSync(path.join(main, 'node_modules', 'pkg', 'keep.txt'), 'real');
     fs.appendFileSync(path.join(main, '.git', 'info', 'exclude'), 'node_modules\n');
     let linked = null;
-    const linkDeps = { ...deps(), claude: async (o) => { linked = fs.existsSync(path.join(o.cwd, 'node_modules', 'pkg', 'keep.txt')); return stub.claude(o); } };
+    const linkDeps = { ...quick(), claude: async (o) => { linked = fs.existsSync(path.join(o.cwd, 'node_modules', 'pkg', 'keep.txt')); return stub.claude(o); } };
     const lk = await E.launch({ runs: [1], profiles: 'chore', yes: true }, linkDeps);
     assert.strictEqual(linked, true, 'the replay sees the main checkout\'s node_modules');
     assert.strictEqual(lk.trials[0].status, 'ok');
@@ -300,27 +333,27 @@ async function main() {
 
     // A failing test run, a replay that changed nothing, a timeout, a spend-capped one.
     stub.testsFail = 'regress';
-    const f1 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
+    const f1 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, quick());
     assert.deepStrictEqual([f1.trials[0].tests, f1.trials[0].passed], ['regression', 0], 'the base passed and the replay fails');
     assert.match(f1.trials[0].tests_note, /npm test \(base: pass\): FAIL x/);
     stub.testsFail = true;
-    const f1b = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
+    const f1b = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, quick());
     assert.deepStrictEqual([f1b.trials[0].tests, f1b.trials[0].passed], ['still-failing', null], 'the base already failed: not blamed on the profile');
     assert.match(f1b.trials[0].tests_note, /base: fail/);
     assert.strictEqual(f1b.trials[0].files_changed, 1, "the baseline run's leftovers are not counted as the agent's diff");
     stub.testsFail = false;
     stub.noWrite = true;
-    const f2 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
+    const f2 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, quick());
     assert.deepStrictEqual([f2.trials[0].files_changed, f2.trials[0].tests, f2.trials[0].passed], [0, 'n/a', 0]);
     stub.noWrite = false;
     stub.timeout = true;
-    const f3 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, wallMin: 1 }, deps());
+    const f3 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, wallMin: 1 }, quick());
     assert.deepStrictEqual([f3.trials[0].status, f3.trials[0].passed], ['timeout', 0]);
     assert.match(f3.trials[0].reason, /wall timeout after 1 min/);
     assert.ok(!fs.existsSync(claudeCalls[claudeCalls.length - 1].cwd), 'a timed-out replay is cleaned up too');
     stub.timeout = false;
     stub.subtype = 'error_max_budget_usd';
-    const f4 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, deps());
+    const f4 = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true }, quick());
     assert.deepStrictEqual([f4.trials[0].status, f4.trials[0].tests], ['capped', 'pass']);
     stub.subtype = null;
 
@@ -334,7 +367,10 @@ async function main() {
 
     // ad-hoc model:effort specs resolve against the defaults and carry their own flags.
     const before = claudeCalls.length;
-    const adhoc = await E.launch({ runs: [1], profiles: 'haiku:low,research', yes: true, noLink: true }, deps());
+    const adhoc = await E.launch({ runs: [1], profiles: 'haiku:low', yes: true, noLink: true }, quick());
+    // A real worktree for the research profile: its subagent files are written (and excluded) through git.
+    const adhoc2 = await E.launch({ runs: [1], profiles: 'research', yes: true, noLink: true }, deps());
+    adhoc.trials.push(...adhoc2.trials);
     assert.deepStrictEqual(adhoc.trials.map((t) => [t.profile, t.model, t.effort]), [['haiku:low', 'haiku', 'low'], ['research', 'sonnet', 'medium']]);
     assert.ok(claudeCalls[before].args.includes('haiku'));
     assert.ok(claudeCalls[before + 1].args.includes('dontAsk'), "the research profile's read-only mode is kept");
@@ -343,22 +379,22 @@ async function main() {
     // ---- the budget stops the eval before it would be exceeded --------------------------------
     cost = 2;
     const callsBefore = claudeCalls.length;
-    const b = await E.launch({ runs: [1, 2, 4], profiles: 'chore', yes: true, noLink: true, budgetUsd: 5 }, deps());
+    const b = await E.launch({ runs: [1, 2, 4], profiles: 'chore', yes: true, noLink: true, budgetUsd: 5 }, quick());
     assert.strictEqual(b.trials.length, 2, 'two $2 trials fit a $5 budget, a third would pass it');
     assert.match(b.stopped, /budget \$5\.00: \$4\.00 spent/);
     assert.strictEqual(b.notRun, 1);
     assert.strictEqual(claudeCalls.length, callsBefore + 2);
     assert.ok(Number(claudeCalls[callsBefore].args[claudeCalls[callsBefore].args.indexOf('--max-budget-usd') + 1]) <= 2, 'the spend cap given to claude is the profile cap (2), never more than what is left');
-    const tight = await E.launch({ runs: [1], profiles: 'feature', yes: true, noLink: true, budgetUsd: 1 }, deps());
+    const tight = await E.launch({ runs: [1], profiles: 'feature', yes: true, noLink: true, budgetUsd: 1 }, quick());
     assert.strictEqual(tight.trials.length, 0, 'a trial whose projected cost passes the whole budget does not start');
     assert.ok(tight.stopped);
     const lastCall = claudeCalls.length;
-    const small = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, budgetUsd: 3.5 }, { ...deps(), summaries: () => [S(1, { cost_usd: 0.2 })] });
+    const small = await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, budgetUsd: 3.5 }, { ...quick(), summaries: () => [S(1, { cost_usd: 0.2 })] });
     assert.strictEqual(small.trials.length, 1);
     assert.strictEqual(claudeCalls[lastCall].args[claudeCalls[lastCall].args.indexOf('--max-budget-usd') + 1], '2', 'min(profile cap 2, budget left 3.5)');
     const lastCall2 = claudeCalls.length;
     cost = 0.1;
-    await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, budgetUsd: 0.5 }, { ...deps(), summaries: () => [S(1, { cost_usd: 0.1 })] });
+    await E.launch({ runs: [1], profiles: 'chore', yes: true, noLink: true, budgetUsd: 0.5 }, { ...quick(), summaries: () => [S(1, { cost_usd: 0.1 })] });
     assert.strictEqual(claudeCalls[lastCall2].args[claudeCalls[lastCall2].args.indexOf('--max-budget-usd') + 1], '0.5', 'the remaining budget caps claude when it is below the profile cap');
 
     // ---- the report: store, tool, board data -----------------------------------------------------
