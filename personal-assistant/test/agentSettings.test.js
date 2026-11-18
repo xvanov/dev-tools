@@ -138,7 +138,9 @@ const bad = async (p, re) => assert.rejects(p, (e) => re.test(e.message) && (e.s
     // Reset: the edits go; a deleted built-in comes back.
     const r = await A.resetProfile('chore');
     assert.deepStrictEqual([r.model, r.effort, r.permissionMode, r.costCapUsd, r.wallCapMin, r.modified], ['sonnet', 'low', null, 2, 45, false]);
-    assert.match((await A.deleteProfile('quick')).note, /reset/);
+    await bad(A.deleteProfile('quick'), /built-in/); // the planner names the seeds: they are edited or reset, never deleted
+    assert.strictEqual((await P.get('quick')).model, 'haiku');
+    await P.remove('quick'); // (lost another way: the page still offers to restore it)
     assert.deepStrictEqual((await P.view()).missingSeeds, ['quick']);
     assert.strictEqual((await A.resetProfile('quick')).model, 'haiku');
   }
@@ -274,6 +276,22 @@ const bad = async (p, re) => assert.rejects(p, (e) => re.test(e.message) && (e.s
     for (const v of ['profile set', 'profile delete', 'profile reset', 'agents set']) assert.ok(chat.ASK_COMMANDS.includes(v) && !chat.ALLOW_COMMANDS.includes(v) && !mcp.READ_VERBS[v], v);
     assert.deepStrictEqual(mcp.paToolArgv('profile list', []), ['profile', 'list']);
     assert.throws(() => mcp.paToolArgv('profile set', ['chore']), /not a read-only/);
+  }
+
+  // ----------------------------------------------------------- a card's build settings (the Do menu's) ----
+  {
+    const chatTools = require('../src/mcp/chatTools.ts');
+    assert.ok(chatTools.CHAT_ACTION_TOOL_NAMES.includes('card_build_settings') && !chatTools.CHAT_READ_TOOL_NAMES.includes('card_build_settings'));
+    const policy = require('../src/policy/default.policy.json');
+    assert.ok(policy.rules.find((r) => r.id === 'chat-actions-ask').tools.includes('card_build_settings'), 'it asks in the policy');
+    assert.ok(require('../src/chat').ASK_COMMANDS.includes('card settings'));
+    await assert.rejects(() => chatTools.handle('card_build_settings', { card: '5' }), /nothing to set/);
+    await assert.rejects(() => chatTools.handle('card_build_settings', { card: 'x', model: 'opus' }), /card id/);
+    const sp = require('../src/cli/task.ts').settingsPatch;
+    assert.deepStrictEqual(sp({ profile: 'chore', model: false, 'cost-cap': '3' }).patch, { profile: 'chore', model: null, costCapUsd: 3 });
+    assert.deepStrictEqual(sp({}).patch, {});
+    assert.match(sp({ effort: true }).error, /needs a value/);
+    assert.match(sp({ 'wall-cap': '0' }).error, /positive/);
   }
 
   console.log('agentSettings ok');

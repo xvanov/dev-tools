@@ -18,7 +18,7 @@
 //            Allowed without a prompt (src/chat/index.js CHAT_READ_TOOLS).
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
-//   actions  session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply,
+//   actions  session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_build_settings, card_plan_apply,
 //            profile_set, profile_delete, profile_reset, agent_settings_set (the Agents page's writes)
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
@@ -45,7 +45,7 @@ type Json = Record<string, any>;
 const repository = require('../repo');
 
 const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose', 'profile_list', 'profile_get', 'agent_settings_get'];
-const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_plan_apply', 'profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set'];
+const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_build_settings', 'card_plan_apply', 'profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set'];
 
 const READ_TOOLS = [
   {
@@ -228,7 +228,7 @@ const ACTION_TOOLS = [
   },
   {
     name: 'profile_delete',
-    description: "Delete a Build profile (the user approves each call). A built-in one comes back with profile_reset.",
+    description: "Delete a Build profile you made (the user approves each call). The built-in ones (chore, feature, research, quick) cannot be deleted because the planner uses them: edit them with profile_set or put them back with profile_reset.",
     inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 40 } }, required: ['name'], additionalProperties: false },
   },
   {
@@ -277,6 +277,25 @@ const ACTION_TOOLS = [
         project: { type: ['string', 'null'], maxLength: 120 },
         note: { type: 'string', maxLength: 2000 },
         reason: { type: 'string', maxLength: 200, description: 'Why, in a few words (the ledger keeps it).' },
+      },
+      required: ['card'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'card_build_settings',
+    description:
+      "Set what a card's next Build run starts with (the user approves each call): its `profile` (a name from profile_list), `model`, `effort` and caps. These are the card's own overrides, stored with the card and applied under an explicit build_start argument but over the profile; null clears one. The same as the dashboard's Do menu settings. Give only the fields to change. Returns the card's effective settings and its overrides.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card: { type: 'string', maxLength: 20, description: 'A board card id (commitment), from board.' },
+        profile: { type: ['string', 'null'], maxLength: 40 },
+        model: { type: ['string', 'null'], enum: ['haiku', 'sonnet', 'opus', 'fable', null] },
+        effort: { type: ['string', 'null'], enum: ['low', 'medium', 'high', 'xhigh', 'max', null] },
+        cost_cap_usd: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1000 },
+        wall_cap_min: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1440 },
+        idle_after_s: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 21600 },
       },
       required: ['card'],
       additionalProperties: false,
@@ -647,6 +666,16 @@ async function handle(name: string, args: Json = {}) {
     case 'profile_set': {
       const { name, ...patch } = args;
       return require('../agentSettings.ts').setProfile(String(name || ''), patch);
+    }
+    case 'card_build_settings': {
+      const id = Number(args.card);
+      if (!Number.isInteger(id) || id < 1) throw new Error('card must be a board card id (from board)');
+      const patch: Json = {};
+      for (const [from, to] of [['profile', 'profile'], ['model', 'model'], ['effort', 'effort'], ['cost_cap_usd', 'costCapUsd'], ['wall_cap_min', 'wallCapMin'], ['idle_after_s', 'idleAfterS']] as const) {
+        if (args[from] !== undefined) patch[to] = args[from];
+      }
+      if (!Object.keys(patch).length) throw new Error('nothing to set: give profile, model, effort, cost_cap_usd, wall_cap_min or idle_after_s');
+      return require('../build/index.ts').setForCard(id, patch);
     }
     case 'profile_delete': return require('../agentSettings.ts').deleteProfile(String(args.name || ''));
     case 'profile_reset': return require('../agentSettings.ts').resetProfile(String(args.name || ''));

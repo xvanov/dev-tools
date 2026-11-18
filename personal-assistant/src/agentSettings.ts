@@ -79,10 +79,12 @@ async function setProfile(name: string, patch: Json): Promise<Json> {
 
 async function deleteProfile(name: string): Promise<Json> {
   const n = String(name || '').trim().toLowerCase();
+  // The planner names research, feature and chore by kind (profileForKind), and a run asking for a missing
+  // profile is a 400: deleting a built-in one would break planner-started runs. Edit it or reset it instead.
+  if (profiles().seedOf(n)) throw Object.assign(new Error(`"${n}" is a built-in profile and the planner uses it: edit it, or \`reset\` it to what ships (only profiles you made can be deleted)`), { status: 400 });
   const ok = await profiles().remove(n);
   if (!ok) throw Object.assign(new Error(`no profile "${n}"`), { status: 404 });
-  const seed = Boolean(profiles().seedOf(n));
-  return { deleted: n, note: seed ? 'a built-in profile: `reset` brings it back as shipped' : null };
+  return { deleted: n, note: null };
 }
 
 async function resetProfile(name: string): Promise<Json> {

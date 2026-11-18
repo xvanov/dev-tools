@@ -22,7 +22,7 @@ const HELP = `
         --subagents-file <file.json>   the whole subagent list (--no-subagents: none)   --subagent-model haiku|sonnet|opus|fable|inherit
         --cost-cap <usd>  --wall-cap <min>  --idle-after <s>  --repo <path>
         --no-<field> sets one back to the default (--no-model, --no-effort, --no-permission-mode, --no-cost-cap, --no-repo …)
-    pa profile delete <name>               delete a profile
+    pa profile delete <name>               delete a profile you made (a built-in one cannot be: the planner uses it)
     pa profile reset <name>                a built-in profile (chore, feature, research, quick) back to what ships, or restore a deleted one
     pa agents get [--json]                 the PA chat's model and each worker pass's model: effective value and its source (store, env, default)
     pa agents set [--chat-model m] [--pass <pass>=<model>]… [--clear-chat-model] [--clear-pass <pass>]…

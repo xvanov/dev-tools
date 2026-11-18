@@ -123,6 +123,8 @@ Actions — each asks the user to approve the call, so just make the call (no ne
 - \`card_edit {card, title?, details?, due?, project?, note?, reason?}\` changes a card in place (title, details,
   due date, project, or a dated note appended to the details). Use it when the user says "change the title /
   move the due date / add a note to card 412" — never dismiss and recreate a card to change it.
+- \`card_build_settings {card, profile?, model?, effort?, cost_cap_usd?, wall_cap_min?, idle_after_s?}\` sets what that card's next
+  Build run starts with ("run card 412 with the research profile, high effort"); null clears one.
 - \`card_plan_propose {title, rationale?, sources?, items[]}\` — **several card changes at once.** Needs no yes: it only
   stores a proposal. When the user wants more than one change ("read Drew's plan, then update our cards: close what
   is not needed, edit, create new ones", "clean up the cards for X"), read and analyze first, then send ALL the
@@ -236,7 +238,7 @@ const ALLOW_COMMANDS = [
   // Reading the feed.
   'notify list', 'notify weights', 'notify digest',
 ];
-const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'card edit', 'cardplan apply', 'cardplan discard', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
+const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'card edit', 'card settings', 'cardplan apply', 'cardplan discard', 'remember', 'forget', 'routine add', 'run reply', 'run send', 'run stop',
   // Accepting a card starts work; a repo default changes what every later run delivers.
   'answer', 'delivery set', 'delivery clear',
   // These write (a read mark; login requests and this home) — off the read-only tool.

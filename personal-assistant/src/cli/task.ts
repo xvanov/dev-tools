@@ -25,7 +25,10 @@ const HELP = `
                                          pa ledger <id> (before, who, why) and pins the card against re-distillation
                                          --due: friday, tomorrow 3pm, 2d, 2026-11-20 (not a past date)
                                          --note: appended to the details as a dated line
-    pa cardplan list|show <id>           the card changes waiting for your yes (one set, approved once; dashboard: Proposed card changes)
+    pa card settings <id> [--profile <name>] [--model m] [--effort e] [--cost-cap usd] [--wall-cap min] [--idle-after s]
+                                         what the card's next Build run starts with (the Do menu's settings); --no-<field>
+                                         clears one, no flags shows them; a profile is from pa profile list
+    pa cardplan list|show <id>        the card changes waiting for your yes (one set, approved once; dashboard: Proposed card changes)
     pa cardplan apply <id> [--skip 1,3]  run the plan's changes in order (as you); --skip leaves those item numbers out
     pa cardplan discard <id>             drop the plan; nothing changes
     pa policy                            which sources may create tasks (PA_COMMITMENT_SOURCES)
@@ -76,6 +79,24 @@ function editOptions(flags: any): { edit: Json } | { error: string } {
   return { edit };
 }
 
+const SETTINGS_USAGE = 'usage: pa card settings <id> [--profile <name>] [--model haiku|sonnet|opus|fable] [--effort low|medium|high|xhigh|max] [--cost-cap <usd>] [--wall-cap <min>] [--idle-after <s>]  (--no-<field> clears one; no flags shows them)';
+
+/** Pure. `pa card settings <id> …` flags → setForCard's patch (empty: just show), or an error string. */
+function settingsPatch(flags: any): { patch: Json } | { error: string } {
+  const patch: Json = {};
+  for (const [flag, key, num] of [['profile', 'profile', false], ['model', 'model', false], ['effort', 'effort', false], ['cost-cap', 'costCapUsd', true], ['wall-cap', 'wallCapMin', true], ['idle-after', 'idleAfterS', true]] as const) {
+    const v = flags[flag];
+    if (v === undefined) continue;
+    if (v === false) patch[key] = null;
+    else if (v === true) return { error: `--${flag} needs a value. ${SETTINGS_USAGE}` };
+    else if (num) {
+      if (!(Number(v) > 0)) return { error: `--${flag} must be a positive number` };
+      patch[key] = Number(v);
+    } else patch[key] = String(v);
+  }
+  return { patch };
+}
+
 function make(out: any, fail: any) {
   return {
     async task(args: any, flags: any) {
@@ -87,7 +108,19 @@ function make(out: any, fail: any) {
     },
 
     async card(args: any, flags: any) {
-      if (String(args[0] || '').toLowerCase() !== 'edit') return fail(CARD_USAGE);
+      if (String(args[0] || '').toLowerCase() === 'settings') {
+        const id = Number(args[1]);
+        if (!id) return fail(SETTINGS_USAGE);
+        const o = settingsPatch(flags);
+        if ('error' in o) return fail(o.error);
+        const B = require('../build/index.ts');
+        const r = Object.keys(o.patch).length ? await B.setForCard(id, o.patch) : await B.forCard(id);
+        const s = r.settings;
+        out(`#${r.card} next run: profile ${s.profile || '-'} · model ${s.model} · effort ${s.effort || 'default'} · $${s.costCapUsd} · ${s.wallCapMin} min · idle ${s.idleAfterS}s`);
+        out(`  the card's own: ${Object.keys(r.overrides).length ? JSON.stringify(r.overrides) : 'none (the profile and defaults apply)'}`);
+        return;
+      }
+      if (String(args[0] || '').toLowerCase() !== 'edit') return fail(`${CARD_USAGE}\n${SETTINGS_USAGE}`);
       const id = Number(args[1]);
       if (!id) return fail(CARD_USAGE);
       const o = editOptions(flags);
@@ -146,4 +179,4 @@ function make(out: any, fail: any) {
   };
 }
 
-module.exports = { make, HELP, addOptions, editOptions };
+module.exports = { make, HELP, addOptions, editOptions, settingsPatch };

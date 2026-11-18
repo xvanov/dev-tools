@@ -85,7 +85,7 @@ const HELP = `pa — your context layer
   Agent settings (the dashboard's Agents page at /agents)
     pa profile list|get <name>      the Build profiles: model, effort, permission mode, tools, subagents, caps
     pa profile set <name> [--model m] [--effort e] [--permission-mode m] [--prompt "…"] [--cost-cap usd] …  change one (pa help profile)
-    pa profile delete|reset <name>  delete one; put a built-in one back to what ships
+    pa profile delete|reset <name>  delete one you made; put a built-in one back to what ships
     pa agents get                   the PA chat's and each worker pass's model, and where it comes from (store, env, default)
     pa agents set [--chat-model m] [--pass planner=azure/pa]… [--clear-pass planner]…  change them (pa help profile)
 

@@ -28,7 +28,7 @@ module.exports = {
     'buildBoard.ts /api/build/runs': { tool: 'build_start', verb: 'do' },
     'buildBoard.ts /api/build/:id/{stop|reply|send}': { tool: ['build_stop', 'build_reply', 'build_send'], verb: ['run stop', 'run reply', 'run send'] },
     'server.ts /api/commitments/:id/dispatch': { tool: 'build_start', verb: 'do' },
-    'server.ts /api/commitments/:id/build-settings': { gap: 'a card\'s own model, effort and caps: build_start and pa do take them per run, but nothing stores them per card' },
+    'server.ts /api/commitments/:id/build-settings': { tool: 'card_build_settings', verb: 'card settings' },
 
     // ---- the board ----
     'server.ts /api/tasks': { tool: 'task_add', verb: 'task add' },
@@ -72,5 +72,5 @@ module.exports = {
     'meter.ts /api/telemetry': { exception: 'the browser\'s telemetry beacon (spans); not a setting or an action' },
   },
   // Routes above recorded as `gap`. Only goes down.
-  maxGaps: 6,
+  maxGaps: 5,
 };

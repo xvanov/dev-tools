@@ -952,7 +952,7 @@ prompt, or puts it on a card (`pa propose`, which starts nothing). Accepting a c
 without a prompt: `board` (today's to-dos grouped todo / blocked / unblocked / looks done, with ids,
 who, due, repo, blockers, live run), `card <id>` (one card's full context: source excerpt, links,
 blockers, runs, offers), `sessions` (termhub), `build_runs` and `build_run <run>`. Actions ask on every
-call: `build_start`, `build_reply`, `build_send`, `build_stop`, `build_set_idle`, `session_start`, `card_edit` (change a
+call: `build_start`, `build_reply`, `build_send`, `build_stop`, `build_set_idle`, `session_start`, `card_build_settings` (a card's profile, model, effort and caps for its next run), `card_edit` (change a
 card's title, details, due date, project or add a note in place, instead of dismissing and recreating it),
 `card_plan_propose` (no prompt: stores a whole set of card changes, close / edit / create, for you to untick and approve
 once on the dashboard) with `card_plan_apply` (one prompt for the set). They are `pa do` in-process.

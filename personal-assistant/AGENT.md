@@ -124,7 +124,7 @@ command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memor
 `pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
 (a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
 chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, sessions,
-build_runs, build_run, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: session_start, build_*, card_edit, card_plan_apply) are on no allow list, so every call asks,
+build_runs, build_run, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: session_start, build_*, card_edit, card_build_settings, card_plan_apply) are on no allow list, so every call asks,
 and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
 the dispatch paths themselves (`dispatch.start`, then `src/build`), never a second
 implementation. Its CLAUDE.md is rewritten from code on every start — change it in
@@ -597,7 +597,7 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   is on `build_run` and in `summary.json`.
 - **Agent settings and parity** (`src/agentSettings.ts`; BUILD-ENRICHMENT.md B): the dashboard's **Agents** page (`/agents`, linked from
   Build) edits every Build profile (model, effort, permission mode, subagent model, caps, repo, the prompt appended to the read-only
-  base prompt, MCP servers, allow/deny rules, subagents; reset a built-in one to what ships), the PA chat's model and each worker
+  base prompt, MCP servers, allow/deny rules, subagents; reset a built-in one to what ships; a built-in one cannot be deleted, the planner names it), the PA chat's model and each worker
   pass's model. Profiles live in `build_profile`; the chat and pass models are overrides in the `agent.settings` setting
   (`{chatModel, passModels}`), and **env stays the default**: `src/models.ts` `refresh()` reads the setting at most every 10 s (the
   worker before each pass, `pa` before each command) and writes it into the config field the pass reads, keeping the env/default value
