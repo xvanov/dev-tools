@@ -105,7 +105,7 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 - [x] C. Tool summaries + live status (7ed8a43)
 - [x] D. Decision queue (6b73436)
 - [x] E. Scheduled Build runs (4ec0262)
-- [ ] F. Profile eval
+- [x] F. Profile eval (f10cc34)
 - [ ] G. Second opinion
 
 Later, only if F shows a win: small agent teams with a lead orchestrator (Fable 5.2 as lead).
