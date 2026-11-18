@@ -96,7 +96,7 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 ## Order and status
 
 - [x] Remove software-factory (D32) (d315af1, a6748f3, d90efe8)
-- [ ] A. Build profiles
+- [x] A. Build profiles (4bb5989)
 - [ ] B. Settings per agent + parity
 - [ ] C. Tool summaries + live status
 - [ ] D. Decision queue
