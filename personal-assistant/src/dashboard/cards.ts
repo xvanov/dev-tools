@@ -123,7 +123,19 @@ async function buildsFor(ids: unknown[]): Promise<Map<string, Row>> {
     const last = runs[runs.length - 1] as Row;
     const url = last.session_id && !['done', 'failed', 'stopped'].includes(String(last.state))
       ? await require('../dispatch/termhub.ts').sessionUrl(last.session_id).catch(() => null) : null;
-    out.set(id, buildSummary(runs, Date.now(), url) as Row);
+    const summary = buildSummary(runs, Date.now(), url) as Row;
+    // A second opinion (BUILD-ENRICHMENT G): the card says so and links the fused report once there is one.
+    const pairs = runs.filter((r) => String(r.origin || '').startsWith('second-opinion:'));
+    if (pairs.length) {
+      const SO = require('../build/secondOpinion.ts');
+      const O = require('../build/origin.ts');
+      const group = O.parseSecondOpinion((pairs[pairs.length - 1] as Row).origin)?.group;
+      const mine = pairs.filter((r) => O.parseSecondOpinion(r.origin)?.group === group);
+      const msgs: Row[] = await repo.buildRuns.msgsFor(mine.map((r) => r.id)).catch(() => []);
+      const info = SO.groupInfo(group, mine, msgs);
+      summary.second_opinion = { group, runs: info.runs.map((r: Row) => Number(r.id)), fused: Boolean(info.fused), partial: Boolean(info.fused?.partial), note: info.fused?.note || null, board: `factory#run-${mine[0]?.id}` };
+    }
+    out.set(id, summary);
   }
   return out;
 }
@@ -289,4 +301,4 @@ function dedupe(links: Link[]) {
   });
 }
 
-module.exports = { enrich, forCommitments, buildSummary, chainsFor, hubs, openSession };
+module.exports = { enrich, forCommitments, buildSummary, buildsFor, chainsFor, hubs, openSession };

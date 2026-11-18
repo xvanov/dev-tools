@@ -48,7 +48,7 @@ const HELP = `pa — your context layer
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
-    pa do <id> [--repo p] [--model m] [--profile chore|feature|research|quick] [--effort low|medium|high|xhigh|max]  start one Build agent (one Claude Code agent) on a commitment
+    pa do <id> [--repo p] [--model m] [--profile chore|feature|research|quick] [--effort low|medium|high|xhigh|max] [--second-opinion <profile>|off]  start one Build agent (one Claude Code agent) on a commitment; --second-opinion (research/report tasks) also runs it on that other read-only profile and fuses the two reports
     pa do --task "…" [--repo p] [--model haiku|sonnet|opus|fable]  …or on a task you word yourself
                      [--preview]  print the card the work would be offered as; start nothing
     pa done <id> [--dismiss|--reopen] close a commitment yourself
@@ -574,8 +574,12 @@ const commands: Json = {
       return fail(err.message);
     }
     if (flagBool(flags, 'preview')) return printOffer(await require('../dispatch/offer.ts').prepare(o), { preview: true });
+    // A second opinion for this start (research/report tasks): --second-opinion <profile>; `off` or --no-second-opinion beats the card's.
+    if (flags['second-opinion'] === false || String(flags['second-opinion']).toLowerCase() === 'off') o.secondOpinion = null;
+    else if (typeof flags['second-opinion'] === 'string') o.secondOpinion = flags['second-opinion'];
     const result = await dispatch.start(o);
     out(`run #${result.id} · Build agent · ${result.model}${result.profile ? ` · profile ${result.profile}` : ''}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
+    if (result.sibling) out(`  second opinion: run #${result.sibling} on ${result.siblingProfile || 'another profile'}; one fused report when both end`);
     if (result.branch) out(`  branch   ${result.branch}`);
     out(`  session  ${result.url}`);
   },

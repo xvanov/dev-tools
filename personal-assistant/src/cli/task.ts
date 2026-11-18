@@ -26,8 +26,11 @@ const HELP = `
                                          --due: friday, tomorrow 3pm, 2d, 2026-11-20 (not a past date)
                                          --note: appended to the details as a dated line
     pa card settings <id> [--profile <name>] [--model m] [--effort e] [--cost-cap usd] [--wall-cap min] [--idle-after s]
+                          [--second-opinion <profile>|off]
                                          what the card's next Build run starts with (the Do menu's settings); --no-<field>
-                                         clears one, no flags shows them; a profile is from pa profile list
+                                         clears one, no flags shows them; a profile is from pa profile list.
+                                         --second-opinion: research/report cards only: Do also runs the task on that other
+                                         read-only profile and fuses the two reports into one (refused for coding tasks)
     pa cardplan list|show <id>        the card changes waiting for your yes (one set, approved once; dashboard: Proposed card changes)
     pa cardplan apply <id> [--skip 1,3]  run the plan's changes in order (as you); --skip leaves those item numbers out
     pa cardplan discard <id>             drop the plan; nothing changes
@@ -79,15 +82,15 @@ function editOptions(flags: any): { edit: Json } | { error: string } {
   return { edit };
 }
 
-const SETTINGS_USAGE = 'usage: pa card settings <id> [--profile <name>] [--model haiku|sonnet|opus|fable] [--effort low|medium|high|xhigh|max] [--cost-cap <usd>] [--wall-cap <min>] [--idle-after <s>]  (--no-<field> clears one; no flags shows them)';
+const SETTINGS_USAGE = 'usage: pa card settings <id> [--profile <name>] [--model haiku|sonnet|opus|fable] [--effort low|medium|high|xhigh|max] [--cost-cap <usd>] [--wall-cap <min>] [--idle-after <s>] [--second-opinion <profile>|off]  (--no-<field> clears one; no flags shows them)';
 
 /** Pure. `pa card settings <id> …` flags → setForCard's patch (empty: just show), or an error string. */
 function settingsPatch(flags: any): { patch: Json } | { error: string } {
   const patch: Json = {};
-  for (const [flag, key, num] of [['profile', 'profile', false], ['model', 'model', false], ['effort', 'effort', false], ['cost-cap', 'costCapUsd', true], ['wall-cap', 'wallCapMin', true], ['idle-after', 'idleAfterS', true]] as const) {
+  for (const [flag, key, num] of [['profile', 'profile', false], ['model', 'model', false], ['effort', 'effort', false], ['cost-cap', 'costCapUsd', true], ['wall-cap', 'wallCapMin', true], ['idle-after', 'idleAfterS', true], ['second-opinion', 'secondOpinion', false]] as const) {
     const v = flags[flag];
     if (v === undefined) continue;
-    if (v === false) patch[key] = null;
+    if (v === false || (key === 'secondOpinion' && String(v).toLowerCase() === 'off')) patch[key] = null;
     else if (v === true) return { error: `--${flag} needs a value. ${SETTINGS_USAGE}` };
     else if (num) {
       if (!(Number(v) > 0)) return { error: `--${flag} must be a positive number` };
@@ -116,7 +119,7 @@ function make(out: any, fail: any) {
         const B = require('../build/index.ts');
         const r = Object.keys(o.patch).length ? await B.setForCard(id, o.patch) : await B.forCard(id);
         const s = r.settings;
-        out(`#${r.card} next run: profile ${s.profile || '-'} · model ${s.model} · effort ${s.effort || 'default'} · $${s.costCapUsd} · ${s.wallCapMin} min · idle ${s.idleAfterS}s`);
+        out(`#${r.card} next run: profile ${s.profile || '-'} · model ${s.model} · effort ${s.effort || 'default'} · $${s.costCapUsd} · ${s.wallCapMin} min · idle ${s.idleAfterS}s${s.secondOpinion ? ` · second opinion: ${s.secondOpinion}` : ''}`);
         out(`  the card's own: ${Object.keys(r.overrides).length ? JSON.stringify(r.overrides) : 'none (the profile and defaults apply)'}`);
         return;
       }

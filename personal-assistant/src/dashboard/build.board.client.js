@@ -6,7 +6,8 @@
  * pulses only while its agent works, an ended one is a static bar); the tool
  * calls as steps; and the messages the agent and Jarvis exchanged (notes,
  * asks, replies), an open ask with its reply box. Runs the agents asked about
- * are lifted into "Needs you". Ten runs a page.
+ * are lifted into "Needs you". Ten runs a page. A second opinion's two runs are
+ * grouped under their fused report (BUILD-ENRICHMENT G).
  *
  * Data: GET api/build (src/dashboard/buildBoard.ts), re-read every 5 s while an
  * agent is live, every 30 s otherwise, and at once on an action. Everything an
@@ -131,6 +132,23 @@
     return runs.slice().sort(function (a, b) { return rank(a) - rank(b) || b.id - a.id; });
   }
 
+  /**
+   * The board's items in order: a second opinion's runs (their `second_opinion` group) become ONE item
+   * {group, runs (side a first), fused, expected} at the place of its first run; every other run stays {run}.
+   */
+  function grouped(runs) {
+    var seen = {}; var items = [];
+    order(runs).forEach(function (r) {
+      var so = r.second_opinion;
+      if (!so || !so.group) { items.push({ run: r }); return; }
+      var g = seen[so.group];
+      if (!g) { g = seen[so.group] = { group: so.group, runs: [], fused: so.fused || null, expected: so.runs ? so.runs.length : 1 }; items.push(g); }
+      g.runs.push(r);
+    });
+    items.forEach(function (it) { if (it.runs) it.runs.sort(function (a, b) { return String(a.second_opinion.side).localeCompare(String(b.second_opinion.side)); }); });
+    return items;
+  }
+
   /** An ISO reset time as "resets in 2h 10m" (minutes under an hour, days over 48 h), "" when unknown or past. */
   function resetsIn(iso, now) {
     var t = Date.parse(iso);
@@ -182,7 +200,7 @@
     return out;
   }
 
-  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, decisionAnswers: decisionAnswers, resultLink: resultLink, pageCount: pageCount, evalRows: evalRows, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
+  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, decisionAnswers: decisionAnswers, resultLink: resultLink, pageCount: pageCount, evalRows: evalRows, lanes: lanes, order: order, grouped: grouped, isLive: isLive, PAGE: PAGE };
   if (typeof document === 'undefined') return pure;
 
   // ---- the browser half ------------------------------------------------------------
@@ -480,6 +498,31 @@
       live ? el('div', { class: 'row' }, sendIn, sendBtn) : null);
   }
 
+  // A second opinion: both runs under the fused report (agreements, disagreements, what only each saw). Text only.
+  function groupCard(g, now) {
+    var first = g.runs[0];
+    var live = g.runs.some(isLive);
+    var f = g.fused;
+    var status = f ? (f.partial ? 'fused (partial)' : 'fused') : live ? 'waiting for both runs' : 'fusing';
+    var out = [
+      el('div', { class: 't' }, el('span', { class: 'mono', text: 'Second opinion · ' }), el('span', { text: first.task })),
+      el('div', { class: 'chips' },
+        chip(status, f ? (f.partial ? 's-waiting' : 's-done') : 's-running'),
+        chip(g.runs.map(function (r) { return String(r.second_opinion.side || '?').toUpperCase() + ' #' + r.id + ' ' + r.model; }).join(' vs '), 'mono'),
+        g.runs.length < g.expected ? chip((g.expected - g.runs.length) + ' run on another page', '') : null,
+        f && f.model ? chip('fused by ' + f.model, 'mono') : null)
+    ];
+    if (f && f.note) out.push(el('div', { class: 'why err', text: f.note }));
+    if (f) {
+      var d = el('details', { class: 'fusedbox' }, el('summary', { text: 'Fused report' }));
+      if (state.open[g.group + ':fused'] !== false) d.setAttribute('open', '');
+      d.addEventListener('toggle', function () { state.open[g.group + ':fused'] = d.open; });
+      d.append(el('pre', { class: 'fused', text: f.text }));
+      out.push(d);
+    }
+    return el.apply(null, ['article', { class: 'sogroup', id: 'group-' + g.group }].concat(out, g.runs.map(function (r) { return card(r, now); })));
+  }
+
   function pager(total) {
     var pages = pageCount(total, PAGE);
     if (pages < 2) return null;
@@ -496,7 +539,7 @@
     var d = state.data;
     if (!d || typing()) return;
     var board = document.getElementById('board');
-    var runs = order(d.runs);
+    var runs = grouped(d.runs);
     var needs = d.needs_you || [];
     // replaceChildren(null) would write the text "null"; drop the absent sections.
     board.replaceChildren.apply(board, [
@@ -506,7 +549,7 @@
           el('a', { class: 'btn', href: '#run-' + n.run, text: n.kind === 'idle' ? 'Look at its card' : 'Answer on its card' }));
       }))) : null,
       el.apply(null, ['section', { class: 'runsec' }, el('h2', {}, 'Agents', el('span', { class: 'n', text: String(d.total) }))].concat(
-        runs.length ? runs.map(function (r) { return card(r, d.now); }) : [el('div', { class: 'empty', text: 'No agent runs yet. Do on a Plan card starts one.' })])),
+        runs.length ? runs.map(function (it) { return it.group ? groupCard(it, d.now) : card(it.run, d.now); }) : [el('div', { class: 'empty', text: 'No agent runs yet. Do on a Plan card starts one.' })])),
       pager(d.total)].filter(function (n) { return n != null; }));
     var spend = document.getElementById('spend');
     if (spend) spend.replaceChildren(

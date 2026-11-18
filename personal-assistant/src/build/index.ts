@@ -76,11 +76,17 @@ async function forCard(commitmentId: number | string): Promise<Json> {
   const profiles = await P().list();
   const p = o.profile ? profiles.find((x: Json) => x.name === o.profile) || null : null;
   const r = P().resolve({ card: o, profile: p, defaults: d });
+  // A second opinion (BUILD-ENRICHMENT G) is for report tasks: offered only when this card's run would be read-only,
+  // and then only the other read-only profiles.
+  const report = P().readOnly(r);
   return {
     card: Number(commitmentId),
-    settings: { profile: r.profile, model: r.model, effort: r.effort, costCapUsd: r.costCapUsd, wallCapMin: r.wallCapMin, idleAfterS: r.idleAfterS },
+    settings: { profile: r.profile, model: r.model, effort: r.effort, costCapUsd: r.costCapUsd, wallCapMin: r.wallCapMin, idleAfterS: r.idleAfterS, secondOpinion: o.secondOpinion || null },
     overrides: o,
-    options: { models: MODELS, efforts: P().EFFORTS, profiles: profiles.map((x: Json) => ({ name: x.name, description: x.description, model: x.model, effort: x.effort })), defaults: d },
+    options: {
+      models: MODELS, efforts: P().EFFORTS, profiles: profiles.map((x: Json) => ({ name: x.name, description: x.description, model: x.model, effort: x.effort })), defaults: d,
+      secondOpinion: { eligible: report, profiles: report ? profiles.filter((x: Json) => P().readOnly(x) && x.name !== r.profile).map((x: Json) => ({ name: x.name, description: x.description, model: x.model })) : [] },
+    },
   };
 }
 
@@ -106,6 +112,14 @@ async function setForCard(commitmentId: number | string, patch: Json): Promise<J
     if (patch[k] == null || patch[k] === '') delete merged[k];
     else if (!(Number(patch[k]) > 0)) throw Object.assign(new Error(`${k} must be a positive number`), { status: 400 });
     else merged[k] = Number(patch[k]);
+  }
+  // A second opinion: another read-only profile, only while the card's own run is read-only (D30: coding stays one agent).
+  const wants = 'secondOpinion' in patch && patch.secondOpinion != null && patch.secondOpinion !== '' && String(patch.secondOpinion).toLowerCase() !== 'off';
+  if ('secondOpinion' in patch && !wants) delete merged.secondOpinion;
+  if (wants || merged.secondOpinion) {
+    const primary = P().resolve({ card: merged, profile: merged.profile ? await P().get(String(merged.profile)) : null, defaults: DEFAULTS() });
+    if (wants) merged.secondOpinion = await require('./secondOpinion.ts').checkSecondOpinion(String(patch.secondOpinion), primary);
+    else if (!P().readOnly(primary)) delete merged.secondOpinion; // the card's profile changed to one that writes: the setting no longer applies
   }
   await require('../repo').system.setSetting(KEY(commitmentId), merged);
   return forCard(commitmentId);
@@ -205,10 +219,12 @@ async function writeSubagents(cwd: string, files: Array<{ path: string; text: st
 }
 
 /** Starts a run. What it made is undone when the session does not open. */
-async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; profile?: string | null; effort?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null; origin?: string | null }): Promise<Row> {
+async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; profile?: string | null; effort?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null; origin?: string | null; secondOpinion?: string | null; sibling?: boolean }): Promise<Row> {
   const dispatch = require('../dispatch');
   const commitmentId = o.commitmentId || null;
-  const card = await stored(commitmentId);
+  // A second opinion's run B (src/build/secondOpinion.ts): it ignores the card's own settings, which would make it the same agent as A.
+  const sibling = o.sibling === true;
+  const card = sibling ? {} : await stored(commitmentId);
   const d = DEFAULTS();
   // Per field: this call > the card's stored settings > the profile (this call's, else the card's) > the defaults.
   let profile = o.profile ? await P().need(String(o.profile)) : null;
@@ -222,8 +238,19 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const costCapUsd = num(r.costCapUsd, d.costCapUsd);
   const wallCapMin = num(r.wallCapMin, d.wallCapMin);
   const idleAfterS = Math.min(21600, Math.max(30, num(r.idleAfterS, d.idleAfterS)));
+  // A second opinion (BUILD-ENRICHMENT G): this call's `secondOpinion` (a profile name; null or 'off' = none), else the card's
+  // stored one, but only for a run nobody else started (a routine's origin) and only for a read-only task.
+  if (!sibling && !o.origin) {
+    const explicit = o.secondOpinion !== undefined;
+    const second = explicit ? (o.secondOpinion && String(o.secondOpinion).toLowerCase() !== 'off' ? String(o.secondOpinion) : null) : (card.secondOpinion ? String(card.secondOpinion) : null);
+    if (second) {
+      if (P().readOnly(r)) return require('./secondOpinion.ts').startPair(o, { second, primary: r });
+      if (explicit) throw Object.assign(new Error('a second opinion is for research and report tasks (a read-only profile such as research); coding tasks stay one agent'), { status: 400 });
+      log.warn('the card asks for a second opinion but its task is not read-only: running one agent', { card: commitmentId, profile: r.profile });
+    }
+  }
   const mcp = await mcpServers(r.tools.mcp);
-  if (commitmentId) {
+  if (commitmentId && !sibling) {
     const live = await repo().liveForCommitment(commitmentId);
     if (live) throw new Error(`#${commitmentId} already has run #${live.id} (${live.state}) — open it, or stop it first`);
   }

@@ -632,6 +632,8 @@ function buildLine(c) {
     el('a', { href: b.board, title: 'Its card on Build' }, `run #${b.run}`),
     b.session_url && /^https?:\/\//.test(b.session_url) ? el('a', { href: b.session_url, title: 'Its session in termhub' }, 'session') : null,
     b.runs > 1 ? el('span', { title: 'First start to last end, all runs of this task' }, `${b.runs} runs · span ${dur(b.span_s)} · $${b.total_cost_usd.toFixed(2)}${live ? ' so far' : ''}`) : null,
+    // A second opinion (two runs of one research task): the fused report is on the Build board, grouped with both runs.
+    b.second_opinion ? el('a', { href: b.second_opinion.board, title: b.second_opinion.note || 'Two agents on different models worked on this; one report fuses both' }, b.second_opinion.fused ? (b.second_opinion.partial ? 'second opinion (partial): fused report' : 'second opinion: fused report') : 'second opinion: waiting for both runs') : null,
     b.idle ? el('span', { class: 'sub need' }, `idle ${dur(b.idle.idle_s || 0)} — last: ${b.idle.last_tool || 'no tool call'}`) : null,
   ];
   return el('div', { class: 'links chain' }, ...parts);

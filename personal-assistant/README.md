@@ -943,7 +943,12 @@ A live run's card also shows a **context meter** (tokens in its context against 
 **summaries** of what it is doing, written by a cheap model every few tool calls (`PA_SUMMARY_MODEL`, default `azure/pa`;
 `PA_SUMMARY_EVERY` 5 calls, `PA_SUMMARY_LINES` 3 lines, both editable on `/agents` or with `pa agents set --summary-every n`;
 `PA_SUMMARY=0` turns them off), and the chat's `build_run` returns them ("what is run 42 doing?"). A small pill beside the »
-toggle on every page counts running agents, ones that need you and Build spend today (C). `pa propose …` puts it on a card instead
+toggle on every page counts running agents, ones that need you and Build spend today (C). **Second opinion** (G), for research and
+report cards only (coding stays one agent): `pa card settings <id> --second-opinion <profile>` (or the card menu, or `pa do --second-opinion`,
+or the chat's `build_start second_opinion`) makes Do start the card's profile *and* that other read-only profile (another model) on the
+same task; when both have ended, one model call (`PA_FUSE_MODEL`, the `fuse` pass on `/agents`, default `claude-opus-5-5`) writes a single
+report — agreements, disagreements, what only each saw, a recommendation — shown on the Build board over the two runs and linked on the card; if
+one run failed it is fused from the other and says so. `pa propose …` puts it on a card instead
 (dashboard → On me), frozen as shown; `pa do … --preview` prints that card. There is no route, end state, pipeline,
 runtime, kind or done-criteria to choose any more: those were the software factory's (PM → SM → dev → reviewer →
 merge gates, its own repo), which never worked well enough and was removed from the tree in D32 (git history keeps it:

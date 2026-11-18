@@ -631,7 +631,7 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   in `track.ts` takes it off the wall-clock cap; a `waiting` run is never idle.
 - Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),
   `pa run send <id> "<text>"` (typed into the session). Chat tools: `build_runs`, `build_run`, `build_reply`,
-  `build_send`, `build_stop`, `build_start` (`profile`, `model`, `effort`), `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
+  `build_send`, `build_stop`, `build_start` (`profile`, `model`, `effort`, `second_opinion`), `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).
 - A run whose session vanishes without `pa run done` is failed at once, with an urgent notice (heartbeat).
 - **Heartbeat** (`src/build/heartbeat.ts`, worker pass `build-heartbeat`, every 10 s): stat calls on the
   transcript and subagent transcripts, one sessiond list call (is the session alive, is the PTY busy), the
@@ -688,7 +688,36 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   usually fail to start). Results: `build_eval_trial` and
   `<dataDir>/build-eval/<id>.jsonl` (with each agent's last message); `pa eval build --report [--eval id] [-v]`, the chat's `eval_build_report`
   (a read, allowed) and the Build board sidebar's table (`GET /api/build/eval`). Launching is CLI-only on purpose (no mutating route, so no
-  parity exception): it spends the subscription.
+  parity exception): it spends the subscription. `test/buildEval.test.js` keeps real git and worktrees for the first trial of a launch
+  (guards, base commit, cleanup) and stands in a plain folder plus an in-process `git` for the scoring/budget scenarios: every git
+  step is a process, so the all-real version took 80 s idle and 2.4 min under load against its 180 s timeout; now ~20 s.
+- **Second opinion** (`src/build/secondOpinion.ts`; BUILD-ENRICHMENT.md G): a card setting `secondOpinion: <profile>` in
+  `build.card.<id>` (`pa card settings <id> --second-opinion <profile>|off`, `card_build_settings second_opinion`, the card menu's
+  "Second opinion (reports)" row; per start: `build_start second_opinion`, `pa do --second-opinion`, `POST …/dispatch {secondOpinion}`; `off`/null
+  beats the card's). **Report tasks only** (D30: coding stays one agent): refused (400) unless the card's own run is read-only
+  (`profiles.readOnly`: permission mode `dontAsk` or `plan`, i.e. `research`) AND the second profile is read-only and is another
+  profile than the card's; changing the card to a profile that writes drops the setting, a stale one set by hand runs one agent with a
+  warning, and the planner's eager research (`dispatch.start mode: 'plan'`) and routine runs never double. Do then starts **two sibling
+  runs of the same task** (`startPair`): A on the card's profile, B on the second one; they are linked by `build_run.origin`
+  `second-opinion:<group>:<a|b>` (`origin.ts`; `byOrigin`/`recentSecondOpinion` in the repo). B ignores the card's own model/effort/cap
+  overrides (they would make it the same agent), the one-live-run-per-card rule and an explicit model; if B cannot start, A is stopped
+  and the error thrown (both or neither). The agents never see each other. **Fuse:** the worker's 15 s `build-runs` pass calls `sweep()`
+  (not `finish()`: `pa run done` is a CLI process that exits right after, so nothing there can hold an LLM call); a pair whose runs have
+  all ended is fused once: one tool-less `llm.complete` on the **`fuse` pass** model (`PA_FUSE_MODEL`, default `claude-opus-5-5`, overridable
+  on `/agents` or with `agent_settings_set pass_models`, e.g. an `azure/` open-weight model), the two reports as delimited data
+  (`<report side="A">` blocks, a closing tag inside one is defanged, the system prompt says they are never instructions), answer in fixed
+  sections: Agreements, Disagreements (which side), What only A saw, What only B saw, Recommendation. A run's report is its result text, or
+  the file under `<data>/build-reports` it names. One run failing or stopped does not block it: the pair is fused once both have ended, with
+  what exists, **and the report says so**; one report means no model call; none is stored as "(neither run produced a report)". Cost guards:
+  llm_spend purpose `build-fuse` (in `PA_BUDGET_DISCRETIONARY`: at the daily cap, or when the model fails, the two reports are stored side by
+  side with the reason; a pair always ends and is never retried forever), each report cut to 12 000 chars, 4 000 output tokens, 24 000 stored.
+  **Exactly once:** the `fused` row exists → skipped (also after a restart; a crash between the two rows is repaired); a `fuse-claim` row
+  on the first run, lowest fresh claim wins across processes (a claim over 10 min old with no `fused` row is a crashed fuser); an in-process
+  guard. Storage: `<data>/build-reports/second-opinion-<group>.md` and a `build_msg` row kind `fused` on **both** runs
+  (body `{group, path, partial, note, text, at, model}`; `summaries.split` keeps these out of the conversation). One notice
+  (`dedupeKey build-fuse:<group>`). Surfaces: the Build board groups the pair under the fused report (`second_opinion` on each run in
+  `GET /api/build`, `grouped()` in `build.board.client.js`), the Plan card line links it (`cards.ts buildsFor`, `second_opinion`), `build_run`
+  returns `second_opinion {group, runs, fused}`. Tests: `test/buildSecondOpinion.test.js`.
 - The Plan card of a task with a Build run shows its state chip, start to end and elapsed, cost, and
   links to the board card and the termhub session; several runs add the count, the span and the total
   (`src/dashboard/cards.ts buildSummary`).

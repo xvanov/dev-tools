@@ -98,6 +98,7 @@ const READ_TOOLS = [
         model: { type: 'string', enum: ['haiku', 'sonnet', 'opus', 'fable'] },
         effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: "Overrides the profile's effort." },
         idle_after_s: { type: 'integer', minimum: 30, maximum: 21600, description: 'Seconds of silence (no transcript, terminal or message activity) before the run counts as idle and you are told. Default 240; quick tasks 120; long builds or research 900+.' },
+        second_opinion: { type: ['string', 'null'], maxLength: 40, description: "Research/report tasks only (a read-only profile): also run the same task on this other read-only profile (a different model), then one model call fuses the two reports into one (agreements, disagreements, what only each saw, a recommendation). Returns run and sibling. Refused for coding tasks. 'off' or null: none (even if the card asks for one)." },
       },
       additionalProperties: false,
     },
@@ -304,6 +305,7 @@ const ACTION_TOOLS = [
         cost_cap_usd: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1000 },
         wall_cap_min: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1440 },
         idle_after_s: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 21600 },
+        second_opinion: { type: ['string', 'null'], maxLength: 40, description: "A read-only profile to run the same task on as well (research/report tasks only; refused while the card's profile can write), then one call fuses both reports. 'off' or null clears it." },
       },
       required: ['card'],
       additionalProperties: false,
@@ -619,8 +621,11 @@ async function buildRunTool({ run }: { run?: number }) {
   await require('../models.ts').refresh();
   const S = require('../build/summaries.ts');
   const { messages: msgs, summaries }: { messages: Row[]; summaries: Json[] } = S.split(all, S.settings().lines);
+  // A run of a second-opinion pair (BUILD-ENRICHMENT G): its sibling and, once both ended, the fused report.
+  const pair: Json | null = await require('../build/secondOpinion.ts').infoFor(r).catch(() => null);
+  if (pair?.fused?.text && pair.fused.text.length > 8000) pair.fused = { ...pair.fused, text: `${pair.fused.text.slice(0, 8000)}\n[… cut; the whole report is ${pair.fused.path || 'on the Build board'}]` };
   return {
-    ...runView(r), url: r.url || null, context: track?.context || null, summaries: summaries.map((s: Json) => ({ at: s.at, text: s.text })), tokens: { in: Number(r.tokens_in), out: Number(r.tokens_out), cache_read: Number(r.tokens_cache_read), cache_write: Number(r.tokens_cache_write) },
+    ...runView(r), url: r.url || null, ...(pair ? { second_opinion: pair } : {}), context: track?.context || null, summaries: summaries.map((s: Json) => ({ at: s.at, text: s.text })), tokens: { in: Number(r.tokens_in), out: Number(r.tokens_out), cache_read: Number(r.tokens_cache_read), cache_write: Number(r.tokens_cache_write) },
     caps: { cost_usd: Number(r.cost_cap_usd), wall_min: Number(r.wall_cap_min) },
     agents: track?.agents || [],
     messages: msgs.map((m) => ({ id: m.id, from: m.dir, kind: m.kind, text: m.body, answer: m.answer || null, at: m.created_at })),
@@ -636,8 +641,8 @@ async function handle(name: string, args: Json = {}) {
     case 'build_start': {
       const card = args.card != null ? parseCardId(args.card) : null;
       if (card?.proposal) throw new Error(`p${card.proposal} is an offer, not a card`);
-      const r = await require('../build/index.ts').start({ commitmentId: card ? card.commitment : null, task: args.task ? String(args.task) : null, repoPath: args.repo ? String(args.repo).trim() : null, model: args.model || null, profile: args.profile || null, effort: args.effort || null, idleAfterS: args.idle_after_s || null });
-      return { ...runView(r), url: r.url || null };
+      const r = await require('../build/index.ts').start({ commitmentId: card ? card.commitment : null, task: args.task ? String(args.task) : null, repoPath: args.repo ? String(args.repo).trim() : null, model: args.model || null, profile: args.profile || null, effort: args.effort || null, idleAfterS: args.idle_after_s || null, secondOpinion: args.second_opinion });
+      return { ...runView(r), url: r.url || null, ...(r.sibling ? { sibling: r.sibling, second_opinion_group: r.group } : {}) };
     }
     case 'build_set_idle': {
       const r = await require('../build/index.ts').setIdle(Number(args.run), args.seconds);
@@ -687,10 +692,10 @@ async function handle(name: string, args: Json = {}) {
       const id = Number(args.card);
       if (!Number.isInteger(id) || id < 1) throw new Error('card must be a board card id (from board)');
       const patch: Json = {};
-      for (const [from, to] of [['profile', 'profile'], ['model', 'model'], ['effort', 'effort'], ['cost_cap_usd', 'costCapUsd'], ['wall_cap_min', 'wallCapMin'], ['idle_after_s', 'idleAfterS']] as const) {
+      for (const [from, to] of [['profile', 'profile'], ['model', 'model'], ['effort', 'effort'], ['cost_cap_usd', 'costCapUsd'], ['wall_cap_min', 'wallCapMin'], ['idle_after_s', 'idleAfterS'], ['second_opinion', 'secondOpinion']] as const) {
         if (args[from] !== undefined) patch[to] = args[from];
       }
-      if (!Object.keys(patch).length) throw new Error('nothing to set: give profile, model, effort, cost_cap_usd, wall_cap_min or idle_after_s');
+      if (!Object.keys(patch).length) throw new Error('nothing to set: give profile, model, effort, cost_cap_usd, wall_cap_min, idle_after_s or second_opinion');
       return require('../build/index.ts').setForCard(id, patch);
     }
     case 'profile_delete': return require('../agentSettings.ts').deleteProfile(String(args.name || ''));

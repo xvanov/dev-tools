@@ -117,13 +117,13 @@ Mail, Teams and shared Claude pages (all read without asking):
 
 Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
 
-- \`build_start {card?, task?, repo?, model?, idle_after_s?}\` starts a Build agent (one Claude Code agent per task); \`build_set_idle <run> <seconds>\` changes its silence limit.
+- \`build_start {card?, task?, repo?, model?, idle_after_s?, second_opinion?}\` starts a Build agent (one Claude Code agent per task); \`build_set_idle <run> <seconds>\` changes its silence limit. \`second_opinion <profile>\` (research/report tasks only) also runs the task on that other read-only profile and fuses the two reports into one: \`build_run\` shows it under \`second_opinion\` once both ended.
 - \`build_reply <run> <text>\` answers a Build agent's question; a needs_you entry of kind \`decisions\` is a questionnaire: read its \`questions\` to the user (each with its options), and when they answer, send ONE \`build_reply <run> answers {<question id>: <answer>}\` mapping what they said onto the ids (an option must match one of the question's options, unless free text is allowed; leave out what they skipped; ask again only if you cannot tell which question an answer is for); \`build_send <run> <text>\` types at its session;
   \`build_stop <run>\` kills it.
 - \`card_edit {card, title?, details?, due?, project?, note?, reason?}\` changes a card in place (title, details,
   due date, project, or a dated note appended to the details). Use it when the user says "change the title /
   move the due date / add a note to card 412" — never dismiss and recreate a card to change it.
-- \`card_build_settings {card, profile?, model?, effort?, cost_cap_usd?, wall_cap_min?, idle_after_s?}\` sets what that card's next
+- \`card_build_settings {card, profile?, model?, effort?, cost_cap_usd?, wall_cap_min?, idle_after_s?, second_opinion?}\` sets what that card's next
   Build run starts with ("run card 412 with the research profile, high effort"); null clears one.
 - \`card_plan_propose {title, rationale?, sources?, items[]}\` — **several card changes at once.** Needs no yes: it only
   stores a proposal. When the user wants more than one change ("read Drew's plan, then update our cards: close what

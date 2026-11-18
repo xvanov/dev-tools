@@ -35,6 +35,8 @@ type StartOptions = {
   /** a Build profile (src/build/profiles.ts); `mode: 'plan'` without one means the read-only `research` profile */
   profile?: string | null;
   effort?: string | null;
+  /** research/report tasks: also run on this other read-only profile and fuse the reports (BUILD-ENRICHMENT G); undefined = the card's setting */
+  secondOpinion?: string | null;
   delivery?: string | null;
   deliverySource?: string | null;
   deliveryPhrase?: string | null;
@@ -219,8 +221,11 @@ async function start(o: StartOptions): Promise<Json> {
     commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null,
     // The planner's research runs say mode 'plan' (read-only): Build honours it through the research profile.
     profile: o.profile || (o.mode === 'plan' ? 'research' : null), effort: o.effort || null,
+    // The planner's eager research is speculative: it never doubles into a second opinion the card's setting asks for on Do.
+    ...(o.mode === 'plan' ? { secondOpinion: null } : o.secondOpinion !== undefined ? { secondOpinion: o.secondOpinion } : {}),
   });
   return {
+    sibling: run.sibling || null, siblingProfile: run.sibling_profile || null,
     id: run.id, route: 'build', routeReason: 'one Claude Code agent (D30)', mode: null, machine: run.machine || null, url: run.url,
     repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, profile: run.profile || null, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
   };

@@ -632,6 +632,10 @@ const config = {
     summaryEvery: envInt('PA_SUMMARY_EVERY', 5),
     summaryLines: envInt('PA_SUMMARY_LINES', 3),
     summaryMaxPerRun: envInt('PA_SUMMARY_MAX_PER_RUN', 40),
+    // Second opinion (src/build/secondOpinion.ts, BUILD-ENRICHMENT G): the one tool-less call that fuses
+    // the two reports. A strong model by default; the `fuse` pass on the Agents page can point it at an
+    // `azure/` open-weight model. Purpose build-fuse (discretionary spend).
+    fuseModel: modelEnv('PA_FUSE_MODEL', 'claude-opus-5-5'),
   },
 
   // Jarvis pages (src/pages): one JSON file per page under PA_PAGES_DIR, rendered
@@ -695,7 +699,7 @@ const config = {
       return Number.isFinite(n) ? n : 10;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe,build-summary').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe,build-summary,build-fuse').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // OpenTelemetry into Meter (plan 7.5; src/telemetry). Spans of the main hops

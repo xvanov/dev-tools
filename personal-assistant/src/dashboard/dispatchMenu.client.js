@@ -23,8 +23,9 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DispatchMenu = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const FIELDS = ['profile', 'model', 'effort', 'costCapUsd', 'wallCapMin', 'idleAfterS'];
-  const LABEL = { profile: 'Profile', model: 'Model', effort: 'Effort', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)' };
+  const FIELDS = ['profile', 'model', 'effort', 'costCapUsd', 'wallCapMin', 'idleAfterS', 'secondOpinion'];
+  const LABEL = { profile: 'Profile', model: 'Model', effort: 'Effort', costCapUsd: 'Cost cap ($)', wallCapMin: 'Time cap (minutes)', idleAfterS: 'Idle after (seconds)', secondOpinion: 'Second opinion (reports)' };
+  const TEXT_FIELDS = ['model', 'effort', 'profile', 'secondOpinion'];
   const MODEL = { haiku: 'haiku — fast and cheap', sonnet: 'sonnet — the default', opus: 'opus — the most capable', fable: 'fable — the strongest; its own weekly limit' };
 
   const has = (o, k) => Boolean(o) && Object.prototype.hasOwnProperty.call(o, k) && o[k] != null;
@@ -34,13 +35,18 @@
   function summary(s) {
     if (!s || !s.settings) return 'build settings…';
     const v = s.settings;
-    return [v.profile, v.model, v.profile ? v.effort : null, `$${v.costCapUsd}`, hours(Number(v.wallCapMin))].filter(Boolean).join(' · ');
+    return [v.profile, v.model, v.profile ? v.effort : null, `$${v.costCapUsd}`, hours(Number(v.wallCapMin)), v.secondOpinion ? `+ ${v.secondOpinion}` : null].filter(Boolean).join(' · ');
   }
 
-  /** The menu's rows, pure: label, value ('' = the default), options for a select, where it came from. */
+  /**
+   * The menu's rows, pure: label, value ('' = the default), options for a select, where it came from. The second
+   * opinion row (research/report cards only; the server refuses it for coding tasks) shows when the card's run is
+   * read-only, or when one is set (so it can be switched off).
+   */
   function rows(s) {
     const d = (s.options && s.options.defaults) || {};
-    return FIELDS.map((f) => {
+    const so = (s.options && s.options.secondOpinion) || { eligible: false, profiles: [] };
+    return FIELDS.filter((f) => f !== 'secondOpinion' || so.eligible || has(s.overrides, 'secondOpinion')).map((f) => {
       const overridden = has(s.overrides, f);
       return {
         field: f,
@@ -54,7 +60,10 @@
             ? [{ value: '', label: "default (the profile's, else Claude's)" }].concat(((s.options && s.options.efforts) || []).map((e) => ({ value: e, label: e })))
             : f === 'profile'
               ? [{ value: '', label: 'none (the defaults)' }].concat(((s.options && s.options.profiles) || []).map((p) => ({ value: p.name, label: p.description ? `${p.name} — ${p.description}` : p.name })))
-              : null,
+              : f === 'secondOpinion'
+                ? [{ value: '', label: 'off (one agent)' }].concat(so.profiles.map((p) => ({ value: p.name, label: `${p.name}${p.model ? ` (${p.model})` : ''} — also run it here, then fuse the two reports` })))
+                  .concat(has(s.overrides, 'secondOpinion') && !so.profiles.some((p) => p.name === s.overrides.secondOpinion) ? [{ value: s.overrides.secondOpinion, label: `${s.overrides.secondOpinion} (set; not offered for this card now)` }] : [])
+                : null,
         placeholder: d[f] != null ? String(d[f]) : '',
       };
     });
@@ -63,7 +72,7 @@
   /** The POST body for one change; '' clears it. */
   function patchFor(_s, field, value) {
     if (value === '' || value == null) return { [field]: null };
-    return { [field]: field === 'model' || field === 'effort' || field === 'profile' ? String(value) : Number(value) };
+    return { [field]: TEXT_FIELDS.includes(field) ? String(value) : Number(value) };
   }
 
   /** The settings as they will look once `patch` is stored: drawn before the server answers. */

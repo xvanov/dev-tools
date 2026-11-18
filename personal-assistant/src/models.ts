@@ -152,6 +152,7 @@ const PURPOSES: Purpose[] = [
   { key: 'routine', env: 'PA_ROUTINE_MODEL', needs: 'text', ...at('routines.model'), what: 'routines: parse, reports, suggestions' },
   { key: 'eval', env: 'PA_EVAL_MODEL', needs: 'json', ...at('eval.model'), what: 'retrieval evals' },
   { key: 'summary', env: 'PA_SUMMARY_MODEL', needs: 'text', ...at('build.summaryModel'), what: 'Build runs: one sentence per few tool calls' },
+  { key: 'fuse', env: 'PA_FUSE_MODEL', needs: 'text', ...at('build.fuseModel'), what: 'Build second opinion: fuses two reports into one' },
   { key: 'fast-lane', env: 'PA_FAST_MODEL', needs: 'text', ...at('fastLane.model'), what: 'voice fast lane: quick replies and routing' },
   { key: 'fast-lane-fallback', env: 'PA_FAST_FALLBACK_MODEL', needs: 'text', ...at('fastLane.fallback'), what: 'voice fast lane when the local model is down or slow' },
 ];

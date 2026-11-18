@@ -63,6 +63,16 @@ function create(db: Db) {
       return db.one(`select * from build_run where origin like $1 and state in ('starting','running','waiting','idle') order by id desc limit 1`, [pattern]);
     },
 
+    /** Every run whose origin matches the `like` pattern, oldest first (both runs of a second opinion). */
+    async byOrigin(pattern: string): Promise<Row[]> {
+      return db.rows('select * from build_run where origin like $1 order by id', [pattern]);
+    },
+
+    /** The newest runs that belong to any second-opinion pair, newest first. */
+    async recentSecondOpinion(limit = 60): Promise<Row[]> {
+      return db.rows(`select * from build_run where origin like 'second-opinion:%' order by id desc limit $1`, [limit]);
+    },
+
     /** Sets the named columns (unknown names are refused) and the update time. */
     async update(id: number | string, patch: Row): Promise<void> {
       const keys = Object.keys(patch).filter((k) => patch[k] !== undefined);

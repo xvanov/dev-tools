@@ -82,14 +82,14 @@ async function main() {
     const X = { 'x-pa': '1' };
 
     const first = json(await call('GET', url));
-    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { profile: null, model: 'sonnet', effort: null, costCapUsd: 5, wallCapMin: 120, idleAfterS: 240 }, {}]);
+    assert.deepStrictEqual([first.card, first.settings, first.overrides], [id, { profile: null, model: 'sonnet', effort: null, costCapUsd: 5, wallCapMin: 120, idleAfterS: 240, secondOpinion: null }, {}]);
     assert.deepStrictEqual(first.options.models, ['haiku', 'sonnet', 'opus', 'fable']);
 
     const set = json(await call('POST', url, { headers: X, body: M.patchFor(first, 'model', 'haiku') }));
     assert.deepStrictEqual([set.settings.model, set.overrides], ['haiku', { model: 'haiku' }]);
     json(await call('POST', url, { headers: X, body: { costCapUsd: 1.5, wallCapMin: 30 } }));
     const all = json(await call('GET', url));
-    assert.deepStrictEqual(all.settings, { profile: null, model: 'haiku', effort: null, costCapUsd: 1.5, wallCapMin: 30, idleAfterS: 240 }, 'stored: the next open shows the same');
+    assert.deepStrictEqual(all.settings, { profile: null, model: 'haiku', effort: null, costCapUsd: 1.5, wallCapMin: 30, idleAfterS: 240, secondOpinion: null }, 'stored: the next open shows the same');
     assert.strictEqual(M.summary(all), 'haiku · $1.5 · 30 min');
     const reset = json(await call('POST', url, { headers: X, body: M.patchFor(all, 'model', '') }));
     assert.deepStrictEqual([reset.settings.model, reset.overrides], ['sonnet', { costCapUsd: 1.5, wallCapMin: 30 }]);

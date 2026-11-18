@@ -5,7 +5,8 @@
 // its agents' timeline, tool calls, cost, messages and result.
 //
 //   GET  /api/build?page=1&limit=10     {runs, total, live, needs_you, today_usd, now}; a run carries `summaries`
-//                                       (its newest tool-call sentences) and `context` ({tokens, window, pct})
+//                                       (its newest tool-call sentences), `context` ({tokens, window, pct}) and, for
+//                                       a second opinion's run, `second_opinion` ({group, side, runs, fused})
 //   GET  /api/build/eval                {eval_id, evals, trials, profiles, recent}: the profile eval's per-profile table
 //   GET  /api/build/status            {running, needs_you, spend_usd, pa_spend_usd, at}: the nav's live status, cached 5 s
 //   POST /api/build/runs                {task, model?, repo?, costCapUsd?, wallCapMin?}: a run with no card
@@ -37,7 +38,7 @@ const CALLS_SHOWN = 40;
  * Pure: a run row, its messages and its parsed track as the card's view. `lines` is how many tool summaries to
  * show (the Agents page's setting); they come out of the messages, which keep only the agent/Jarvis conversation.
  */
-function view(r: Row, msgs: Row[], url: string | null, lines = 3): Json {
+function view(r: Row, msgs: Row[], url: string | null, lines = 3, pair: Json | null = null): Json {
   let track: Json | null = null;
   try { track = r.track ? JSON.parse(String(r.track)) : null; } catch { track = null; }
   const agents = ((track?.agents as Json[]) || []).map((a) => ({ ...a, calls: (a.calls || []).slice(-CALLS_SHOWN) }));
@@ -48,6 +49,8 @@ function view(r: Row, msgs: Row[], url: string | null, lines = 3): Json {
     context: track?.context || null,
     // "scheduled: <routine name>" for a run a routine started (src/build/origin.ts); null for one somebody started.
     origin: require('../build/origin.ts').label(r.origin),
+    // One of a second opinion's two runs (BUILD-ENRICHMENT G): its group, side, both runs and, once fused, the fused report.
+    second_opinion: pair ? { group: pair.group, side: require('../build/origin.ts').parseSecondOpinion(r.origin)?.side || null, runs: pair.runs, fused: pair.fused } : null,
     id: Number(r.id), card: r.commitment_id ? Number(r.commitment_id) : null, task: r.task, model: r.model, state: r.state,
     repo: r.repo_path || null, branch: r.branch || null, result: r.result || null, error: r.error || null,
     cost_usd: Number(r.cost_usd || 0), cost_cap_usd: Number(r.cost_cap_usd || 0), wall_cap_min: Number(r.wall_cap_min || 0),
@@ -75,7 +78,15 @@ async function data(url: URL): Promise<Json> {
   const hub = await base.sessionUrl('x').then((u: string) => u.replace(/#session=x$/, '')).catch(() => null);
   await require('../models.ts').refresh();
   const lines = require('../build/summaries.ts').settings().lines;
-  const runs = rows.map((r) => view(r, by.get(String(r.id)) || [], r.session_id && hub ? `${hub}#session=${encodeURIComponent(String(r.session_id))}` : null, lines));
+  // A second opinion's two runs may sit on different pages: each pair is read whole.
+  const O = require('../build/origin.ts');
+  const SO = require('../build/secondOpinion.ts');
+  const pairs = new Map<string, Json>();
+  for (const g of new Set(rows.map((r) => O.parseSecondOpinion(r.origin)?.group).filter(Boolean) as string[])) {
+    const both: Row[] = await repo.byOrigin(O.likeSecondOpinion(g));
+    pairs.set(g, SO.groupInfo(g, both, await repo.msgsFor(both.map((x) => x.id))));
+  }
+  const runs = rows.map((r) => view(r, by.get(String(r.id)) || [], r.session_id && hub ? `${hub}#session=${encodeURIComponent(String(r.session_id))}` : null, lines, pairs.get(O.parseSecondOpinion(r.origin)?.group || '') || null));
   const since = Date.now() - 24 * 3600_000;
   const recent: Row[] = await repo.list({ limit: 100 });
   const today = recent.filter((r) => Date.parse(String(r.started_at)) >= since).reduce((t, r) => t + Number(r.cost_usd || 0), 0);

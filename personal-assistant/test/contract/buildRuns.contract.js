@@ -42,6 +42,23 @@ module.exports = {
     assert.strictEqual(await repos.buildRuns.liveForOrigin('routine:7731:%'), null, 'ended');
   },
 
+  'byOrigin: both runs of a second-opinion pair, oldest first': async ({ repos, assert }) => {
+    const a = await repos.buildRuns.insert({ ...mk('pair a'), origin: 'second-opinion:ab12cd:a' });
+    const b = await repos.buildRuns.insert({ ...mk('pair b'), origin: 'second-opinion:ab12cd:b' });
+    await repos.buildRuns.insert({ ...mk('other pair'), origin: 'second-opinion:ab12ce:a' });
+    assert.deepStrictEqual((await repos.buildRuns.byOrigin('second-opinion:ab12cd:%')).map((x) => x.id), [a.id, b.id]);
+    assert.deepStrictEqual(await repos.buildRuns.byOrigin('second-opinion:ffffff:%'), []);
+  },
+
+  'recentSecondOpinion: only second-opinion runs, newest first': async ({ repos, assert }) => {
+    const a = await repos.buildRuns.insert({ ...mk('recent a'), origin: 'second-opinion:ab12cf:a' });
+    const b = await repos.buildRuns.insert({ ...mk('recent b'), origin: 'second-opinion:ab12cf:b' });
+    await repos.buildRuns.insert({ ...mk('not a pair'), origin: 'routine:1:x' });
+    const recent = await repos.buildRuns.recentSecondOpinion(50);
+    assert.ok(recent.every((x) => /^second-opinion:/.test(x.origin)));
+    assert.deepStrictEqual(recent.filter((x) => [a.id, b.id].includes(x.id)).map((x) => x.id), [b.id, a.id]);
+  },
+
   'list: newest first, live filter': async ({ repos, assert }) => {
     const a = await repos.buildRuns.insert(mk('a'));
     const b = await repos.buildRuns.insert(mk('b'));

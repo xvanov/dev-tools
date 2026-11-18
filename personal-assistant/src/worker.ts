@@ -455,6 +455,8 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   every(15, 'build-runs', async () => {
     await require('./build/index.ts').reconcile();
     await require('./build/track.ts').tick();
+    // Second opinions (BUILD-ENRICHMENT G): a pair whose two runs have ended is fused, once.
+    await require('./build/secondOpinion.ts').sweep();
   });
 
   // Routines: due ones run one at a time; a missed slot runs once, never a

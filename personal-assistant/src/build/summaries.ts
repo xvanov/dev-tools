@@ -59,7 +59,9 @@ function parse(m: Row): { id: number; at: string; upto: number; text: string } |
 /** Pure: a run's messages split into the agent/Jarvis conversation and its newest `lines` summaries (oldest first). */
 function split(msgs: Row[], lines: number): { messages: Row[]; summaries: Array<{ id: number; at: string; upto: number; text: string }> } {
   const all = msgs.filter(isSummary).map(parse).filter((s): s is NonNullable<ReturnType<typeof parse>> => s !== null);
-  return { messages: msgs.filter((m) => !isSummary(m)), summaries: all.slice(-Math.max(1, lines)) };
+  // The second opinion's bookkeeping rows (src/build/secondOpinion.ts) are not conversation either.
+  const internal = require('./secondOpinion.ts').isFuseRow;
+  return { messages: msgs.filter((m) => !isSummary(m) && !internal(m)), summaries: all.slice(-Math.max(1, lines)) };
 }
 
 /** Pure: the settings in force from what the store and config say. */

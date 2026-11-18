@@ -349,7 +349,17 @@ function agentFile(s: Profile['subagents'][number]): string {
   return `---\n${fm.join('\n')}\n---\n\n${s.prompt}\n`;
 }
 
+/**
+ * Pure: does a profile (or a resolved run) only read and report? Claude Code's dontAsk and plan modes cannot
+ * write; the report comes back as the run's result. A second opinion (BUILD-ENRICHMENT G) is allowed only
+ * for these: coding tasks stay one agent (D30).
+ */
+function readOnly(p: { permissionMode?: string | null } | null | undefined): boolean {
+  return p?.permissionMode === 'dontAsk' || p?.permissionMode === 'plan';
+}
+
 module.exports = {
+  readOnly,
   MODELS, EFFORTS, PERMISSION_MODES, SEEDS,
   normalize, toRow, list, get, need, save, remove, resetSeeds, profileForKind, resolve, launchFlags, withPermissionMode, agentFile,
   canonical, seedOf, update, reset, describe, view,
