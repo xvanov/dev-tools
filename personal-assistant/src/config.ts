@@ -63,8 +63,7 @@ function parseEnvFile(file: unknown) {
 // neither overrides process.env.
 //
 // A test process does not apply them. The gitignored .env on a machine that
-// runs the stack is that stack's settings (PA_DB, PA_FAST_LANE, the factory's
-// uv, …). CI has no such file, so a test there sees the defaults; the same
+// runs the stack is that stack's settings (PA_DB, PA_FAST_LANE, …). CI has no such file, so a test there sees the defaults; the same
 // test here was asserting against the operator's stack. A test sets
 // process.env itself when it needs a value. secret() still reads the files:
 // that is the credential path, not a setting.
@@ -483,70 +482,11 @@ const config = {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
-    // The end state a run or factory job gets when the operator did not say
+    // The end state a run gets when the operator did not say
     // and its repo has no default of its own (`pa delivery set`,
     // src/dispatch/deliveryCore.ts): none | branch | draft_pr | pr |
     // auto_merge | push_to_main.
     deliveryDefault: env('PA_DELIVERY_DEFAULT', 'draft_pr'),
-    // The model that writes a factory job's brief from the ask and what the
-    // assistant gathered (src/dispatch/compose.ts). Any text-capable model.
-    composeModel: modelEnv('PA_COMPOSE_MODEL', 'claude-sonnet-5-5'),
-    // Used instead of a bare Claude composeModel when there is no
-    // ANTHROPIC_API_KEY, so compose skips `claude -p` (~4 s startup): a keyed
-    // provider model string, e.g. azure/<deployment>. Unset, or its key
-    // missing: `claude -p`.
-    composeFallbackModel: env('PA_COMPOSE_FALLBACK_MODEL'),
-  },
-
-  // The software factory as a second dispatch target (src/dispatch/factory.ts,
-  // contract: software-factory docs/JOBS-API.md). Off until PA_FACTORY_PATH
-  // names the factory's checkout on its machine. Its commands run there
-  // through src/dispatch/exec.ts; the walk-in session opens in that
-  // machine's termhub, so a remote factory machine must be in PA_MACHINES.
-  factory: {
-    // The checkout `uv run factory …` runs in, as a path on the factory's machine.
-    path: env('PA_FACTORY_PATH', ''),
-    // A PA_MACHINES name; '' = this machine.
-    machine: env('PA_FACTORY_MACHINE', ''),
-    // The `uv` the factory's commands run with on its machine. termhub's
-    // /api/exec runs without a login shell, so ~/.local/bin is often not on
-    // its PATH: give the full path there (e.g. /home/me/.local/bin/uv).
-    uv: env('PA_FACTORY_UV', 'uv'),
-    // `factory serve`'s localhost API (plan 2.1), tried first when the factory
-    // is on this machine; empty disables it (every call spawns the CLI).
-    serveUrl: env('PA_FACTORY_SERVE_URL', 'http://127.0.0.1:7330'),
-    // There is no route to pick (decision D28): every dispatch is a factory
-    // job, so PA_DISPATCH_VIA and PA_ROUTE_CHOOSER are gone.
-    // chain | solo | auto (the factory decides). Solo by default: on the
-    // factory's own benchmark one agent beat the role chain.
-    pipeline: env('PA_FACTORY_PIPELINE', 'solo'),
-    // A job's runtime when none is picked: claude_session (Claude Code on the
-    // factory machine, the operator's subscription: the credit pool) | api (the
-    // factory's metered model routing). JOBS-API v1.2. A plan job is always
-    // claude_session unless picked (factoryCore.defaultRuntime).
-    runtime: env('PA_FACTORY_RUNTIME', 'claude_session'),
-    // The mode a card's dispatch starts in when nobody picked one (src/dispatch/settings.ts).
-    mode: env('PA_DISPATCH_MODE', 'full'),
-    // Runtime failover (JOBS-API v1.9; src/dispatch/failover.ts): one policy for
-    // a provider limit inside the factory and the Claude credit pool here. Off
-    // by default. On, a job may move to the other runtime when the wait for
-    // the limit's reset is longer than failoverMinWaitMin, and the operator is
-    // always notified. PA_CLAUDE_POOL_FALLBACK_API=1 is the older name for it.
-    failover: env('PA_RUNTIME_FAILOVER', env('PA_CLAUDE_POOL_FALLBACK_API', '0')) === '1',
-    failoverMinWaitMin: envInt('PA_RUNTIME_FAILOVER_MIN_WAIT_MIN', 30),
-    // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
-    models: env('PA_FACTORY_MODELS', ''),
-    // The worker's factory pass (src/dispatch/factoryPace.ts): every
-    // pollSeconds when nothing moves, every activePollSeconds while a job is
-    // queued, triaging or in progress, and at once when a local factory writes
-    // its state.
-    pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),
-    activePollSeconds: envInt('PA_FACTORY_ACTIVE_POLL_SECONDS', 5),
-    timeoutMs: envInt('PA_FACTORY_TIMEOUT_MS', 120_000),
-    // How long factory_start waits for the follow (walk-in) termhub session
-    // before answering without it: opening one takes ~9 s on Windows, and the
-    // job runs whether or not it is open. It finishes in the background.
-    followWaitMs: envInt('PA_FACTORY_FOLLOW_WAIT_MS', 800),
   },
 
   audio: {
@@ -748,21 +688,16 @@ const config = {
   },
 
   // The Claude subscription credit pool (since 15 Jun 2026 headless Claude Code,
-  // `claude -p` and claude_session runs, draws from a pool apart from the
+  // `claude -p`, draws from a pool apart from the
   // interactive allowance; src/claudePool.js). monthlyUsd is the pool in
-  // API-equivalent dollars (PA_CLAUDE_POOL_USD); unset or 0 = not tracked, no
-  // fallback. The pool resets on resetDay of each month (local time).
-  // fallbackApi: the runtime failover policy (factory.failover, PA_RUNTIME_FAILOVER,
-  // or its older name PA_CLAUDE_POOL_FALLBACK_API=1; default off) applied to the
-  // pool: once it is spent, a claude_session job is dispatched on the api
-  // runtime when the wait for the pool's reset is over the failover threshold.
+  // API-equivalent dollars (PA_CLAUDE_POOL_USD); unset or 0 = not tracked. The
+  // pool resets on resetDay of each month (local time).
   claudePool: {
     monthlyUsd: (() => {
       const n = Number.parseFloat(env('PA_CLAUDE_POOL_USD', ''));
       return Number.isFinite(n) && n > 0 ? n : null;
     })(),
     resetDay: Math.min(28, Math.max(1, envInt('PA_CLAUDE_POOL_RESET_DAY', 1))),
-    fallbackApi: env('PA_RUNTIME_FAILOVER', env('PA_CLAUDE_POOL_FALLBACK_API', '0')) === '1',
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
@@ -919,7 +854,7 @@ function forgetSecret(name: string) {
 /**
  * The `claude` to run on this machine: PA_CLAUDE_BIN when it is a path, else
  * `bin` on PATH, else where the installer puts it (~/.local/bin, ~/.claude/local),
- * as the factory's claude_binary() looks. termhub's /api/exec and a systemd
+ * where a login shell would find it. termhub's /api/exec and a systemd
  * unit often run without ~/.local/bin on PATH. Not found: `bin` as given.
  */
 function claudeBinary(bin: string = config.claudeBin, { env: e = process.env, platform = process.platform, home = os.homedir(), exists = (p: string) => { try { return fs.statSync(p).isFile(); } catch { return false; } } }: { env?: NodeJS.ProcessEnv; platform?: string; home?: string; exists?: (p: string) => boolean } = {}): string {

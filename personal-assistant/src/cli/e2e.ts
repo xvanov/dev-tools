@@ -1,8 +1,7 @@
 'use strict';
 
-// `pa e2e`: the golden path, headless, against the live stack (plan E4;
-// src/e2e/goldenPath.ts), and `pa e2e <workflow>` for each workflow in the
-// Map (plan 8.2; src/e2e/workflows.ts), with evidence in a run folder.
+// `pa e2e <workflow>`: each workflow in the Map (plan 8.2; src/e2e/workflows.ts),
+// headless against the live stack, with evidence in a run folder.
 // Prints a table and the JSON report (`--json`: the JSON alone), and exits
 // non-zero on any missed hop, failed check or cost over the ceiling.
 //
@@ -16,7 +15,7 @@ const { USAGE } = require('../e2e/goldenPathCore.ts');
 
 const HELP = `${USAGE}
 
-  pa e2e <workflow> [--dry-run] [--keep] [--json]   one workflow from the Map (plan 8.2):
+  workflows:
         whats-on | build-pr | build-continue-pr | research [--model haiku] [--repo owner/name] [--repo-path <checkout>] [--keep] [--timeout research=<s>] [--timeout ci=<s>]
         | teams-ask --test-chat <id> [--timeout teams=600] [--timeout ask=600]: prints a phrase for you to type there; sends nothing
         evidence (summary.json, transcripts, screenshots) in <PA data dir>/e2e/<stamp>-<workflow>/
@@ -26,27 +25,11 @@ const HELP = `${USAGE}
 function make(out: any, fail: any) {
   return {
     async e2e(args: any, flags: any, lists: any) {
-      const C = require('../e2e/goldenPathCore.ts');
       const which = args[0] ? String(args[0]) : null;
       if (args.length > 1) return fail(`pa e2e takes one workflow (got "${args.join(' ')}")\n${HELP}`);
-      if (which && which !== 'golden') return workflow(which, flags, lists);
-      let report;
-      try {
-        report = await require('../e2e/goldenPath.ts').main(flags, lists);
-      } catch (err: any) {
-        if (err.usage) return fail(`${err.message}\n${HELP}`);
-        throw err;
-      }
-      const opts = (() => {
-        try { return C.parseOptions(flags, lists); } catch { return {}; }
-      })();
-      if (opts.report) require('../e2e/goldenPath.ts').writeReport(opts.report, report);
-      if (opts.json) out(JSON.stringify(report, null, 2));
-      else {
-        out(C.table(report));
-        out(JSON.stringify(report, null, 2));
-      }
-      if (!report.ok) process.exitCode = 1;
+      if (!which) return fail(`pa e2e needs a workflow (the factory's golden path was removed, D32)
+${HELP}`);
+      return workflow(which, flags, lists);
     },
   };
 

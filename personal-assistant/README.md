@@ -136,8 +136,8 @@ node src/db/migrate.js && linux/install.sh --skip-db --no-audio --start
 The extensions are created as the superuser because the `pa` role cannot; the first migration's
 `create extension if not exists` is then a no-op.
 
-**A stack that ingests nothing** (the personal stack on the Linux box: a dashboard, the board, the
-factory, no mail): `PA_M365=0 PA_GITHUB=0 PA_JIRA=0 PA_TEAMS_CACHE=0 PA_AUDIO_ENABLED=0
+**A stack that ingests nothing** (the personal stack on the Linux box: a dashboard, the board,
+Build, no mail): `PA_M365=0 PA_GITHUB=0 PA_JIRA=0 PA_TEAMS_CACHE=0 PA_AUDIO_ENABLED=0
 PA_SESSIONS=0 PA_REPOS_RAVEN=0`. `PA_SESSIONS=0` stops reading Claude Code transcripts (this
 machine's and every `PA_MACHINES` machine's), which also keeps out the sessions of whatever account
 the box's own `claude` is signed in to; `PA_REPOS_RAVEN=0` stops the repo registry asking a `gh`
@@ -329,8 +329,8 @@ me**, **Agent runs**), the rest closed: **Others' work, not blocking you**, **Cl
 and **From the assistant**. The open GitHub and Jira items that used to be **Code & boards** are
 at the top of the **Repos** view (*Review requests & board items*, from `GET /api/repos`).
 **Replies to send** and **Agent runs** appear only when they have something; **Agent runs** lists
-the runs that are not factory jobs, and a factory run only while it is blocked: the rest are jobs
-on Build, with their state, PR and cost, and the section links there. Colour is kept for meaning:
+the older runs (Claude sessions in a worktree, and software-factory jobs from before its removal); Build
+agents are on Build, with their state, PR and cost, and each card's Plan chip links there. Colour is kept for meaning:
 amber marks what waits on you or on someone (a section's edge, *blocked on*, *question for you*,
 overdue), everything else is ink and grey. Each section's explanation is its title's tooltip.
 Every button shows that it is working and then what happened. Typing to the PA chat is on Ask, in
@@ -506,23 +506,16 @@ and are never refused. Speculative work asks `budget.allow(purpose)` before it s
 [--days N]` prints per-day, per-pass totals, `pa doctor` shows today against the cap with the top
 three passes, and the dashboard shows a spend chip beside the source chips.
 
-**Meter: telemetry and the Claude credit pool** (plan 7.5). Since 15 Jun 2026 headless Claude Code (the PA's `claude -p`
-and the factory's `claude_session` runs) draws from a credit pool apart from the interactive allowance.
+**Meter: telemetry and the Claude credit pool** (plan 7.5). Since 15 Jun 2026 headless Claude Code (the PA's `claude -p`)
+draws from a credit pool apart from the interactive allowance.
 `PA_CLAUDE_POOL_USD` is that pool per month in API-equivalent dollars (unset: not tracked); it resets on
 `PA_CLAUDE_POOL_RESET_DAY` (default 1). Usage is the `total_cost_usd` each run's stream-json result reports: the PA's own
-calls are `llm_spend` rows with backend `cli`, and the factory posts its runs to `POST /api/telemetry` (backend
-`claude_session`; set `PA_TELEMETRY_URL=http://127.0.0.1:7300` in the factory's environment, unset = off). `pa spend` and the
-Meter page (termhub `/meter`, from `GET /api/meter`) show what is left. **API fallback** is the one runtime-failover
-policy (`src/dispatch/failover.ts`, JOBS-API v1.9): `PA_RUNTIME_FAILOVER=1` (older name `PA_CLAUDE_POOL_FALLBACK_API=1`),
-off by default. On, once the pool is spent, `claude_session` jobs are dispatched on the `api` runtime (metered,
-`PA_FACTORY_MODELS` routing) when the wait for the pool's refill is longer than `PA_RUNTIME_FAILOVER_MIN_WAIT_MIN` (default
-30), and you are notified; every job is also sent with `--failover on`, so the factory may move a job that hits a Claude
-limit or an API 429 the same way (otherwise such a job pauses and resumes at the reset: Build and the card say
-`paused: Claude limit, resumes 15:00`). Off, jobs keep running and the page says the pool is spent. If the ledger cannot be
-read the requested runtime stands. The same page shows latency per hop, p50 and p95: OpenTelemetry spans
-(`@opentelemetry/api`) for a voice turn, an MCP tool call, a factory CLI call and a deploy are written by a local exporter
+calls are `llm_spend` rows with backend `cli` (rows of backend `claude_session` are the removed software factory's, kept as history). `pa spend` and the
+Meter page (termhub `/meter`, from `GET /api/meter`) show what is left; a spent pool is shown, and nothing is rerouted. The same page shows
+latency per hop, p50 and p95: OpenTelemetry spans
+(`@opentelemetry/api`) for a voice turn, an MCP tool call and a deploy are written by a local exporter
 to `trace_span` (kept `PA_TELEMETRY_RETENTION_DAYS`, default 30; `PA_TELEMETRY=0` turns the instruments off), with no
-collector or cloud service; the factory's own hops arrive through the same endpoint. Spans carry ids, names and counts,
+collector or cloud service. Spans carry ids, names and counts,
 never prompt or argument text.
 
 **The planner works ahead of you** (`src/agent/planner.ts`, every five minutes, `PA_PLANNER=0`
@@ -530,15 +523,10 @@ turns it off). Each new ask on you from the last week is given a kind (reply, re
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
-session. A *coding* ask with a known repo gets a *ready to start* offer on its **On me** card, "start a coding session?" —
-or, when the routing rule picks the software factory (below), "send to the factory?". Everything
-the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.ts`):
-the route and its reason, the **end state** in plain words (loud when nothing human follows your
-yes), the app, pipeline and models, the done-criteria, and — one click away — the exact brief that
-will be sent. Accepting runs exactly that; the only thing you can change on the card is the end
-state (a picker), and the brief is re-rendered for it. The planner's offers take the repo's default
-end state: it never reads one from the ask's text, which someone else wrote. A factory job changes
-code, so it is only ever offered. A code ask with no repo asks **which repo?** with buttons; your pick sets the
+session. A *coding* ask with a known repo gets a *ready to start* offer on its **On me** card, "start an agent?".
+Everything the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.ts`):
+the task, the repo (checked then, not re-judged at accept) and the model. Accepting starts one Build agent with exactly that
+(older cards, from before D32, also carry an end state, an app, a pipeline and a brief: Build ignores them). A code ask with no repo asks **which repo?** with buttons; your pick sets the
 project and teaches the alias, and the ask is planned again. Asks the reconciler thinks are done,
 or that already have a run, are left alone.
 
@@ -809,7 +797,7 @@ and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, ru
    status of work you do not own, and small talk are left out — an empty debrief is a fine one.
    The speaker stream can be your own AI assistant reading its reply aloud: what it says it will
    do is never owed to you (an item whose owner is the assistant is dropped), and a setup step it
-   reports (a repo not registered with the factory) is yours only when you must do it.
+   reports (a tool not configured) is yours only when you must do it.
 3. **Verify, then apply.** Every item carries a verbatim quote, checked against the transcript
    (case- and whitespace-folded; a near miss is dropped). To-dos and owed-to-me become
    commitments (`extracted_by = debrief-v1`) unless one on your list already says the same;
@@ -884,8 +872,7 @@ pa meeting discard <debrief-id>...   the same for debriefs you name
 
 ### Runs on another machine
 
-**Gone since D28** (every dispatch is a factory job on the factory's machine, `PA_FACTORY_MACHINE`;
-`--machine` is refused). What follows describes the runs started that way before, which `pa drop`,
+**Gone since D28** (every dispatch is one Build agent on this machine; `--machine` is refused). What follows describes the runs started that way before, which `pa drop`,
 `pa attach` and the reconcile pass still manage.
 
 Some work belongs on a particular machine — the VM that runs the service, holds the OneDrive
@@ -897,8 +884,7 @@ Windows, Linux and macOS machines all take runs. The OS (`windows`, `linux`, `ma
 without it, it is what that termhub reports (`/api/info`), else the shape of `reposRoot`
 (`C:\…` or `/…`). A configured OS that its termhub contradicts, or a `reposRoot` written for the
 other OS, is refused rather than guessed around. `pa doctor` shows each machine's reachability,
-OS and whether its termhub can run commands. A factory job on any of them
-can be followed (next section).
+OS and whether its termhub can run commands.
 
 A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.ts`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
 
@@ -936,161 +922,40 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 "termhub on X is too old" means that machine's termhub predates the route: run
 `termhub/windows/update.ps1` there. `pa sync --source claude_session_remote` runs it by hand.
 
-### Runs in the software factory
+### Build: one Claude Code agent per task
 
-The software factory (PM → SM → dev → reviewer → merge gates, its own repo) dispatches and tracks
-all work: code, research, reports and read-only plans. Every agent session the PA dispatches is a
-factory job (decision D28), so it shows on Build and is metered; there is no route to pick
-(`PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `--via claude` and `--machine` are gone), and without
-`PA_FACTORY_PATH` nothing dispatches. `pa do 959` sends the ask as a job. What a start does not
-choose comes from the card's dispatch settings (`GET`/`POST /api/commitments/<id>/dispatch-settings`,
-`src/dispatch/settings.ts`): runtime `PA_FACTORY_RUNTIME` (claude_session), mode `PA_DISPATCH_MODE`
-(full), the job kind decided from the ask, the end state from the factory app's `delivery.default`,
-and (JOBS-API v1.9) the review (`off`/`on`/`auto`; `auto` reviews only auto-merge and push-to-main jobs) and the
-job caps (budget, wall clock, agent rounds; default $30 / 4 h / 20) from the factory app's `review` and `caps`. A job
-that reaches a cap stops for you with its work saved; Continue resumes it with the caps granted again.
-Plan mode is a read-only `plan` job: Claude Code runs in its plan permission mode and the factory
-keeps the plan as the job's report (JOBS-API v1.8). The PA never imports factory code: it
-runs `uv run factory job …` (`PA_FACTORY_UV` for the full path of `uv`, since termhub's exec has no
-login shell) in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine
-(`PA_FACTORY_MACHINE`, a `PA_MACHINES` name, or empty for this one) and reads the one JSON object
-each command prints — the contract is the factory's `docs/JOBS-API.md`.
+`pa do`, a card's **Do**, the planner, an accepted card and the chat's `build_start` / `session_start` all end in
+`dispatch.start`, which hands the task to **Build** (`src/build`, decision D30): one interactive Claude Code
+session in termhub on your subscription, model haiku, sonnet (default), opus or fable (a card setting), in a fresh
+worktree on a new branch when the card names a repo. Everything about it — the agent prompt, `pa run
+note|ask|done`, the heartbeat, kept runs, the Build page — is in AGENT.md, "Build: one Claude Code agent per task".
 
-- **Kind and runtime per job** (JOBS-API v1.2). `--kind code|research|report|plan` (unset: decided
-  from the ask, `factoryCore.inferKind`): a research job answers a question, a report job writes a
-  document and a plan job writes a read-only implementation plan; all deliver a markdown
-  report the factory keeps (`pa factory report <job>`), need no repo (`--repo owner/name` makes the
-  factory read it when registered, else the ask names it), deliver `none`, and send your own words
-  as the ask — no composed brief. `--runtime api|claude_session` (default `PA_FACTORY_RUNTIME`,
-  claude_session; set it to `api` to put every job not given a runtime on the API models, a plan
-  job excepted): the factory's metered model routing, or Claude Code on the factory machine on your
-  subscription (each such run is a live termhub session there). Both are recorded on the run
-  (sql/031). A factory still on v1 refuses the new flags: a code job on `api` is resent without
-  them; anything else fails saying the factory needs updating.
+`pa do <id> [--repo p] [--model m]` and `pa do --task "…"` start one; `pa propose …` puts it on a card instead
+(dashboard → On me), frozen as shown; `pa do … --preview` prints that card. There is no route, end state, pipeline,
+runtime, kind or done-criteria to choose any more: those were the software factory's (PM → SM → dev → reviewer →
+merge gates, its own repo), which never worked well enough and was removed from the tree in D32 (git history keeps it:
+the last commit that has it is `4eee22f`). The flags are refused by name rather than ignored. The agent opens a
+draft PR (or writes a report) and never merges.
 
-- **The end state is yours** (operator decision 2026-11-02, no ceiling). Every job carries an
-  explicit `--delivery`: `none` (committed in the factory's worktree), `branch`, `draft_pr`, `pr`,
-  `auto_merge` (merged when its gates and CI pass), `push_to_main` (fast-forwarded onto main when
-  its gates pass). Where it comes from, first match wins (`src/dispatch/deliveryCore.ts`):
-  `--delivery` or the card's pick; an explicit `--mode` (local → none, branch → branch, mr/full →
-  draft_pr); your own words in `--task` ("just open a draft", "merge it", "push straight to main",
-  "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
-  <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). Since D28 the order is
-  (`src/dispatch/settings.ts`): `--delivery` or the start's pick; the card's stored pick; your own
-  words in `--task`; the factory app's `delivery.default`; the repo's default; `PA_DELIVERY_DEFAULT`.
-  A mode (default `full`) no longer picks the level. Before D28 the same vocabulary drove a Claude
-  session: its worktree runs in the mode that level maps to (push_to_main runs as
-  `local` — no push credentials in its environment and its push blocked, which stops an accident; an
-  agent running as your OS user can still restore them from disk, so the real boundary is a separate
-  OS user, not set up yet — `pa doctor` says so) and run review does the rest.
-- **The ask is a composed brief** (`src/dispatch/compose.ts`, rules in `composeCore.js`): a model
-  (`PA_COMPOSE_MODEL`, any text-capable provider; a bare Claude model with no `ANTHROPIC_API_KEY`
-  would cost ~4 s of `claude -p` startup, so set `PA_COMPOSE_FALLBACK_MODEL=azure/<deployment>` — used
-  instead whenever its key is present; the log line `compose model call` shows the path and latency) writes the goal, done-criteria, constraints,
-  decisions and facts the task needs, and points at **existing files to reuse or extend** — found by
-  searching the repo's local checkout (`git ls-files`, `git grep -F`) for the ask's keywords. Every
-  brief says: "Search the repo for existing implementations before writing new code; extend rather
-  than duplicate; follow existing conventions; add/extend tests." Private material (memory pages,
-  message bodies) reaches the model to pick from, never the brief wholesale: a run of 12 words
-  copied from it is dropped, a credential is redacted before the model sees it and again after,
-  reuse paths must be real files. No model, a model error or no JSON → a deterministic brief with
-  your words, the criteria and the code pointers and nothing private. `pa do … --preview` prints the
-  brief without sending; the card shows it. Done-criteria: `--done "…"` (repeatable) wins;
-  otherwise the commitment's "what done looks like", else the model's.
-  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`, default solo: on the factory's own
-  benchmark one agent beat the role chain) and `--model persona=provider/model`
-  (repeatable; `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory
-  app when the repo cannot be read from the commitment; `--register` (or `pa factory add
-  owner/name [--delivery-default level]`) registers a repo the factory does not know yet.
-- **Submission is idempotent and never leaves a run stuck.** The run id is the job's external id
-  (`--source pa --external-id <run>`), so a resubmit returns the same job. A contract error fails
-  the run. Anything else after a submit went out — a lost answer after one retry, a crash before
-  the job was recorded — is reconciled with the factory (`job status` by id, else `job list --source
-  pa` matched by external id): the job is adopted, or the run waits as `submit_unknown` and the
-  worker asks again each pass, failing it only once the factory has answered "no such job" for ten
-  minutes. A run left `starting` for two minutes is swept the same way.
-- **Every code job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
-  and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
-  deterministically from the composed goal: numbered steps that restate the ask and turn each
-  done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
-  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that reads
-  the contents on stdin and puts them in a fresh private temp dir on that machine (removed once the
-  factory has the job). Any `warnings` the
-  factory returns are kept on the run (`factory_warnings`), printed by `pa do` / `pa review`, and
-  shown on the dashboard.
-- **Walking in**: a termhub session on the factory's machine runs `uv run factory job follow <job>`
-  in the checkout, titled with the ask; the card's session link and `pa attach` open it.
-- **Status comes back** every `PA_FACTORY_ACTIVE_POLL_SECONDS` (5) while a job is queued,
-  triaging or in progress, at once when a factory on this machine writes its `state/factory.db`
-  (watched, never read; `src/dispatch/factoryPace.ts`), and every `PA_FACTORY_POLL_SECONDS` (120)
-  otherwise: one `factory job list --source pa --active`, plus `job status` for jobs that ended
-  since. A factory can also push a job's new state (`POST /api/factory/events`, below), which
-  Build shows at once; the next pass overwrites it with the full list. A pushed end (done, failed,
-  cancelled) also settles its run there and then, through the same per-run step as the pass (the
-  stored job under the pushed state): the run closes, the card moves and "Factory run #N" is raised
-  within about 20 ms of the push, and the next pass finds nothing left to do. A blocked job makes the run `waiting` and
-  tells you why; a finished one is `landed` with its PR on the card and closes the commitment *done*
-  through the ledger (actor `factory`); a failed or cancelled one reopens it. `none` delivery
-  closes nothing — the work is in the factory, and the ask stays dispatched until you close it.
-  GitHub reconcile only closes `open` asks, so a merged factory PR is never closed twice.
-  The same pass then stores the factory's whole `job list` (sql/031 `factory_board`) for the
-  **Factory** page and `pa factory jobs`, and notifies you when any job — yours from the PA or
-  not — is done, needs you, failed, or has a PR whose CI turned red (a job a PA run submitted
-  has its end and waits announced by the run, and only its CI here).
-- **One id chain** (plan E1): every poll also stores each PR the job opened (number, state, CI;
-  sql/033 `run_pr`) and each agent step with its live session (`run_step`: the factory's step id,
-  story, termhub session id and URL), and every session the PA or the factory starts in termhub
-  carries `links` (card, run, job, step). So a card shows run → job → steps → PRs as links (Plan),
-  a job links back to its card and to each step's session (Build, `factory#job=<id>`), a terminal
-  links to its card and job (Run, `#card-<id>`), and the `card`, `factory_job` and `sessions` chat
-  tools return the same ids, none of it read off a title.
-- `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
-  keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
-  delivers and is steered on its own side.
-
-**Telling the PA chat**: it picks the end state from what you said, the kind, pipeline and
-models, and either starts it (`pa do`, behind a permission
-prompt; or the `factory_start` / `session_start` tools below) or puts it on a card (`pa propose`,
-which starts nothing). Accepting a card from the chat
-(`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
+**Telling the PA chat**: it starts one with `build_start` (or `session_start`, the same agent) behind a permission
+prompt, or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
+(`pa answer <id> yes`) asks first.
 
 **Jarvis as coordinator**: the chat works every layer through structured MCP tools
-(`src/mcp/chatTools.js`, listed only for the chat), one call each and compact JSON back. Reads run
+(`src/mcp/chatTools.ts`, listed only for the chat), one call each and compact JSON back. Reads run
 without a prompt: `board` (today's to-dos grouped todo / blocked / unblocked / looks done, with ids,
 who, due, repo, blockers, live run), `card <id>` (one card's full context: source excerpt, links,
-blockers, runs, offers), `factory_jobs` / `factory_job <job>` (state, PRs, CI, cost,
-subscription-equivalent, report excerpt, follow link) and `sessions` (termhub). Actions ask on every
-call: `factory_start` (from a card and/or your words; the brief is composed server-side from the
-card's context; runtime `claude_session` unless you ask for the API or name an API model; the end state
-from your words), `factory_continue` (a new job on an existing `--branch` / `--pr`), `factory_resume`,
-`factory_cancel`, `factory_approve`, `card_edit` (change a card's title, details, due date, project or add a note in place, instead of dismissing and recreating it), `card_plan_propose` (no prompt: stores a whole set of card changes, close / edit / create, for you to untick and approve once on the dashboard) with `card_plan_apply` (one prompt for the set) and `session_start` (Claude Code briefed with your prompt: a
-`claude_session` factory job like any other, `mode: plan` a read-only plan job). They
-are `pa do` / `pa factory …` in-process — an end state that merges or pushes to main still becomes a
-card. "What are my tasks today?" → `board`; "start on that one, PR ready to merge, CI green" →
-`factory_start {card, delivery: pr, done: [...]}` → one prompt in termhub.
+blockers, runs, offers), `sessions` (termhub), `build_runs` and `build_run <run>`. Actions ask on every
+call: `build_start`, `build_reply`, `build_send`, `build_stop`, `build_set_idle`, `session_start`, `card_edit` (change a
+card's title, details, due date, project or add a note in place, instead of dismissing and recreating it),
+`card_plan_propose` (no prompt: stores a whole set of card changes, close / edit / create, for you to untick and approve
+once on the dashboard) with `card_plan_apply` (one prompt for the set). They are `pa do` in-process.
+"What are my tasks today?" → `board`; "start on that one" → `build_start {card}` → one prompt in termhub.
 
-The same reads are `pa` tool verbs (`pa factory jobs`, `pa factory status <job>`, `pa factory report
-<job>`), and the shell forms still work behind a prompt: `pa factory
-submit --title … --ask … --kind code|research|report --runtime api|claude_session [--repo
-owner/name] [--delivery level] [--done …]` puts a **code** job on a card you accept — it never
-starts one — and starts a **research or report** job at once only when you asked the chat for it
-(else `--card`); `pa factory cancel <job>` (a PA run's job is dropped through `pa drop`) and `pa
-factory approve <job>` (only the `factory approve-direction` the job's own warning names).
-
-**No routing rule any more** (D28): every dispatch is a factory job. The job kind is decided from
-the ask (`factoryCore.inferKind`, deterministic: plan mode is `plan`; the planner's *coding* is
-`code` and *investigate* is `research`; then the words — write a document → `report`, change
-something → `code`, a question → `research`; else `code`), and a code job's repo the factory does
-not know yet is registered with it first (`factory app add --serve-tick`: worked on
-automatically, since you register a repo to send work to it; `pa factory add <repo>
---no-serve-tick` and the Repos form's checkbox turn that off). Factory serve ticks an app with an
-active job either way; when nothing will tick the job (serve not running), the Do toast and the
-card say it will not start instead of leaving it silently queued.
-
-**Which route works** is measured: every run records its route, the reason, the ask's kind, and its
-outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs add pipeline, delivery, models,
+**Which route works** was measured: every older run records its route, the reason, the ask's kind, and its
+outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs (history now) add pipeline, delivery, models,
 job id and the factory's reported cost (sql/024). `pa runs stats [--days 90]` prints success rate
-and cost per route × kind. `pa doctor` checks the factory answers and lists its apps.
+and cost per route × kind.
 
 ### Secrets and sign-ins
 
@@ -1398,8 +1263,7 @@ cluster, `docker:pa-postgres` for the compose container — whose own `pg_dump` 
 server, its output streamed to the file. `pa doctor` flags a native `pg_dump` older than the server
 before the nightly dump finds out. `pa doctor` shows the age of the newest one.
 
-**Backups are encrypted.** Each one is a single `pa-<stamp>.pabak`: the `pg_dump`, the factory's
-`state/` directory (when the factory runs on this machine; logs and locks left out) and a manifest
+**Backups are encrypted.** Each one is a single `pa-<stamp>.pabak`: the `pg_dump` and a manifest
 of table row counts, in one tar sealed with AES-256-GCM. The key is the `PA_BACKUP_KEY` secret in
 the OS keychain (labelled by stack); the first backup generates it. **Copy it off the machine** with
 `pa backup key export --to <new file>` (mode 600, never printed) and keep that somewhere safe:
@@ -1408,8 +1272,8 @@ keychain still writes a plain `.dump` and logs a warning; `pa restore` reads bot
 
 **Restore drill.** An untested backup is a hope. `pa backup restore --to pa_drill` decrypts the
 newest backup, restores it into a throwaway database `pa_drill`, compares every table's row count
-with the manifest (2% or 10 rows of slack: the store keeps writing while it dumps), checks the
-factory state came back, and drops the database. It never touches the live store. It needs a role
+with the manifest (2% or 10 rows of slack: the store keeps writing while it dumps), and drops the
+database. It never touches the live store. It needs a role
 that may `CREATE DATABASE` and either the `vector`/`pg_trgm` extensions creatable by it
 (`--admin-url postgres://<superuser>@host:port/postgres`) or a `--template <database>` that already
 has them. Run it once per stack after setting up, and after any change to the backup path. Exit
@@ -1485,8 +1349,8 @@ It is homed in `%LOCALAPPDATA%\personal-assistant\pa-home`, whose `CLAUDE.md` ma
 whose SessionStart hook loads `pa context` — your profile, today's brief, what is waiting on you —
 at every start, resume and compaction, so a long-running chat stays current without carrying
 history. It answers through the MCP tools (`recall`, `memory_page`, …) and acts through the `pa`
-CLI, and reaches the board, the factory and termhub through structured tools (`board`, `card`,
-`factory_jobs`, `factory_start`, `session_start`, … — see "Jarvis as coordinator"): reads run freely;
+CLI, and reaches the board, Build and termhub through structured tools (`board`, `card`,
+`build_runs`, `build_start`, `session_start`, … — see "Jarvis as coordinator"): reads run freely;
 starting a run or job, landing, steering, closing,
 remembering and adding routines each ask you first. One write needs no prompt: when you tell it
 "create a task…" it adds one with its `task_add` tool (the same code as `pa task add`; Dismiss undoes
@@ -1596,9 +1460,9 @@ same through termhub's `/pa/` proxy from a phone.
   it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
   permission prompt or question, the chat refuses the send (409); the page says once that it is
   waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
-  termhub: starting a factory job: card 412 (claude_session, pr)") — and does not retry. When the prompt is
-  for one of the chat's own actions (`factory_start`, `session_start`, …), Jarvis asks out loud —
-  "Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?" — and
+  termhub: starting a session: fix the export") — and does not retry. When the prompt is
+  for one of the chat's own actions (`session_start`, `build_start`, …), Jarvis asks out loud —
+  "Start a Claude Code agent to fix the export. Shall I?" — and
   your next words answer it: "yes", "do it", "go ahead" approve; "no", "cancel", "stop" deny; anything
   else is asked once more, then left on the dashboard. Only while it is awake (after "hey Jarvis", or
   push-to-talk), only from words you began after the question, within a minute. The server then reads
@@ -1782,8 +1646,7 @@ The contract (the voice page depends on it):
 |---|---|---|
 | `POST /api/chat` | `{ "text": string, "source": "typed" \| "voice" }`, header `X-PA: 1` | `{ "id": string }` once the text is typed (or queued, for a session still starting). 400 bad input, 403 no `X-PA`, 409 waiting on an answer in termhub |
 | `GET /api/chat/stream` | — | Server-Sent Events; each `data:` is one event (below). No replay: the first event is the current `status`, then live events only. A `: ping` comment every 20 s |
-| `GET /api/events?topics=board,run` | `topics` optional (all if absent): `board`, `run`, `factory`, `routine`; `resync` always. `Last-Event-ID` header or `?lastEventId=` | Server-Sent Events of row changes (plan 0.4): each frame has `id:` and a `data:` `{ id, topic, at, payload }`, payload ids and states only (`{ table, op, id, status, … }`, from the triggers in `sql/034_events_notify.sql`). The first frame is `hello` with the newest id; with a Last-Event-ID still in the 1000-event ring the missed events are replayed, otherwise one `resync` frame says refetch. A `: ping` comment every 20 s. Plan, Build and Routines refetch on it (`/events.js`) |
-| `POST /api/factory/events` | `{ job_id, state, why?, updated_at? }` or `{ jobs: [...] }` (50 at most), header `X-PA: 1` | A factory pushing job status: merged into the stored job list at once and put on the feed; a done, failed or cancelled job then settles the PA run that holds it (after the answer). `{ ok, received, patched }` |
+| `GET /api/events?topics=board,run` | `topics` optional (all if absent): `board`, `run`, `factory` (the stored factory board: no longer written), `routine`; `resync` always. `Last-Event-ID` header or `?lastEventId=` | Server-Sent Events of row changes (plan 0.4): each frame has `id:` and a `data:` `{ id, topic, at, payload }`, payload ids and states only (`{ table, op, id, status, … }`, from the triggers in `sql/034_events_notify.sql`). The first frame is `hello` with the newest id; with a Last-Event-ID still in the 1000-event ring the missed events are replayed, otherwise one `resync` frame says refetch. A `: ping` comment every 20 s. Plan, Build and Routines refetch on it (`/events.js`) |
 | `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
 | `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
 | `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, p?, routerMs?, overridden? }` (`p`: the `logprob` router's `{ answer_here, hand_off, action }`), then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |
@@ -1824,12 +1687,12 @@ history and then dedupe the stream against it.
 
 ### One look, four layers
 
-Talk, the dashboard, the factory and termhub are four depths of the same assistant: Jarvis
-coordinates, the software factory dispatches and tracks the work, termhub drills into one live
+Talk, the dashboard, Build and termhub are four depths of the same assistant: Jarvis
+coordinates, Build agents do the work, termhub drills into one live
 session. They share one design system and one navigation.
 
 The destinations are named for what you do there: **Ask** (Talk, the voice page), **Plan** (the
-dashboard), **Build** (the factory), **Run** (termhub's sessions), **Meter** (termhub's agent time)
+dashboard), **Build** (the agents), **Run** (termhub's sessions), **Meter** (termhub's agent time)
 and **Map** (the architecture page). The older names stay in code, URLs and storage keys; the PA
 also answers `/ask`, `/plan`, `/build` and `/map`, and termhub `/run` and `/meter`.
 
@@ -1839,7 +1702,7 @@ It opens a panel on the left: first the navigation, **1 Ask · 2 Plan · 3 Build
 6 Map** (**Alt+1..6** from anywhere, the terminal included) with
 the theme toggle (system → light → dark, remembered per browser), then that page's own controls:
 Ask's mode (Voice or Text) and voice settings, Plan's views (Today, Meetings, Memory, Routines, Repos) and
-its sources, the Factory's status, spend and New job form, termhub's session list. Closed by
+its sources, Build's limits, agent count and New run form, termhub's session list. Closed by
 default; on a wide screen the choice is remembered per destination (`jarvis.settings.<id>` in
 localStorage), and on a phone the panel slides over the page and always starts closed. The toggle
 shows an amber dot when one of the Dashboard's views counts something waiting on you. The names
@@ -1862,31 +1725,17 @@ Implemented once in `theme.css` (`.jside`, `.jpanel-nav`, `.jx-frames`) and `nav
 - **Run** is termhub's hub, **Meter** its `/dashboard`. Under `/pa/` it is the same origin (`/`); on loopback it is the
   origin of the chat session's termhub URL (`GET /api/chat/session`), else `PA_TERMHUB_URL`, else
   `http://127.0.0.1:7000`. termhub's focus view, `/?focus=<id>` (one terminal full-window, no
-  termhub chrome), stays as a link target into it — a card's session, a factory run's live session —
+  termhub chrome), stays as a link target into it — a card's session, a Build run's live session —
   and there the switcher shrinks to a small tab in the corner that opens on hover or a tap.
 
-**The Factory page** (`/factory`, `src/dashboard/factory.ts`, `factory.html`,
-`factory.client.js`) shows every factory job — the PA's and anyone else's — grouped **Needs you**
-(needs_human, blocked, a live job whose PR's CI is red, or a live job whose app nothing ticks —
-JOBS-API v1.6 `ticked: false`, shown as **waiting: app not ticked** in place of its state) /
-**Running** / **Delivered** / **Failed or cancelled**: title, kind, runtime, app, state, the PR a
-continuation adds commits to (**continues PR #n**, from the job's `base`), and the factory's `why`, each story with its PR
-link and CI state, cost metered and subscription-equivalent, a research/report job's excerpt with
-**Read report** (`factory job report`, rendered from a parsed tree, never HTML), and its runs with
-links to their live termhub sessions. The data is the worker's stored `job list` (sql/031): a page
-load never calls the factory; only a click does. Actions: **Cancel** (a PA run's job through `pa
-drop`), **Open in termhub** (a session on the factory machine running `uv run factory job follow
-<job>`), **Approve** (only on a needs_human job whose own warning names `factory approve-direction`,
-and only that one), and **New job** (title, ask, kind, runtime, optional repo, end state; a code job
-that would merge or push to main is confirmed on the page, as on a card). In the settings panel: today's PA
-model spend (`llm_spend`), the factory's metered spend and the subscription-equivalent of its Claude
-Code runs. On the board, a card that can be started shows one quiet line of what **Do** will send
-(`Claude · full · draft PR · code (auto)`) and a **☰** beside Do: its menu holds the card's dispatch
-settings — runtime, mode, end state, job kind (default: decided from the ask, with the reason),
-repo/app, review and the job caps (budget, wall clock, agent rounds) — each marked default, inferred or set on
-this card, with a reset. Build's Repos editor sets an app's review default (and the diff size that turns
-`auto` on), its caps and whether it is worked on automatically (`serve_tick`; on for a repo added there). A change is saved on
-the card at once (`POST /api/commitments/<id>/dispatch-settings`); Do sends nothing of its own.
+**The Build page** (`/factory`, the route kept its old name; `src/dashboard/factory.ts`, `factory.html`,
+`build.board.client.js`, `src/dashboard/buildBoard.ts`) shows one card per Build agent run: state, model, cost against its
+cap, tokens, result, branch, the agents' lanes with their last tool calls, the messages with a reply box on an open
+question, **Open in termhub** and **Stop**; the settings panel holds the subscription limits, today's agent count and
+spend, and a **New run** form (task, model, optional repo). On the board, a card that can be started has a **☰**
+beside Do: its menu holds the card's Build settings (model, cost cap, wall-clock cap), each marked default or set on this
+card, with a reset; a change is saved at once (`POST /api/commitments/<id>/build-settings`) and Do sends nothing of its own.
+The software factory's job board that used to live here was removed in D32.
 
 The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);
 the switcher is `src/dashboard/nav.js` (`/nav.js`). These are the canonical copies: termhub
@@ -1932,9 +1781,8 @@ src/models.js        model strings, which backend each pass uses, and what it ca
 src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.ts)
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
-src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
-                     (factory.ts, pure half factoryCore.ts), the routing rule (route.ts, routeCore.ts),
-                     `pa runs stats` (stats.ts)
+src/dispatch/        start() (hands to src/build), offers (offer.ts), and for older runs worktrees, briefs,
+                     termhub sessions, modes, landing; `pa runs stats` (stats.ts, routeCore.ts)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes

@@ -1,8 +1,7 @@
 'use strict';
 
 // The live feed (plan items 0.4 and E3): the bus and its replay, the Postgres
-// bridge, GET /api/events end to end on port 0, the pages' client, and the
-// factory pass's pacing. No database: the bridge runs against a fake client.
+// bridge, GET /api/events end to end on port 0, and the pages' client. No database: the bridge runs against a fake client.
 
 const assert = require('assert');
 const http = require('http');
@@ -13,7 +12,6 @@ const { EventEmitter } = require('events');
 const { createBus } = require('../src/events/bus.ts');
 const events = require('../src/events');
 const endpoint = require('../src/dashboard/events.ts');
-const pace = require('../src/dispatch/factoryPace.ts');
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 // Wait for a condition rather than sleeping and hoping: a loaded machine stretches every timer.
@@ -438,18 +436,14 @@ function sse(port, pathAndQuery, headers = {}) {
     const dir = path.join(__dirname, '..', 'src', 'dashboard');
     const index = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
     const build = fs.readFileSync(path.join(dir, 'factory.html'), 'utf8');
-    const buildJs = fs.readFileSync(path.join(dir, 'factory.client.js'), 'utf8');
+    const buildJs = fs.readFileSync(path.join(dir, 'build.board.client.js'), 'utf8');
     const routines = fs.readFileSync(path.join(dir, 'routines.client.js'), 'utf8');
     assert.ok(index.indexOf('<script src="events.js"></script>') < index.search(/<script>\r?\n/), 'Plan loads events.js before its own script');
     assert.match(index, /PAEvents\.subscribe\(\{ topics: \['board', 'run'\]/);
     assert.match(build, /<script src="events\.js"><\/script>[\s\S]*<script src="permission\.js"><\/script>[\s\S]*<script src="build-board\.js"><\/script>/, 'Build: the feed, then Jarvis\'s permission card, then its script');
     assert.match(build, /data-permission-card/);
-    assert.match(buildJs, /PAEvents\.subscribe\(\{ topics: \['factory', 'run'\]/);
-    assert.match(buildJs, /waiting for your approval/);
-    assert.match(index, /waiting for your approval/);
-    assert.match(index, /api\/factory\/jobs\/\$\{encodeURIComponent\(r\.factory_job_id\)\}\/approve/, 'Plan can approve a factory job');
     assert.match(routines, /PAEvents\.subscribe\(\{ topics: \['routine'\]/);
-    for (const [name, s] of [['index.html', index], ['factory.client.js', buildJs], ['routines.client.js', routines]]) {
+    for (const [name, s] of [['index.html', index], ['build.board.client.js', buildJs], ['routines.client.js', routines]]) {
       assert.ok(!/setInterval\([^)]*,\s*30000\)\s*;\s*$/m.test(s.replace(/else setInterval[^\n]*/g, '')), `${name}: no unconditional 30 s poll left`);
     }
   }
@@ -465,145 +459,6 @@ function sse(port, pathAndQuery, headers = {}) {
     for (const t of ['commitment', 'run', 'proposal', 'draft', 'factory_board']) assert.ok(tables.includes(t), `${t} is on the feed`);
     assert.match(mig, /pg_notify\('pa_events'/);
     assert.strictEqual(events.CHANNEL, 'pa_events');
-  }
-
-  // ---- the factory pass's pacing (factoryPace.ts) ---------------------------------------
-  {
-    assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'needs_human' }]), false, 'parked on a human is not moving');
-    assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'in_progress' }]), true);
-    assert.strictEqual(pace.moving(null), false);
-    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'queued' }], slowSeconds: 120, fastSeconds: 5 }), 5000);
-    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'done' }], slowSeconds: 120, fastSeconds: 5 }), 120000);
-    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'triaging' }], slowSeconds: 3, fastSeconds: 5 }), 3000, 'never slower than the slow poll');
-
-    const yes = () => true;
-    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: yes }), path.join('/f', 'state'));
-    assert.strictEqual(pace.localStateDir({ path: '/f', machine: 'ME' }, { hostname: 'me', exists: yes }), path.join('/f', 'state'), 'this machine by name');
-    assert.strictEqual(pace.localStateDir({ path: '/f', machine: 'linux-box' }, { hostname: 'me', exists: yes }), null, 'a remote factory is polled');
-    assert.strictEqual(pace.localStateDir({ path: '', machine: '' }, { hostname: 'me', exists: yes }), null);
-    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: () => false }), null);
-    // A migrated factory (`factory state migrate`): its .state-dir pointer wins.
-    const out = path.resolve('/elsewhere/sf-state');
-    const pointer = (p) => (p === path.join('/f', '.state-dir') ? `${out}\n` : (() => { throw new Error('ENOENT'); })());
-    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: yes, readFile: pointer }), out);
-    assert.strictEqual(pace.resolveStateDir('/f', { readFile: () => 'relative/dir' }), path.join('/f', 'state'), 'a relative pointer is ignored');
-
-    // The pacer, on fake time.
-    let now = 0;
-    const timers = [];
-    const fake = {
-      setTimeout: (fn, ms) => { const t = { fn, at: now + ms, live: true }; timers.push(t); return t; },
-      clearTimeout: (t) => { if (t) t.live = false; },
-    };
-    const advance = async (ms) => {
-      const end = now + ms;
-      for (;;) {
-        const due = timers.filter((t) => t.live && t.at <= end).sort((x, y) => x.at - y.at)[0];
-        if (!due) break;
-        now = due.at;
-        due.live = false;
-        due.fn();
-        await tick();
-        await tick();
-      }
-      now = end;
-    };
-    let runs = 0;
-    let release = null;
-    let jobs = [{ state: 'done' }];
-    const pacer = pace.createPacer({
-      run: async () => { runs++; if (release === 'hold') await new Promise((r) => (release = r)); },
-      nextMs: async () => pace.nextDelayMs({ jobs, slowSeconds: 120, fastSeconds: 5 }),
-      minGapMs: 500,
-      timers: fake,
-      clock: () => now,
-    });
-    pacer.start(1000);
-    await advance(1000);
-    assert.strictEqual(runs, 1);
-    await advance(119_000);
-    assert.strictEqual(runs, 1, 'idle: the slow cadence');
-    await advance(1000);
-    assert.strictEqual(runs, 2);
-    // A local factory wrote its state: the pass runs at once (after the min gap).
-    now += 10_000;
-    pacer.kick();
-    await advance(0);
-    assert.strictEqual(runs, 3, 'kick runs now');
-    pacer.kick();
-    await advance(499);
-    assert.strictEqual(runs, 3, 'kicks keep a min gap after a pass');
-    await advance(1);
-    assert.strictEqual(runs, 4);
-    // A kick during a pass: one more right after it, not two at once.
-    jobs = [{ state: 'in_progress' }];
-    release = 'hold';
-    pacer.kick();
-    await advance(500);
-    assert.strictEqual(runs, 5);
-    assert.ok(pacer.busy(), 'busy during a pass (the watcher ignores our own writes)');
-    pacer.kick();
-    pacer.kick();
-    const r = release;
-    release = null;
-    r();
-    await tick();
-    await tick();
-    await advance(500);
-    assert.strictEqual(runs, 6, 'the kicks during it collapse into one');
-    // A job is moving: the fast cadence.
-    await advance(5000);
-    assert.strictEqual(runs, 7);
-    // hurry() only ever pulls a slow wait in.
-    jobs = [{ state: 'done' }];
-    await advance(5000);
-    assert.strictEqual(runs, 8, 'the pass that sees it stop');
-    pacer.hurry(5000);
-    await advance(5000);
-    assert.strictEqual(runs, 9, 'a job just submitted: polled within the fast interval');
-    pacer.hurry(5000);
-    pacer.hurry(5000);
-    await advance(5000);
-    assert.strictEqual(runs, 10, 'hurry never makes it faster than the interval it names');
-    pacer.stop();
-    await advance(300_000);
-    assert.strictEqual(runs, 10, 'stopped');
-
-    // A factory's pushed statuses (POST /api/factory/events): cleaned, whitelisted.
-    const { pushedPatches } = require('../src/dispatch/factory.ts');
-    assert.deepStrictEqual(pushedPatches({ job_id: 'app:t-1', state: 'needs_human', why: 'pick a direction', title: 'ignored', stories: [] }),
-      [{ jobId: 'app:t-1', patch: { state: 'needs_human', why: 'pick a direction' } }]);
-    assert.deepStrictEqual(pushedPatches({ jobs: [
-      { job_id: 'app:t-2', state: 'in_progress', updated_at: '2026-11-07T10:00:00Z' },
-      { job_id: 'not a job id', state: 'done' },
-      { job_id: 'app:t-3', state: 'exploded' },
-      { job_id: 'app:t-4', state: 'done', updated_at: 'yesterday' },
-    ] }), [
-      { jobId: 'app:t-2', patch: { state: 'in_progress', updated_at: '2026-11-07T10:00:00Z' } },
-      { jobId: 'app:t-4', patch: { state: 'done' } },
-    ]);
-    assert.deepStrictEqual(pushedPatches(null), []);
-    assert.strictEqual(pushedPatches({ jobs: Array.from({ length: 80 }, (_, i) => ({ job_id: `a:t-${i}`, state: 'done' })) }).length, 50);
-
-    // The watcher: only factory.db* writes, and not while ignore() says they are ours.
-    let cb = null;
-    let closed = false;
-    let ours = false;
-    let changes = 0;
-    const stop = pace.watchState('/f/state', {
-      onChange: () => changes++,
-      ignore: () => ours,
-      watch: (dir, opts, fn) => { assert.strictEqual(opts.persistent, false); cb = fn; return { on() {}, close: () => (closed = true) }; },
-    });
-    cb('change', 'factory.db-wal');
-    cb('change', 'locks');
-    cb('rename', 'factory.db');
-    ours = true;
-    cb('change', 'factory.db-wal');
-    assert.strictEqual(changes, 2);
-    stop();
-    assert.ok(closed);
-    assert.strictEqual(pace.watchState('/missing', { onChange() {}, watch: () => { throw new Error('ENOENT'); } }), null);
   }
 
   console.log('events: ok');

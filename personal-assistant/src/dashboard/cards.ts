@@ -129,9 +129,26 @@ async function buildsFor(ids: unknown[]): Promise<Map<string, Row>> {
 }
 
 /**
- * Plan E1: each commitment's id chain — its latest runs, each with its job,
- * steps (and their sessions) and PRs (factoryCore.runChain), from stored ids
- * (run, run_step, run_pr), never from titles. Keyed by commitment id.
+ * One legacy run (a row of `runs`: a Claude session, or a software-factory job from
+ * before D32) as the card shows it: the run, its session and its PR. Build runs are
+ * shown by buildSummary instead.
+ */
+function runChain(run: Row, sessionUrl: string | null) {
+  const mr = /^https:\/\//.test(String(run.mr_url || '')) ? String(run.mr_url) : null;
+  const pr = mr ? /\/pull\/(\d+)/.exec(mr) : null;
+  return {
+    card: run.commitment_id != null ? String(run.commitment_id) : null,
+    run: Number(run.id),
+    status: run.status || null,
+    route: run.route || 'claude',
+    session: run.termhub_session_id ? { id: String(run.termhub_session_id), url: sessionUrl && /^https?:\/\//.test(sessionUrl) ? sessionUrl : null } : null,
+    prs: mr ? [{ number: pr ? Number(pr[1]) : null, url: mr, state: null, ci: null, ciFailing: [] as string[], story: null }] : [],
+  };
+}
+
+/**
+ * Plan E1: each commitment's id chain — its latest runs, each with its session and PR
+ * (runChain), from stored ids, never from titles. Keyed by commitment id.
  * @returns {Promise<Map<string, object[]>>}
  */
 async function chainsFor(commitmentIds: unknown[], { perCard = 3 }: { perCard?: number } = {}) {
@@ -140,8 +157,6 @@ async function chainsFor(commitmentIds: unknown[], { perCard = 3 }: { perCard?: 
   if (!want.length) return out;
   const runs = await repo.runs.newestPerCommitment(want, perCard);
   if (!runs.length) return out;
-  const F = require('../dispatch/factoryCore.ts');
-  const stored = await require('../dispatch/factory.ts').chains(runs.map((r: Row) => r.id));
   const termhub = require('../dispatch/termhub.ts');
   for (const r of runs) {
     let sessionUrl: string | null = null;
@@ -154,7 +169,7 @@ async function chainsFor(commitmentIds: unknown[], { perCard = 3 }: { perCard?: 
     }
     const key = String(r.commitment_id);
     if (!out.has(key)) out.set(key, []);
-    out.get(key)?.push(F.runChain(r, stored.get(String(r.id)), { sessionUrl }));
+    out.get(key)?.push(runChain(r, sessionUrl));
   }
   return out;
 }
@@ -256,10 +271,10 @@ async function openSession(itemId: number | string) {
   const run = await repo.runs.modeByWorktree(info.cwd).catch(() => null);
   const mayPush = !run || require('../dispatch/modes.ts').mode(run.mode).mayPush;
   const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote.ts').createNoPushSession(hub, spec, machine);
-  // Resuming an existing Claude Code session is not a factory job (D28 covers
-  // new dispatches): its usage is not metered. Logged and put on the Meter as a
+  // Resuming an existing Claude Code session is not a Build agent (Build starts
+  // new ones): its usage is not metered. Logged and put on the Meter as a
   // call of unknown cost, never silent.
-  log.warn('resumed a Claude Code session outside the factory: metered-unknown', { item: Number(itemId), machine });
+  log.warn('resumed a Claude Code session outside Build: metered-unknown', { item: Number(itemId), machine });
   await require('../budget.ts').record({ purpose: 'session-resume-unmetered', model: null, backend: 'claude_session_unmetered', costUsd: null, ok: true }).catch(() => {});
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };
 }

@@ -251,10 +251,9 @@ const ROUTES: Route[] = [
     path: (url) => oneOf('/build-board.js', '/api/build')(url) || url.pathname.startsWith('/api/build/'),
     handle: (c) => require('./buildBoard.ts').route(c.req, c.res, c.url, c),
   },
-  // The Factory layer (dashboard/factory.ts, factory.html): every factory job
-  // from the worker's stored list, and its actions (X-PA guarded there).
+  // The Build page (dashboard/factory.ts, factory.html; the route keeps its old name) and its limits strip.
   {
-    path: (url) => oneOf('/factory', '/factory.js', '/factory-apps.js', '/factory-board.js', '/api/factory')(url) || url.pathname.startsWith('/api/factory/'),
+    path: oneOf('/factory', '/api/factory/usage'),
     handle: (c) => require('./factory.ts').route(c.req, c.res, c.url, c),
   },
   // The live feed (dashboard/events.ts): GET /api/events, an SSE stream of
@@ -271,26 +270,6 @@ const ROUTES: Route[] = [
   // Meter's data (dashboard/meter.ts): GET /api/meter, POST /api/telemetry.
   { path: oneOf('/api/meter', '/api/telemetry'), handle: (c) => require('./meter.ts').route(c.req, c.res, c.url, c) },
 
-  // The end state a Do would get, before it is pressed: the page shows it,
-  // and must send it back as `confirmedLevel` to start an unattended one.
-  {
-    method: 'GET',
-    path: /^\/api\/commitments\/(\d+)\/delivery$/,
-    handle: async ({ res, url, m, send }) => {
-      const D = require('../dispatch/deliveryCore.ts');
-      const q = url.searchParams;
-      const delivery = q.get('delivery') || null;
-      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
-      let jobKind: string | null = null;
-      try {
-        jobKind = q.get('kind') ? require('../dispatch/factoryCore.ts').jobKind(q.get('kind')) : null;
-      } catch (e) {
-        return send(res, 400, { error: (e as HttpError).message });
-      }
-      const r = await require('../dispatch').previewDelivery({ commitmentId: Number(m?.[1]), mode: q.get('mode') || undefined, delivery, jobKind });
-      return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
-    },
-  },
   // Which code this worker serves. Open pages poll it (nav.js) and reload
   // themselves once it changes, so an update reaches every open tab.
   {

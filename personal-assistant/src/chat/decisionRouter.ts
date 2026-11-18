@@ -50,7 +50,7 @@ const QUESTIONS: Json = {
       none: 'Nothing to look up or do',
       calendar: 'Meetings on any day',
       inbox: 'Email, Teams and chat messages',
-      wip_status: 'Agent runs, PRs, factory jobs, work in progress',
+      wip_status: 'Agent runs, PRs, Build agents, work in progress',
       memory: 'What was said, promised or decided earlier',
       commitments: 'Open asks, overdue and due items',
       other: 'Anything else: documents, tickets, the web',

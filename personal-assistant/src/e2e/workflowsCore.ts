@@ -10,14 +10,12 @@
 //   scoreHops(hops, measured)            the block's hops with what was measured, ok per hop
 //   scoreCost(usd, limits, id, basis)    cost against GET /api/workflow-limits' effective ceiling
 //   askView(tool, answer)                Ask as a tool check: method, tool, excerpt (not a /talk shot)
-//   workerHop({job,card,run,frames,statuses})  factory transition to the run event, or the Plan card when terminal
 //   missingViews(views, ...names)        the block's views no screenshot covers yet
 //   shotChecks(shots)                    a failed check per view the browser could not shoot
 //   folderName(id, at, dry)              the run folder's name
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
-//   prFacts / prReady / reviewFixChecks  review-fix: its PR before and after the job, held to the outcome
-//   jobPrs(job)                          review-fix: the PRs and branches a job status calls its own
+//   prFacts(raw)                         a PR's facts from GitHub's GraphQL answer (PR_QUERY)
 //   teamsMarker / teamsPhrase            teams-ask: what you type into the test chat (the run sends nothing)
 //   ownerIds / testChatChecks            teams-ask: the test chat is stored and only you are in it
 //   teamsHops / teamsCardChecks          teams-ask: the hops on the rows' own clocks; person, due, link
@@ -44,9 +42,7 @@ const REAL_RUN: Record<string, { self: boolean; needs: string }> = {
   // reach other people: the run then needs a dummy input the user names, and
   // never messages anyone.
   'whats-on': { self: true, needs: 'the voice service and the fast lane (local models)' },
-  research: { self: true, needs: 'the factory (claude_session research job)' },
-  'deepseek-pr': { self: true, needs: 'the factory API runtime with a DeepSeek model (Azure deployment by default)' },
-  'review-fix': { self: true, needs: 'an open PR of yours with unresolved review comments: --pr <n> [--repo owner/name] (left open; only the fix is pushed)' },
+  research: { self: true, needs: 'a Claude Code login (a Build agent, haiku by default)' },
   'teams-ask': { self: false, needs: 'a test Teams chat with only you in it: --test-chat <id> (your self chat; never a colleague). You type the phrase the run prints; nothing is sent' },
 };
 
@@ -178,7 +174,6 @@ type PrFacts = {
   ci: string | null; newestPr: number | null; recent: Array<{ number: number; branch: string | null }>;
 };
 /** What the job says is its own (job status): its PRs' numbers and the branches it pushed. */
-type JobPrs = { prs: number[]; branches: string[] };
 
 /** Pure. PR_QUERY's answer as PrFacts; null when the PR is not there. */
 function prFacts(raw: Json | null | undefined): PrFacts | null {
@@ -197,66 +192,6 @@ function prFacts(raw: Json | null | undefined): PrFacts | null {
     newestPr: Number.isInteger(newest) ? newest : null,
     recent: nodes.filter((p) => Number.isInteger(Number(p?.number))).map((p) => ({ number: Number(p.number), branch: p.headRefName || null })),
   };
-}
-
-/** Pure. The job's own PRs and branches from its status (`pr_urls`, its stories' PRs and branches, its base). */
-function jobPrs(job: Json | null | undefined): JobPrs {
-  const prs = new Set<number>();
-  const branches = new Set<string>();
-  const num = (url: unknown) => Number((/\/pull\/(\d+)/.exec(String(url || '')) || [])[1]);
-  for (const u of Array.isArray(job?.pr_urls) ? job.pr_urls : []) if (num(u) > 0) prs.add(num(u));
-  for (const s of Array.isArray(job?.stories) ? job.stories : []) {
-    const n = Number(s?.pr_number) || num(s?.pr_url);
-    if (n > 0) prs.add(n);
-    if (s?.branch) branches.add(String(s.branch));
-  }
-  if (job?.base?.branch) branches.add(String(job.base.branch));
-  return { prs: [...prs], branches: [...branches] };
-}
-
-/** Pure. Whether a PR can be review-fixed: there, open, ours, with something to fix. */
-function prReady(pr: PrFacts | null, n: number, repo: string): Check[] {
-  const view = 'github';
-  if (!pr) return [{ view, check: `PR #${n} exists in ${repo}`, ok: false, detail: 'not found' }];
-  return [
-    { view, check: `PR #${n} exists in ${repo}`, ok: true, detail: `${pr.branch} → ${pr.base}, head ${String(pr.head).slice(0, 10)}` },
-    { view, check: `PR #${n} is open`, ok: pr.state === 'OPEN' && !pr.merged, detail: pr.merged ? 'merged' : pr.state.toLowerCase() },
-    { view, check: `PR #${n} is from a branch of ${repo}`, ok: !pr.fork, ...(pr.fork ? { detail: 'from a fork: the factory cannot push to it' } : {}) },
-    { view, check: `PR #${n} has unresolved review threads`, ok: pr.unresolved > 0, detail: `${pr.unresolved} of ${pr.threads} unresolved` },
-  ];
-}
-
-/** CI rollup states that are still running (GitHub StatusState). */
-const CI_PENDING = new Set(['PENDING', 'EXPECTED']);
-
-/**
- * Pure. The review-fix outcome (8.4.25): the same PR got new commits by
- * fast-forward (`compare` = GitHub's compare of the old head to the new:
- * status `ahead` means the old head is an ancestor, so nothing was force-pushed),
- * the job opened no new PR, nothing was merged, CI is green on the new head.
- * A new PR is the job's when the job links it (`job`: jobPrs) or its head is
- * one of the job's branches; others' PRs opened meanwhile do not count (8.4.42:
- * a second factory works the same repo).
- */
-function reviewFixChecks(before: PrFacts, after: PrFacts | null, compare: Json | null, job: JobPrs = { prs: [], branches: [] }): Check[] {
-  const view = 'github';
-  if (!after) return [{ view, check: `PR #${before.number} still there after the job`, ok: false, detail: 'not found' }];
-  const moved = Boolean(after.head && after.head !== before.head);
-  const ff = moved && compare?.status === 'ahead';
-  const branches = new Set([before.branch, ...job.branches].filter(Boolean));
-  const opened = after.recent.filter((p) => p.number > (before.newestPr ?? before.number) && p.number !== before.number);
-  const ours = [...new Set([...job.prs.filter((n) => n !== before.number), ...opened.filter((p) => p.branch && branches.has(p.branch)).map((p) => p.number)])].sort((a, b) => a - b);
-  const others = opened.filter((p) => !ours.includes(p.number)).map((p) => p.number);
-  const prDetail = ours.length
-    ? `new PR${ours.length > 1 ? 's' : ''} ${ours.map((n) => `#${n}`).join(', ')} from the job`
-    : `the job's only PR is #${before.number}${others.length ? `; ${others.map((n) => `#${n}`).join(', ')} opened meanwhile from other branches, not counted` : ''}`;
-  return [
-    { view, check: `PR #${before.number} got new commits`, ok: moved, detail: moved ? `${String(before.head).slice(0, 10)} → ${String(after.head).slice(0, 10)}${compare?.ahead_by != null ? ` (+${compare.ahead_by})` : ''}` : 'head unchanged' },
-    { view, check: 'pushed fast-forward (no force push)', ok: ff, detail: !moved ? 'nothing pushed' : compare ? `compare ${compare.status}${compare.behind_by ? `, ${compare.behind_by} behind` : ''}` : 'compare not readable' },
-    { view, check: 'same branch, no new PR opened', ok: after.branch === before.branch && !ours.length, detail: after.branch === before.branch ? prDetail : `branch ${after.branch} (was ${before.branch}); ${prDetail}` },
-    { view, check: 'nothing merged; the PR is still open', ok: after.state === 'OPEN' && !after.merged, detail: after.merged ? 'merged' : after.state.toLowerCase() },
-    { view, check: 'CI green on the new head', ok: moved && after.ci === 'SUCCESS', detail: `CI ${after.ci || 'unknown'}${after.ci && CI_PENDING.has(after.ci) ? ' (still running at the deadline)' : ''}` },
-  ];
 }
 
 function workflows(arch: Arch | null | undefined): string[] {
@@ -298,18 +233,6 @@ function scoreHops(hops: Hop[] = [], measured: Measured = {}): HopRow[] {
     row.ok = h.max_ms != null ? ms <= h.max_ms : true;
     return row;
   });
-}
-
-/**
- * Pure. The jarvis hop (8.4.22): factory_start's round trip less the brief's
- * composing model call, which the hop's target excludes. factory_start reports
- * it in `timings_ms.compose_model`; a PA that does not is timed whole and says so.
- */
-function toolCallMs(call: { ms: number } | null | undefined, started: Json | null | undefined): { ms: number | null; note: string } {
-  if (!call) return { ms: null, note: 'factory_start was not called' };
-  const model = Number(started?.timings_ms?.compose_model);
-  if (!Number.isFinite(model) || model < 0) return { ms: call.ms, note: 'factory_start round trip, including the brief composing model (no timings_ms.compose_model)' };
-  return { ms: Math.max(0, call.ms - model), note: `factory_start round trip ${Math.round(call.ms)} ms less the composing model's ${Math.round(model)} ms` };
 }
 
 /** Pure. Cost against the effective ceiling (the user's override, else the Map's default). */
@@ -440,114 +363,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-const WORKER_TERMINAL = new Set(['done', 'failed', 'cancelled']);
-
-function workerAt(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (v == null || v === '') return null;
-  const t = Date.parse(String(v));
-  return Number.isNaN(t) ? null : t;
-}
-
-function workerPayload(frame: Json): Json | null {
-  const p = frame?.payload;
-  if (typeof p === 'string') {
-    try { return JSON.parse(p); } catch { return null; }
-  }
-  return p && typeof p === 'object' ? p as Json : null;
-}
-
-function workerNamesJob(jobs: unknown, job: unknown): boolean {
-  return (Array.isArray(jobs) ? jobs : []).some((j) => {
-    if (j == null) return false;
-    if (typeof j !== 'object') return String(j) === String(job);
-    const o = j as Json;
-    return String(o.job_id ?? o.id ?? '') === String(job);
-  });
-}
-
-function workerJobEntry(jobs: unknown, job: unknown): Json | null {
-  const hit = (Array.isArray(jobs) ? jobs : []).find((j) => j && typeof j === 'object' && String((j as Json).job_id ?? (j as Json).id ?? '') === String(job));
-  return hit ? hit as Json : null;
-}
-
-/**
- * Pure. The worker hop (8.4.10, 8.4.16, 8.4.46). For each factory state of this
- * job, the factory's transition time (a push frame that names this one job, else
- * the first job-status `updated_at` for that state) to the event that followed:
- * the run row, or, once the job is terminal, the Plan card. A fast run row must
- * not hide a Plan card that never moved, so a terminal state with no card event
- * leaves `ms` null. `ms` is otherwise the slowest hop seen.
- */
-function workerHop({ job, card, run, frames = [], statuses = [] }: { job?: unknown; card?: unknown; run?: unknown; frames?: Json[]; statuses?: Json[] } = {}): { ms: number | null; note: string } {
-  const events = (Array.isArray(frames) ? frames : []).map((f) => ({ topic: f?.topic, at: workerAt(f?.at), payload: workerPayload(f) })).filter((f) => f.payload);
-  const readings = Array.isArray(statuses) ? statuses : [];
-  const order: string[] = [];
-  const seen = new Set<string>();
-  const add = (state: unknown) => {
-    if (state == null || state === '' || seen.has(String(state))) return;
-    seen.add(String(state));
-    order.push(String(state));
-  };
-  for (const s of readings) add(s?.state);
-  for (const f of events) {
-    const p = f.payload as Json;
-    if (f.topic === 'run' && String(p.factory_job_id ?? '') === String(job)) add(p.factory_state);
-    if (f.topic === 'factory' && (p.table === 'push' || p.op === 'push')) {
-      const one = workerJobEntry(p.jobs, job);
-      if (one?.state) add(one.state);
-      else if (p.state && Array.isArray(p.jobs) && p.jobs.length === 1 && workerNamesJob(p.jobs, job)) add(p.state);
-    }
-  }
-  if (!order.length) return { ms: null, note: 'no factory transition seen' };
-
-  const rows = order.map((state) => {
-    const terminal = WORKER_TERMINAL.has(state);
-    let clock: number | null = null;
-    let source = 'none';
-    for (const f of events) {
-      if (f.topic !== 'factory') continue;
-      const p = f.payload as Json;
-      if (!(p.table === 'push' || p.op === 'push')) continue;
-      const entry = workerJobEntry(p.jobs, job);
-      const jobs = Array.isArray(p.jobs) ? p.jobs : [];
-      const only = jobs.length === 1 && workerNamesJob(jobs, job);
-      // A stamp counts only with its state. A push that names several jobs, or
-      // names this job without a state, is not this transition's clock.
-      const stamped = entry?.state === state ? workerAt(entry.updated_at) : null;
-      const frameStamped = only && p.state === state ? workerAt(p.updated_at ?? entry?.updated_at) : null;
-      const at = stamped ?? frameStamped;
-      if (at == null) continue;
-      clock = at;
-      source = 'push';
-      break;
-    }
-    if (clock == null) {
-      const reading = readings.find((s) => s?.state === state && workerAt(s.updated_at) != null);
-      if (reading) { clock = workerAt(reading.updated_at); source = 'job status'; }
-    }
-    const runEv = events.find((f) => f.topic === 'run' && f.at != null && String((f.payload as Json).factory_job_id ?? '') === String(job)
-      && (f.payload as Json).factory_state === state
-      && (run == null || String((f.payload as Json).id ?? run) === String(run))
-      && (clock == null || (f.at as number) >= clock));
-    const cardEv = events.find((f) => f.topic === 'board' && f.at != null && (f.payload as Json).table === 'commitment'
-      && card != null && String((f.payload as Json).id) === String(card)
-      && (clock == null || (f.at as number) >= clock));
-    const effect = terminal ? cardEv : runEv;
-    const via = terminal ? 'plan card' : 'run';
-    const ms = clock != null && effect?.at != null ? Math.round((effect.at as number) - clock) : null;
-    const runLag = terminal && !cardEv && runEv && clock != null ? Math.round((runEv.at as number) - clock) : null;
-    return { state, terminal, ms, via, source, runLag, seenEffect: Boolean(effect) };
-  });
-  const measured = rows.map((r) => r.ms).filter((n): n is number => n != null);
-  const terminalUnseen = rows.some((r) => r.terminal && !r.seenEffect);
-  const note = rows.map((r) => {
-    const flag = r.terminal ? 'terminal' : 'non-terminal';
-    const hop = r.ms != null ? `${r.ms} ms via ${r.via}` : (r.via === 'plan card' ? 'plan card not seen' : 'not seen');
-    const extra = r.runLag != null ? `, run row ${r.runLag} ms` : '';
-    return `${r.state} ${flag} ${hop}${extra} (${r.source})`;
-  }).join('; ');
-  return { ms: terminalUnseen || !measured.length ? null : Math.max(...measured), note };
-}
-
-module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, askView, workerHop, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, prFacts, workflows, acceptance, scoreHops, scoreCost, askView, missingViews, shotChecks, folderName, summary, table, wav, ndjson };

@@ -4,14 +4,12 @@
 // Pure — no database, no processes — so every rule is a test away
 // (test/delivery.test.js).
 //
-// One vocabulary for both routes, shared with the factory (software-factory
-// docs/JOBS-API.md, "Delivery levels"), ordered least → most autonomous:
+// One vocabulary, ordered least → most autonomous:
 //
 //   none < branch < draft_pr < pr < auto_merge < push_to_main
 //
-// The operator chooses it (operator decision 2026-11-02: no ceiling). The PA
-// sets it on every factory job (`--delivery`, always sent) and, for a Claude
-// Code session, carries it out itself when the session ends
+// The operator chooses it (operator decision 2026-11-02: no ceiling). For a Claude
+// Code session the PA carries it out itself when the session ends
 // (src/durable/tasks/runReview.ts). Where it comes from, in order:
 //
 //   1. explicit   `pa do --delivery …`, or the level picked on the card at accept
@@ -24,7 +22,7 @@
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-/** One of DELIVERIES; a string because it arrives as text (CLI, cards, the factory). */
+/** One of DELIVERIES; a string because it arrives as text (CLI, cards). */
 type Delivery = string;
 type Inferred = { delivery: Delivery; phrase: string };
 type FinishPlan = { push: boolean; pr: 'draft' | null; ready: boolean; merge: boolean; toMain: boolean };
@@ -34,7 +32,7 @@ const DELIVERIES: Delivery[] = ['none', 'branch', 'draft_pr', 'pr', 'auto_merge'
 const FALLBACK = 'draft_pr';
 
 // A legacy PA mode, typed explicitly, read as a delivery level. `plan` is
-// read-only and delivers nothing (and is never a factory job).
+// read-only and delivers nothing.
 const DELIVERY_BY_MODE: Record<string, Delivery | null> = { plan: null, local: 'none', branch: 'branch', mr: 'draft_pr', full: 'draft_pr' };
 
 // The Claude session's own mode for a delivery level — "mapped to existing
@@ -57,12 +55,6 @@ const PLAIN: Record<Delivery, string> = {
   pr: 'Opens a pull request ready for review. Never merges.',
   auto_merge: 'Will merge to main automatically once its checks pass — no human review.',
   push_to_main: 'Will push straight to main — no pull request, no review.',
-};
-const PLAIN_FACTORY = {
-  ...PLAIN,
-  none: 'Stays in the factory: committed in its worktree, nothing is pushed.',
-  auto_merge: 'Will merge to main automatically once the factory\'s gates and CI pass — no human review.',
-  push_to_main: 'Will push straight to main once the factory\'s gates pass — no pull request, no review.',
 };
 const PLAIN_SESSION = {
   ...PLAIN,
@@ -91,9 +83,8 @@ function unattended(d: Delivery | null | undefined): boolean {
   return d === 'auto_merge' || d === 'push_to_main';
 }
 
-function describe(d: Delivery, { route = 'factory' }: { route?: string } = {}): string {
-  const table: Record<Delivery, string> = route === 'claude' ? PLAIN_SESSION : PLAIN_FACTORY;
-  return table[d] || `Delivers \`${d}\`.`;
+function describe(d: Delivery): string {
+  return (PLAIN_SESSION as Record<Delivery, string>)[d] || `Delivers \`${d}\`.`;
 }
 
 function deliveryForMode(modeName: string | null | undefined): Delivery | null {
@@ -206,7 +197,6 @@ function sourceLine(source: string | null | undefined, phrase: string | null = n
     case 'mode': return 'from the mode you gave';
     case 'inferred': return phrase ? `from your words: "${phrase}"` : 'from your words';
     case 'repo_default': return `the default for ${slug || 'this repo'} (pa delivery set)`;
-    case 'app_default': return 'the factory app\'s default (delivery.default)';
     case 'card': return 'chosen on the card';
     case 'kind': return 'a research, report or plan job delivers its report only';
     default: return 'the assistant\'s default (PA_DELIVERY_DEFAULT)';

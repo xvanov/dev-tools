@@ -184,7 +184,7 @@ version, it runs `personal-assistant/windows/redeploy.ps1` (Linux: `personal-ass
 before termhub's restart), which installs the assistant's dependencies if they changed and rolls
 `pa-worker` to the new commit through its zero-downtime supervisor, rolling back if it is not
 healthy within 60 s (the first time, it restarts `pa-worker` to bootstrap the supervisor); on Linux it also restarts `pa-voice` when
-its code changed and runs `uv sync` for the factory when its lockfile changed. Pages that are
+its code changed. Pages that are
 already open reload themselves: the shell (`nav.js`) polls each server's `api/version` and
 swaps out-of-date pages when you are not looking at them.
 

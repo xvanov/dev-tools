@@ -17,7 +17,7 @@ const HELP = `pa audit — every decision of the policy engine, hash-chained
                                   the newest rows, newest first
   pa audit check <tool> [--channel c] [--action call|approve] [--delivery level]
                                   what the policy would decide for a call, without running or logging it
-                                  (channels: mcp chat voice dashboard termhub cli factory)
+                                  (channels: mcp chat voice dashboard termhub cli e2e)
 
 The policy is src/policy/default.policy.json plus your untracked override (PA_POLICY_FILE, default
 <data dir>/policy.json).

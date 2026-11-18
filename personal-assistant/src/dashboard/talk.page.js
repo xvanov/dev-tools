@@ -1136,7 +1136,7 @@
   // ---- The chat's permission prompt, answered by voice --------------------------------
   // Talk is audio in, audio out: no buttons (the click path is the dashboard's
   // "Waiting for your yes" card). For one of the chat's own actions the server
-  // sends the question to ask ("Start a factory job for card 412 on your
+  // sends the question to ask ("Start a Claude Code agent for card 412 on your
   // subscription, opening a PR for review. Shall I?"); the next utterance
   // answers it under createVoiceAsk's rules (talk.core.js): only while awake,
   // only from words begun after the question was spoken to the end, yes/no

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redeploy the personal assistant (and the factory's Python deps) after the repo was
+# Redeploy the personal assistant after the repo was
 # pulled (docs/native/PLAN.md, Z4).
 #
 # Called by termhub's updater (termhub/linux/update.sh) BEFORE it restarts termhub, so

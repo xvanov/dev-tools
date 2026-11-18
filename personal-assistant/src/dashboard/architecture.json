@@ -1,7 +1,7 @@
 {
   "version": 1,
   "title": "System architecture",
-  "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), starts work as Build agents (3: ONE Claude Code agent per task, D30), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them. The software-factory is frozen (D30): in the tree, reachable only with PA_BUILD=factory, not on the default path.",
+  "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), starts work as Build agents (3: ONE Claude Code agent per task, D30), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them. The software factory that once ran multi-persona jobs was removed (D32; git history, 4eee22f).",
   "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.json. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
   "statuses": {
     "live": "Running today",
@@ -24,8 +24,8 @@
     {
       "id": "factory",
       "n": 3,
-      "name": "Build (Factory)",
-      "summary": "One Claude Code agent per task (build-agent, D30) in a termhub session on the claude.ai subscription: Do on a card or the chat's build_start opens it, `pa run` talks back, a 10 s heartbeat flags idle runs, the Build board (/factory) shows them. The software-factory below it (jobs on two runtimes, ticked by factory serve; metered DeepSeek/Azure personas) is frozen (D30): still in the tree, reachable only with PA_BUILD=factory."
+      "name": "Build",
+      "summary": "One Claude Code agent per task (build-agent, D30) in a termhub session on the claude.ai subscription: Do on a card or the chat's build_start opens it, `pa run` talks back, a 10 s heartbeat flags idle runs, the Build board (/factory) shows them. (The multi-persona software factory that sat here before was removed, D32.)"
     },
     {
       "id": "sessions",
@@ -37,7 +37,7 @@
       "id": "outside",
       "n": 5,
       "name": "Models and outside services",
-      "summary": "Where model calls and data go, and who pays: the Claude subscription (Build agents and the PA chat), the local GPU, Azure (the fast lane's fallback, embeddings and rerank), GitHub and Microsoft 365. DeepSeek is only the frozen factory's."
+      "summary": "Where model calls and data go, and who pays: the Claude subscription (Build agents and the PA chat), the local GPU, Azure (the fast lane's fallback, embeddings and rerank), GitHub and Microsoft 365. DeepSeek is only for a PA pass someone sets to deepseek/..."
     }
   ],
   "stacks": [
@@ -50,7 +50,6 @@
         "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker task runs windows\\pa-launch.ps1, which starts jarvisd supervise on 127.0.0.1:7300 and one generation. The dashboard, Jarvis (/talk, the PA chat) and the worker passes ride in the generation. The task's run level is Limited",
         "the store: one encrypted SQLite file, %LOCALAPPDATA%\\personal-assistant\\pa.sqlite (PA_DB=sqlite, plan 3.5). Postgres is retired (D24): the old WSL database's last state is an encrypted .pabak under that data dir's retired\\",
         "termhub: the front is its own process, jarvisd front on Bun 1.4.4 (TERMHUB_FRONT=jarvisd) at 127.0.0.1:7000, published by Tailscale Serve; sessiond :7010; terminals in ptyd :7020 (the termhub-ptyd task). The in-process front (one jarvisd owning 7000 and 7300) is deferred (D25)",
-        "Frozen (D30): the work factory (plan 2.3), not the default path: factory serve in the factory-serve logon task, state outside the repo (%LOCALAPPDATA%software-factorystate); the PA calls it only with PA_BUILD=factory (PA_FACTORY_MACHINE=local, POST 127.0.0.1:7330/api/cli). Build agents (D30) open claude sessions in this termhub",
         "installed and reinstalled by one command, install.ps1 at the repo root (plan 7.7, landing: the reinstall proof on this laptop is pending): prerequisites, npm/Bun/uv dependencies, the new-system .env defaults, the SQLite store and its vault keys on a fresh machine, each tool's own task installer, then start and verify"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
@@ -64,10 +63,9 @@
         "PA as the compiled jarvisd (PA_RUNTIME=jarvisd): the pa-worker unit runs linux/pa-launch.sh, which execs jarvisd supervise on 127.0.0.1:7300; the dashboard is reached through termhub's /pa/ proxy",
         "the store: one encrypted SQLite file, ~/.local/share/personal-assistant/pa.sqlite (PA_DB=sqlite). The pa_personal database was dropped (D24) after an encrypted .pabak in that data dir's retired/; the system Postgres server stays for other software and is not this stack's store",
         "termhub: the front is its own process, jarvisd front on Bun 1.4.4, a child of server.js, on :7000, published by Tailscale Serve on https :7443; sessiond :7010; terminals in ptyd :7020 (termhub-ptyd.service). The in-process front is deferred (D25)",
-        "Frozen (D30): the personal factory at /home/k/dev-tools/software-factory, factory serve (factory-serve.service), reached only with PA_BUILD=factory; Build agents (D30) run in this machine's termhub",
         "pa-voice on 127.0.0.1:47830 (Kokoro on the CPU, systemd user unit pa-voice)"
       ],
-      "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0). Factory and chat use this machine's own model logins (an E6 run on 2026-11-08); the fast lane, Ollama and the transcriber are not installed"
+      "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0). The chat and Build agents use this machine's own model logins (an E6 run on 2026-11-08); the fast lane, Ollama and the transcriber are not installed"
     }
   ],
   "components": [
@@ -389,8 +387,6 @@
           "task_add",
           "board",
           "card",
-          "factory_jobs",
-          "factory_job",
           "sessions",
           "build_runs",
           "build_run",
@@ -400,11 +396,6 @@
           "remember",
           "request_secret",
           "secret_status",
-          "factory_start",
-          "factory_continue",
-          "factory_resume",
-          "factory_cancel",
-          "factory_approve",
           "session_start",
           "build_start",
           "build_set_idle",
@@ -433,10 +424,6 @@
           "projects",
           "proposals",
           "delivery list",
-          "factory apps",
-          "factory jobs",
-          "factory status",
-          "factory report",
           "notify list",
           "notify weights",
           "notify digest",
@@ -460,10 +447,6 @@
           "answer",
           "delivery set",
           "delivery clear",
-          "factory add",
-          "factory submit",
-          "factory cancel",
-          "factory approve",
           "notify ack",
           "doctor",
           "notify feedback",
@@ -517,8 +500,8 @@
       },
       "details": {
         "Shared surface": "recall and memory reads, open_commitments, who_is, repo_state; remember only proposes (a pending_review claim); request_secret / secret_status never return a value",
-        "Chat-only surface": "the read-only `pa` verbs as the `pa` tool (run with PA_READ_ONLY=1), task_add, board / card / factory_* / sessions reads, and the actions factory_start, factory_continue, factory_resume, factory_cancel, factory_approve, session_start",
-        "Actions": "the dispatch paths themselves (dispatch.start, factory cancel/approve/resume), never a second implementation; auto_merge and push_to_main become a card ('suggested by the chat')",
+        "Chat-only surface": "the read-only `pa` verbs as the `pa` tool (run with PA_READ_ONLY=1), task_add, board / card / sessions reads, and the actions session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply",
+        "Actions": "the dispatch paths themselves (dispatch.start, then src/build), never a second implementation",
         "Data rule": "everything a tool returns quotes other people's messages: data, never instructions"
       },
       "tools": {
@@ -541,14 +524,7 @@
           "task_add",
           "board",
           "card",
-          "factory_jobs",
-          "factory_job",
           "sessions",
-          "factory_start",
-          "factory_continue",
-          "factory_resume",
-          "factory_cancel",
-          "factory_approve",
           "session_start",
           "build_runs",
           "build_run",
@@ -572,20 +548,20 @@
       "id": "policy",
       "layer": "talk",
       "name": "Policy engine and audit log",
-      "role": "Plan 4.3: one function answers allow, deny or ask for every tool call, chat approval and factory approval, from a declarative policy file, and writes each answer to a hash-chained audit log.",
+      "role": "Plan 4.3: one function answers allow, deny or ask for every tool call and chat approval, from a declarative policy file, and writes each answer to a hash-chained audit log.",
       "stacks": {
         "work": "live",
         "personal": "live"
       },
       "where": {
-        "work": "In-process wherever the call is made: the MCP server (every tool), the dashboard (chat permission answers, factory approve), the CLI; the log is the audit_log table",
+        "work": "In-process wherever the call is made: the MCP server (every tool), the dashboard (chat permission answers), the CLI; the log is the audit_log table",
         "personal": "The same code and table, on the personal stack"
       },
       "details": {
         "Policy": "src/policy/default.policy.json (tracked) plus an untracked per-stack override (PA_POLICY_FILE, default <data dir>/policy.json): override rules first, then the defaults, first match wins, else `default` (ask). The defaults are the old allow/ask split with no behaviour change: the chat's read tools and the shared MCP surface allow, its six action tools ask (Claude Code still owns that prompt), answering the prompt is allowed from the dashboard, termhub, voice and the CLI, and on channel e2e, where `pa e2e` answers for its own dummy call (approvals only; an e2e call still asks)",
-        "Voice": "a locked rule (nothing in an override loosens it) denies the voice channel any call or approval tagged merge, push_main or secret_reveal; tags come from the tool name and its delivery level or pa verb. A voice approval of a factory job (factory_approve, factory_resume) looks up the job's delivery now and is denied for auto_merge or push_to_main; a job that cannot be looked up is denied for voice (fail closed). With PA_PASSKEYS=on (7.1) an approval of one of those kinds from another channel becomes `ask` (rule stepup-required) and is refused until the dashboard has recorded a passkey tap for that exact approval id (the chat tool_use id, or the job id); the grant is looked at by the policy and used up by the code that runs the action",
+        "Voice": "a locked rule (nothing in an override loosens it) denies the voice channel any call or approval tagged merge, push_main or secret_reveal; tags come from the tool name and its delivery level or pa verb. With PA_PASSKEYS=on (7.1) an approval of one of those kinds from another channel becomes `ask` (rule stepup-required) and is refused until the dashboard has recorded a passkey tap for that exact approval id (the chat tool_use id); the grant is looked at by the policy and used up by the code that runs the action",
         "Audit": "every decision is a row of audit_log with the hash of the row before it (prev_hash) and its own hash; arguments are stored only as a digest. `pa audit verify` recomputes the chain and names the first edited or removed row and prints the head hash; `pa audit tail` lists rows; `pa audit check <tool>` shows what the policy would say. An unreachable database is logged, not an error: a deny is still a deny",
-        "Where it runs": "inside the jarvisd generation: the MCP server, chat permission answers, factory approve and the CLI. The termhub front is still its own process (D25). Only voice and dashboard approvals look up a job's delivery; other channels are audited with what the request names. Passkey step-up stays off until PA_PASSKEYS=on"
+        "Where it runs": "inside the jarvisd generation: the MCP server, chat permission answers and the CLI. The termhub front is still its own process (D25). Approvals are audited with what the request names. Passkey step-up stays off until PA_PASSKEYS=on"
       },
       "code": [
         "personal-assistant/src/policy/policy.ts",
@@ -689,7 +665,7 @@
       "id": "dashboard",
       "layer": "dashboard",
       "name": "Dashboard server",
-      "role": "The board (Plan), Ask's voice and text page, the Factory page (Build) and this map, on loopback. It rides in the worker process.",
+      "role": "The board (Plan), Ask's voice and text page, the Build page (/factory) and this map, on loopback. It rides in the worker process.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -719,13 +695,10 @@
         "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
         "Health": "GET /healthz: 200 {ready: true} once its process has finished starting, 503 while starting or draining (what the supervisor switches on)",
         "Proposed card changes": "a card at the top of the board and in Ask's Text mode (cardplan.client.js) listing each card plan waiting for one yes (src/cardplans.ts; tables card_plan, card_plan_item): the chat read something and proposed a SET of changes (close, edit, create) with card_plan_propose, which only stores it (a read tool, validated: cards exist and are open, dates read). Each item is a line (\"Close #12 '…' — reason\", \"Edit #20: due → Fri 20 Nov\", \"New: '…'\") with a checkbox; Apply selected runs the ticked ones in order as you (editCard, the ledger close with its duplicates, pa task add), records each as applied, skipped or failed (a failure does not stop the rest, an applied item never runs twice) and shows ✓/✗; Discard drops the plan. GET /api/cardplans, POST /api/cardplans/<id>/apply {skip: [item numbers]} and /discard. A new plan also posts a feed notice. By voice or text, the chat asks \"apply all N?\" and calls card_plan_apply: ONE approval card/question naming every change. CLI: pa cardplan list|show|apply [--skip 1,3]|discard",
-        "Waiting for your yes": "a card at the top of the board, on Build and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.ts reads the session's screen before one keystroke (Enter on Yes, or Esc). A factory job parked on an approval (needs_human) says \"waiting for your approval\" on Build and in Plan's Agent runs, each with Approve (POST /api/factory/jobs/<id>/approve); by voice, Jarvis's factory_approve",
-        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. On SQLite (both stacks) there is no NOTIFY: after a commit the worker reads new event_outbox rows onto the bus (another process's event arrives within 100 ms). On the optional Postgres backend, triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Outbox (plan 1.4, sql/036): the same trigger writes each event to event_outbox under its global number in the writer's transaction (3 days kept, pruned by the trigger every 1000th event), so a g<seq> Last-Event-ID the ring does not hold (a restart, another generation) is replayed from the table, and a LISTEN that reconnects backfills from it instead of resyncing; only a client more than 1000 events or 3 days behind, or a process-local id from another process, still gets a resync. SQL in src/repo/events.ts. Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. On SQLite (8.4.33) an event another process committed is read from the outbox within 100 ms, and /api/state builds in about 45 ms after such a write (it skips the reviews the page does not draw; sql-sqlite/010 indexes each source's newest fetched_at): was about 170 ms on a copy of the store. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.ts), because a generation starts listening before it says ready",
-        "Factory repos": "Frozen with the factory (D30): Build's Repos section (src/dashboard/factoryApps.ts, factory.apps.client.js): the repos registered with the factory, each with its delivery and pipeline defaults and gate readiness (configured / not configured / missing tool), from the stored `app list` (no factory call per page load; refreshed behind the render). GET /api/factory/apps[?fresh=1], GET /api/factory/apps/<app> (`app show`: suggested gates, incl. ones mirrored from the repo's CI), POST /api/factory/apps (`app add`, X-PA) and POST /api/factory/apps/<app> (`app set --gate/--requires/--delivery-default/--pipeline-default`, X-PA). A gate is a command, none (the repo has no such check: skipped) or not configured; suggestions are prefilled for unconfigured gates and saved only on Save. App configs stay on the factory machine",
-        "Factory push": "POST /api/factory/events (X-PA): a factory on this machine pushes {job_id, state, why?, updated_at?} or {jobs: [...]}; merged into factory_board at once (Build shows it in about 25 ms) and the full `job list` follows within PA_FACTORY_ACTIVE_POLL_SECONDS. A done, failed or cancelled job also settles the run that holds it right after the answer, through the factory pass's own apply on the stored job under the pushed state: run row ended, card moved and its context cleared, \"Factory run #N\" raised (17 ms in test/factoryPushSettle.test.js); a poll that read the run before the push writes nothing (the write is guarded on the status it read). The factory side is `factory serve` (E3): within 0.2-0.4 s of a story transition",
-        "Build board (plan 8.8.2)": "Frozen with the factory (D30): Build's default Board view (factory.board.client.js, /factory-board.js; List keeps the grouped list): a strip with active/idle, spend today and over 7 days on both runtimes (Claude Code's labelled notional, not billed) and runtimes paused at a provider limit with their resume time; a card per job with its progress (the TUI's handler ratio), the persona at work, state and why (paused, needs you), the EBS ETA (P50/P75/P95), PRs with CI and CodeRabbit, cost against its budget cap and a dot per step; a card unfolds its steps on one time axis, a lane per persona; a step opens the run viewer on the right: its turns (text, thinking, each tool call with arguments folded and its result, diffs, gates, usage, the end), streamed while it runs, with Open in termhub kept as a link. GET /api/factory/board (`factory job board`, cached 2 s, one read shared by a burst) and GET /api/factory/steps/<id>/events?cursor&limit&wait&at (`factory job step`, JOBS-API v1.11: cursor-paginated, `wait` long-polls up to 20 s on factory serve, `at` reads one record uncapped); src/dashboard/factoryBoard.ts checks every query value before it becomes an argv element. Re-read on the live feed's factory and run events, and every 10 s while a job is live and the page is seen (the snapshot moves with factory state the feed does not carry)",
-        "Passkey sessions (plan 7.1, PA_PASSKEYS=off|on, default off)": "Off: nothing changes (loopback Host, X-PA on POST, page tokens). On: once a passkey is registered, every request except /api/auth/*, /login, the theme, /healthz and /api/version needs the pa_session cookie (HttpOnly, SameSite=Strict, opaque, stored only as a SHA-256 in passkey_session; idle 30 min and sliding, 12 h hard ceiling). WebAuthn runs on @simplewebauthn/server (src/auth/ceremony.ts): single-use two-minute challenges, user verification required, 10 failed assertions a minute rate-limited. Step-up for high-risk approvals (merge, push to main, secret reveal; src/auth/stepup.ts): POST /api/auth/stepup/verify records a one-use, two-minute grant for exactly one approval id, whose challenge commits to that id; the dashboard demands it where auto_merge and push_to_main are accepted today (a dispatch card, a factory job, ids derived server-side), and the policy engine (4.3) calls hasStepUp() for the same kinds. Voice and MCP can never write a grant. The Plan card's approval prompt (permission.client.js) and Build's Approve (factory.client.js) show an 'Approve with passkey' button only after the server answers an approval with needsStepUp and an approvalId. Never locked out: the gate is open while no passkey exists, an unreadable store fails open, `pa passkeys reset` (interactive local terminal, type RESET) forgets every passkey and session, and PA_PASSKEYS=off is the other exit. Enabling it on the live stacks is pending the owner.",
-        "Build page (D30)": "Build (/factory, factory.html, build.board.client.js, src/dashboard/buildBoard.ts) is the Build agent board: GET /api/build?page=&limit= (ten runs a page: state, model, cost against its cap, tokens, result, branch, the agents' lanes with their last 40 tool calls, messages, needs_you, notional spend in 24 h), POST /api/build/runs {task, model, repo} (a run with no card), POST /api/build/<id>/stop|reply|send (X-PA). One card per run: a lane per agent (a bar pulses only while its agent works, an ended one is static; ticks are tool calls, red when one failed), tool-call steps, messages with a reply box on an open ask, Open in termhub and Stop. Polls every 5 s while an agent is live, 30 s otherwise. The factory's own board, repos and job client files (factory.client.js, factory.board.client.js, factory.apps.client.js) stay in the tree, frozen and no longer loaded by the page.",
+        "Waiting for your yes": "a card at the top of the board, on Build and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.ts reads the session's screen before one keystroke (Enter on Yes, or Esc).",
+        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. On SQLite (both stacks) there is no NOTIFY: after a commit the worker reads new event_outbox rows onto the bus (another process's event arrives within 100 ms). On the optional Postgres backend, triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (no longer written), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Outbox (plan 1.4, sql/036): the same trigger writes each event to event_outbox under its global number in the writer's transaction (3 days kept, pruned by the trigger every 1000th event), so a g<seq> Last-Event-ID the ring does not hold (a restart, another generation) is replayed from the table, and a LISTEN that reconnects backfills from it instead of resyncing; only a client more than 1000 events or 3 days behind, or a process-local id from another process, still gets a resync. SQL in src/repo/events.ts. Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. On SQLite (8.4.33) an event another process committed is read from the outbox within 100 ms, and /api/state builds in about 45 ms after such a write (it skips the reviews the page does not draw; sql-sqlite/010 indexes each source's newest fetched_at): was about 170 ms on a copy of the store. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.ts), because a generation starts listening before it says ready",
+        "Passkey sessions (plan 7.1, PA_PASSKEYS=off|on, default off)": "Off: nothing changes (loopback Host, X-PA on POST, page tokens). On: once a passkey is registered, every request except /api/auth/*, /login, the theme, /healthz and /api/version needs the pa_session cookie (HttpOnly, SameSite=Strict, opaque, stored only as a SHA-256 in passkey_session; idle 30 min and sliding, 12 h hard ceiling). WebAuthn runs on @simplewebauthn/server (src/auth/ceremony.ts): single-use two-minute challenges, user verification required, 10 failed assertions a minute rate-limited. Step-up for high-risk approvals (merge, push to main, secret reveal; src/auth/stepup.ts): POST /api/auth/stepup/verify records a one-use, two-minute grant for exactly one approval id, whose challenge commits to that id; the dashboard demands it where auto_merge and push_to_main are accepted today (a dispatch card, ids derived server-side), and the policy engine (4.3) calls hasStepUp() for the same kinds. Voice and MCP can never write a grant. The Plan card's approval prompt (permission.client.js) shows an 'Approve with passkey' button only after the server answers an approval with needsStepUp and an approvalId. Never locked out: the gate is open while no passkey exists, an unreadable store fails open, `pa passkeys reset` (interactive local terminal, type RESET) forgets every passkey and session, and PA_PASSKEYS=off is the other exit. Enabling it on the live stacks is pending the owner.",
+        "Build page (D30)": "Build (/factory, factory.html, build.board.client.js, src/dashboard/buildBoard.ts) is the Build agent board: GET /api/build?page=&limit= (ten runs a page: state, model, cost against its cap, tokens, result, branch, the agents' lanes with their last 40 tool calls, messages, needs_you, notional spend in 24 h), POST /api/build/runs {task, model, repo} (a run with no card), POST /api/build/<id>/stop|reply|send (X-PA). One card per run: a lane per agent (a bar pulses only while its agent works, an ended one is static; ticks are tool calls, red when one failed), tool-call steps, messages with a reply box on an open ask, Open in termhub and Stop. Polls every 5 s while an agent is live, 30 s otherwise.",
         "Turn log": "/turns (turns.html, turns.client.js): every thing said to Jarvis, newest first, filtered by channel and route and searched by words, refreshed every 10 s; GET /api/turns?limit=&before=&channel=&route=&q= (rows without the snapshot) and GET /api/turns/<id> (the whole row, with the snapshot and last turns the router saw). Read-only"
       },
       "env": [
@@ -747,10 +720,6 @@
         "personal-assistant/src/dashboard/server.ts",
         "personal-assistant/src/dashboard/board.ts",
         "personal-assistant/src/dashboard/factory.ts",
-        "personal-assistant/src/dashboard/factoryApps.ts",
-        "personal-assistant/src/dashboard/factory.apps.client.js",
-        "personal-assistant/src/dashboard/factoryBoard.ts",
-        "personal-assistant/src/dashboard/factory.board.client.js",
         "personal-assistant/src/dashboard/architecture.ts",
         "personal-assistant/src/dashboard/permission.client.js",
         "personal-assistant/src/dashboard/cardplan.client.js",
@@ -801,7 +770,7 @@
           "Microsoft 365 connector relay (PA_CONNECTOR_MODEL, default claude-haiku-5-5; Claude Code only)"
         ],
         "Model strings": "provider/model (src/models.ts). A bare Claude name uses the Anthropic API when ANTHROPIC_API_KEY is set, else a headless `claude -p` (the Claude Code login).",
-        "Spend": "every metered call lands in llm_spend; unknown prices are null, never estimated; daily budget PA_DAILY_BUDGET_USD (default 15) with essential vs discretionary passes; Meter (plan 7.5): trace_span holds the hop spans, and the Claude credit pool PA_CLAUDE_POOL_USD is summed from llm_spend rows of backend cli and claude_session"
+        "Spend": "every metered call lands in llm_spend; unknown prices are null, never estimated; daily budget PA_DAILY_BUDGET_USD (default 15) with essential vs discretionary passes; Meter (plan 7.5): trace_span holds the hop spans, and the Claude credit pool PA_CLAUDE_POOL_USD is summed from llm_spend rows of backend cli (and claude_session, from the removed factory)"
       },
       "passes": [
         "m365",
@@ -835,7 +804,6 @@
         "runs",
         "build-heartbeat",
         "build-runs",
-        "factory",
         "routines",
         "routine-suggest",
         "digest",
@@ -864,14 +832,6 @@
         {
           "name": "PA_DEDUPE_MODEL",
           "default": "azure/pa"
-        },
-        {
-          "name": "PA_COMPOSE_MODEL",
-          "default": "claude-sonnet-5-5"
-        },
-        {
-          "name": "PA_COMPOSE_FALLBACK_MODEL",
-          "default": null
         },
         {
           "name": "PA_DAILY_BUDGET_USD",
@@ -954,7 +914,7 @@
       "details": {
         "Only people create tasks": "sourcePolicy decides in code before any model call; bots, CI and the assistant's own sessions are evidence only",
         "Short messages": "distill reads an item from 40 characters, but a Teams DM, the self chat or a mention from 6 (8.4.36) if it arrived in the last 7 days; one that is only a courtesy ('thanks!', 'sounds good', your name and a ^) is marked done without a model call (src/distill/short.ts, eval set src/eval/short-asks-cases.json)",
-        "Blocks pass": "links what someone owes you to the task it holds up (commitment_block), and says who it is really on (commitment_block.owner, sql/040: person, me or system — a setup step such as a repo not registered with the factory, or an assistant's own promise, is on you, never 'Someone owes you'; a row judged before the column is judged once more). The meeting debrief drops an owed-to-you item whose owner is the assistant heard through the speakers. A card whose summary, detail or run ask carries e2e-<uuid> is left out of this pass and the card-context pass; a stored verdict that cites one is left out when the board reads it",
+        "Blocks pass": "links what someone owes you to the task it holds up (commitment_block), and says who it is really on (commitment_block.owner, sql/040: person, me or system — a setup step such as a tool not configured, or an assistant's own promise, is on you, never 'Someone owes you'; a row judged before the column is judged once more). The meeting debrief drops an owed-to-you item whose owner is the assistant heard through the speakers. A card whose summary, detail or run ask carries e2e-<uuid> is left out of this pass and the card-context pass; a stored verdict that cites one is left out when the board reads it",
         "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
         "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.ts)",
         "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose",
@@ -1073,11 +1033,9 @@
       },
       "health": "dashboard",
       "details": {
-        "Spans": "src/telemetry wraps a hop in an @opentelemetry/api span: hop voice.turn (the fast-lane turn), tool.call (every MCP tool call, named by tool, no arguments), factory.cli (every factory CLI call from the PA: submit, status, cancel), deploy (the supervisor deploy). A local exporter writes each finished span to trace_span (sql/039, src/repo/telemetry.ts); there is no collector and no cloud. The provider installs itself on the first span, never in a test process, and PA_TELEMETRY=0 makes every instrument a no-op. Spans older than PA_TELEMETRY_RETENTION_DAYS are deleted by the worker retention pass.",
-        "Factory spans": "the Python factory posts its own to POST /api/telemetry (X-PA guarded) when PA_TELEMETRY_URL is set (the dashboard, e.g. http://127.0.0.1:7300; unset = off): hops factory.sm, factory.dev, factory.review, factory.tech_writer, deploy and factory.claude_session (software-factory/factory/telemetry.py).",
+        "Spans": "src/telemetry wraps a hop in an @opentelemetry/api span: hop voice.turn (the fast-lane turn), tool.call (every MCP tool call, named by tool, no arguments), deploy (the supervisor deploy). A local exporter writes each finished span to trace_span (sql/039, src/repo/telemetry.ts); there is no collector and no cloud. The provider installs itself on the first span, never in a test process, and PA_TELEMETRY=0 makes every instrument a no-op. Spans older than PA_TELEMETRY_RETENTION_DAYS are deleted by the worker retention pass.",
         "Meter page": "termhub/web/meterModel.js on the Meter page: latency per hop (p50/p95 over the last 14 days), spend per day, model and purpose from llm_spend, and the credit pool. GET /api/meter?days=N (src/dashboard/meter.ts, src/telemetry/meter.ts); `pa spend` prints the pool too.",
-        "Credit pool": "headless Claude Code (the PA's `claude -p`, backend cli, and the factory's claude_session runs) draws from a credit pool apart from the interactive allowance (since 15 Jun 2026). Each run's stream-json result carries total_cost_usd and usage; the PA's calls are recorded in llm_spend (backend cli) and the factory posts its runs there (backend claude_session). Usage since the pool's reset day against PA_CLAUDE_POOL_USD gives the credit left (src/claudePool.ts). Unset PA_CLAUDE_POOL_USD = not tracked.",
-        "API fallback": "a spent pool is one more runtime limit, decided by the one failover policy (src/dispatch/failover.ts, JOBS-API v1.9): PA_RUNTIME_FAILOVER=1 (PA_CLAUDE_POOL_FALLBACK_API=1 is its older name; default off) dispatches a claude_session job on the api runtime when the wait for the pool's refill is over PA_RUNTIME_FAILOVER_MIN_WAIT_MIN (default 30), and notifies; src/dispatch/factory.ts asks claudePool.route; fails open to claude_session when the pool cannot be read. Off, a spent pool is shown on Meter and runs carry on."
+        "Credit pool": "headless Claude Code (the PA's `claude -p`, backend cli) draws from a credit pool apart from the interactive allowance (since 15 Jun 2026). Each run's stream-json result carries total_cost_usd and usage; the PA's calls are recorded in llm_spend (backend cli; the removed factory's claude_session rows are history). Usage since the pool's reset day against PA_CLAUDE_POOL_USD gives the credit left (src/claudePool.ts). Unset PA_CLAUDE_POOL_USD = not tracked. A spent pool is shown on Meter; nothing is rerouted."
       },
       "env": [
         {
@@ -1095,18 +1053,6 @@
         {
           "name": "PA_CLAUDE_POOL_RESET_DAY",
           "default": "1"
-        },
-        {
-          "name": "PA_CLAUDE_POOL_FALLBACK_API",
-          "default": "0"
-        },
-        {
-          "name": "PA_RUNTIME_FAILOVER",
-          "default": "0"
-        },
-        {
-          "name": "PA_RUNTIME_FAILOVER_MIN_WAIT_MIN",
-          "default": "30"
         }
       ],
       "code": [
@@ -1114,7 +1060,6 @@
         "personal-assistant/src/telemetry/exporter.ts",
         "personal-assistant/src/telemetry/meter.ts",
         "personal-assistant/src/claudePool.ts",
-        "personal-assistant/src/dispatch/failover.ts",
         "personal-assistant/src/dashboard/meter.ts",
         "personal-assistant/src/repo/telemetry.ts",
         "termhub/web/meterModel.js"
@@ -1124,50 +1069,24 @@
       "id": "dispatcher",
       "layer": "dashboard",
       "name": "Dispatcher",
-      "role": "Starts work: Do on a card (and pa do, the planner, accepted cards, the chat's start tools) opens ONE Claude Code agent through src/build (decision D30, replacing D28's factory route). The software factory stays in the tree, frozen, behind PA_BUILD=factory.",
+      "role": "Starts work: Do on a card (and pa do, the planner, accepted cards, the chat's start tools) opens ONE Claude Code agent through src/build (decision D30). The software factory it replaced was removed (D32).",
       "stacks": {
         "work": "live",
         "personal": "live"
       },
       "where": {
         "work": "In-process (pa do, the dashboard's Do, the chat's action tools)",
-        "personal": "In-process on k-911-x17. The factory is this machine's factory serve. The chat uses the same SDK engine as the work stack"
+        "personal": "In-process on k-911-x17. The chat uses the same SDK engine as the work stack"
       },
       "details": {
-        "Routes": "none to pick (D30): every dispatch is one Claude Code agent (build-agent). PA_BUILD=factory keeps the frozen factory path (src/dispatch/factory.ts) reachable; PA_DISPATCH_VIA, --via and --machine stay gone.",
-        "Card dispatch settings": "src/build/index.ts. GET /api/commitments/:id/build-settings answers {card, settings: {model, costCapUsd, wallCapMin}, overrides, options: {models: [haiku, sonnet, opus, fable], defaults}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as build.card.<id>. Defaults: sonnet, PA_BUILD_COST_CAP_USD ($5), PA_BUILD_WALL_CAP_MIN (120). Job kind, runtime, end state, review and the factory caps are gone from this path (src/dispatch/settings.ts is the frozen factory's).",
-        "Plan mode": "Frozen (D30): a read-only factory plan job (JOBS-API v1.8): on claude_session Claude Code runs with --permission-mode plan instead of --dangerously-skip-permissions, and the factory saves its plan as the job's report",
+        "Routes": "none to pick (D30): every dispatch is one Claude Code agent (build-agent); PA_DISPATCH_VIA, --via and --machine stay gone, and so do the factory flags of `pa do` (--delivery, --pipeline, --runtime, --kind, --done, --app) and PA_BUILD=factory",
+        "Card dispatch settings": "src/build/index.ts. GET /api/commitments/:id/build-settings answers {card, settings: {model, costCapUsd, wallCapMin}, overrides, options: {models: [haiku, sonnet, opus, fable], defaults}}; POST the same path with {field: value | null} stores the card's overrides (null clears) in the setting table as build.card.<id>. Defaults: sonnet, PA_BUILD_COST_CAP_USD ($5), PA_BUILD_WALL_CAP_MIN (120). Job kind, runtime, end state, review and the factory caps are gone.",
         "Claude session (legacy)": "startSession: a Claude Code session in its own worktree via termhub POST /api/sessions. No production caller since D28; kept only while the land/drop/remote tests seed runs through it (docs/native/PLAN.md 8.6.3). If called it logs a warning and records an llm_spend row of unknown cost (purpose dispatch-session-unmetered)",
-        "Unmetered starts": "the only agent session the PA still opens outside the factory is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
-        "Factory job": "Frozen (D30): factory serve first (POST 127.0.0.1:7330/api/cli, header X-Factory: 1) when PA_FACTORY_SERVE_URL answers; otherwise `uv run factory job submit --json ...` on PA_FACTORY_MACHINE through termhub's POST /api/exec, or child_process when the machine is empty, local or this host (PYTHONUTF8=1 on Windows). Idempotent on --source pa --external-id",
-        "Start path (8.2.2)": "Frozen (D30): the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow, and serve: the ms factory serve's /api/cli reply already carried, when the submit went through it)",
-        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback. A continuation (factory_continue) gets no delivery instructions: it commits onto the PR or branch and opens no PR, and the PR's review threads are left to the factory, which appends them at submit",
-        "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
-        "Factory defaults": "Frozen (D30): PA_FACTORY_RUNTIME claude_session, PA_DISPATCH_MODE full, PA_FACTORY_PIPELINE solo; set PA_FACTORY_RUNTIME=api to put every job not given a runtime on the API models (a plan job stays claude_session unless picked)",
-        "Which factory": "Frozen (D30): PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
-        "Factory pacing": "Frozen (D30): the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass goes through factory serve when it is up (warm, well under a second) and falls back to `uv run factory` (about 5 s of Python start-up) when nothing is listening. The sub-second path for a transition is the factory's push (POST /api/factory/events)"
+        "Unmetered starts": "the only agent session the PA still opens outside Build is the dashboard's resume of an existing Claude session (cards.openSession, claude --resume): logged and recorded in llm_spend with cost unknown (purpose session-resume-unmetered, backend claude_session_unmetered). The PA's own chat (Talk) is the chat surface, not dispatched work",
+        "Offers": "src/dispatch/offer.ts: a card's \"Start an agent\" offer freezes the task, the repo (checked when the card is made, trusted at accept) and the model into the proposal; accepting it runs dispatch.start with exactly that. Cards from before D32 carry an end state, an app, a pipeline, models and done-criteria: they are accepted and Build ignores the extras",
+        "Delivery levels (legacy sessions)": "none < branch < draft_pr < pr < auto_merge < push_to_main (src/dispatch/deliveryCore.ts, `pa delivery`): kept for the older Claude-session runs that pa land / pa review still manage; a Build agent opens a draft PR and never merges"
       },
       "env": [
-        {
-          "name": "PA_FACTORY_RUNTIME",
-          "default": "claude_session"
-        },
-        {
-          "name": "PA_DISPATCH_MODE",
-          "default": "full"
-        },
-        {
-          "name": "PA_FACTORY_PIPELINE",
-          "default": "solo"
-        },
-        {
-          "name": "PA_FACTORY_POLL_SECONDS",
-          "default": "120"
-        },
-        {
-          "name": "PA_FACTORY_ACTIVE_POLL_SECONDS",
-          "default": "5"
-        },
         {
           "name": "PA_DELIVERY_DEFAULT",
           "default": "draft_pr"
@@ -1175,38 +1094,21 @@
         {
           "name": "PA_CLAUDE_COMMAND",
           "default": "claude --dangerously-skip-permissions"
-        },
-        {
-          "name": "PA_FACTORY_MACHINE",
-          "default": ""
-        },
-        {
-          "name": "PA_FACTORY_PATH",
-          "default": ""
-        },
-        {
-          "name": "PA_FACTORY_SERVE_URL",
-          "default": "http://127.0.0.1:7330"
         }
       ],
       "code": [
         "personal-assistant/src/dispatch/index.ts",
-        "personal-assistant/src/dispatch/settings.ts",
-        "personal-assistant/src/dispatch/route.ts",
-        "personal-assistant/src/dispatch/factory.ts",
-        "personal-assistant/src/dispatch/factoryCore.ts",
         "personal-assistant/src/dispatch/exec.ts",
         "personal-assistant/src/dispatch/termhub.ts",
-        "personal-assistant/src/dispatch/compose.ts",
         "personal-assistant/src/dispatch/deliveryCore.ts",
-        "personal-assistant/src/dispatch/factoryPace.ts"
+        "personal-assistant/src/dispatch/offer.ts"
       ]
     },
     {
       "id": "e2e",
       "layer": "dashboard",
       "name": "Golden-path check (pa e2e)",
-      "role": "Plan E4: one command runs the golden path headless against the live stack (a dummy card to a draft PR on xvanov/dev-tools), times each hop, checks that every view links the same card, run, job, steps, sessions and PR, and cleans up.",
+      "role": "Plan 8.2: `pa e2e <workflow>` runs each workflow of the Map (examples below) headless against the live stack, times each hop against its acceptance block, checks the views, and writes the evidence. (The factory's golden path, a dummy card to a draft PR through a factory job, was removed with the factory, D32.)",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1216,14 +1118,13 @@
         "personal": "the same command, run on the personal machine"
       },
       "details": {
-        "Path": "card by commitments/request.js (as typed on the board), then the chat's factory_start tool (factory_continue with --branch; factory_resume with --resume), runtime claude_session by default or --runtime api --model m; delivery draft_pr. Each action tool goes through the user's approval path headless: the policy is asked about the call as the chat's hook asks it (it must answer ask), the prompt is answered on the policy channel e2e (actor pa-e2e, audited as an approve with subject <marker>:<tool>), then the call is audited on channel chat as the chat's MCP server audits it; the run checks both audit_log rows (view policy) and fails without them",
-        "Hops": "card -> job started -> first session output -> PR opened -> CI done (+ step killed, job resumed with --resume), timed off `factory job status` polls (--poll, 10 s; every 1 s for up to 2 min while a start is due), woken early by run/factory events on the dashboard's GET /api/events (0.4); job started is the factory's own stamp where it has one (a research job's started_at, JOBS-API v1.5, else the first runs[].started_at), not the poll; each hop has a timeout (--timeout hop=seconds)",
-        "Checks": "Plan GET /api/state and /api/commitments/:id (card.chain), Build GET /api/factory (paRun, stories, runs), Run termhub GET /api/sessions (links, alive or scrollback), MCP card and factory_job tools, GitHub `gh pr view` (head = story branch, draft) as the repo owner via GH_TOKEN from `gh auth token --user`; E2: an API step has a session whose scrollback shows a model turn",
-        "Cleanup": "unless --keep: PR closed with --delete-branch, job cancelled if live, card dropped through the ledger, step and follow sessions killed (golden path, `pa e2e research` and `pa e2e review-fix`, which never closes its PR); `pa e2e --sweep` finds leftovers by the e2e-<uuid> marker on the card and the stored run, run_step and run_pr links, and cleans only cards no run may still own (a live job the factory has not updated for 90 min, a finished job or a jobless card after 15 min), so parallel runs do not cancel each other; `--sweep --marker e2e-<uuid>` cleans that one run now",
-        "Dry run": "`pa e2e --dry-run`: database, factory configured and on this machine (D13), factory app for the repo and that something ticks it (JOBS-API v1.6 `ticked`), dashboard /healthz, /api/state, /api/factory, termhub /api/sessions, the chat tools, gh write access; creates nothing",
+        "Path": "the Build workflows start one Build agent through the chat's build_start tool, headless, on the user's approval path: the policy is asked about the call as the chat's hook asks it (it must answer ask), the prompt is answered on the policy channel e2e (actor pa-e2e, audited as an approve), then the call is audited on channel chat as the chat's MCP server audits it; the run checks both audit_log rows (view policy) and fails without them",
+        "Checks": "Plan GET /api/state and /api/commitments/:id, Build GET /api/build (run, state, messages), Run termhub GET /api/sessions (links, alive or scrollback), the MCP card and build_run tools, GitHub `gh pr view` (head = the run's branch, draft) as the repo owner via GH_TOKEN from `gh auth token --user`",
         "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link",
-        "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (a TTS'd question replayed as the talk page does it: /api/talk/warm, the utterance's length, the 96 ms VAD wait, /api/talk/endpoint with /api/talk/transcribe, /api/talk/turn, /api/talk/tts at the first piece while the turn streams; end of speech to the first audio byte. Not measured headless: the VAD frame and the browser starting playback), research, build-pr and build-continue-pr (walked by hand on 2026-11-10 through POST /api/build/runs, D30; the pa e2e runners under these ids are still the frozen factory's driver and are not Build-aware yet), teams-ask (`--test-chat <id>`, a chat the store holds where only you wrote and only you are in it, your self chat by default; checked by the dry run too. It sends nothing: it prints a dated ask of yourself with a 46-character marker for you to type there, then follows that message: Teams' arrival stamp to raw.storedAt, the owed_by_me card's extracted_at, the card in GET /api/state after its board event, the new_ask notification's toasted_at; checks person, due and link; drops the card. `--timeout teams=600 ask=600`). `--on <machine>` runs any workflow there as the golden path does and brings its summary back (`--report`)",
-        "Evidence": "<PA data dir>/e2e/<stamp>-<workflow>[-dry]/: summary.json (hops scored against the 8.1 acceptance block, cost against GET /api/workflow-limits' effective ceiling, links, checks, the rubric left for the 8.3 reviewer), transcripts/ (session scrollback, the fast-lane turn), report.md, screenshots/ of each view the acceptance block names except Ask, with the page's text beside each PNG, by a headless Chromium (PA_E2E_BROWSER, else Playwright's installed Chromium, Edge or Chrome; skipped with a note when none) driven over the DevTools protocol: shot once the page's own loaded signal holds (Plan/Build #updated past loading, Run termhub's open session) and the network is quiet, or after 20 s marked ready: false. Ask is a tool check in summary.json views.ask (method tool, the tool, an excerpt of its answer): chat for whats-on, factory_job for research and deepseek-pr, factory_continue for review-fix; headless /talk stays on Tap once to enable Jarvis, so it is not shot. teams-ask lists no ask view; the plain --screenshot (at load) is the fallback. Every shot ends by 60 s (each DevTools call has a deadline; at the shot's the browser is killed and the fallback skipped); a view not shot is a failed `evidence` check, never a skipped summary, and a run held on a promise nothing settles still writes summary.json and its --report at exit, non-zero"
+        "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (a TTS'd question replayed as the talk page does it: /api/talk/warm, the utterance's length, the 96 ms VAD wait, /api/talk/endpoint with /api/talk/transcribe, /api/talk/turn, /api/talk/tts at the first piece while the turn streams; end of speech to the first audio byte. Not measured headless: the VAD frame and the browser starting playback), research, build-pr and build-continue-pr (src/e2e/buildRunners.ts: one Build agent through the chat's build_start tool, D30), teams-ask (`--test-chat <id>`, a chat the store holds where only you wrote and only you are in it, your self chat by default; checked by the dry run too. It sends nothing: it prints a dated ask of yourself with a 46-character marker for you to type there, then follows that message: Teams' arrival stamp to raw.storedAt, the owed_by_me card's extracted_at, the card in GET /api/state after its board event, the new_ask notification's toasted_at; checks person, due and link; drops the card. `--timeout teams=600 ask=600`). `--on <machine>` runs any workflow there and brings its summary back (`--report`)",
+        "Evidence": "<PA data dir>/e2e/<stamp>-<workflow>[-dry]/: summary.json (hops scored against the 8.1 acceptance block, cost against GET /api/workflow-limits' effective ceiling, links, checks, the rubric left for the 8.3 reviewer), transcripts/ (session scrollback, the fast-lane turn), report.md, screenshots/ of each view the acceptance block names except Ask, with the page's text beside each PNG, by a headless Chromium (PA_E2E_BROWSER, else Playwright's installed Chromium, Edge or Chrome; skipped with a note when none) driven over the DevTools protocol: shot once the page's own loaded signal holds (Plan/Build #updated past loading, Run termhub's open session) and the network is quiet, or after 20 s marked ready: false. Ask is a tool check in summary.json views.ask (method tool, the tool, an excerpt of its answer): chat for whats-on, build_run for the Build workflows; headless /talk stays on Tap once to enable Jarvis, so it is not shot. teams-ask lists no ask view; the plain --screenshot (at load) is the fallback. Every shot ends by 60 s (each DevTools call has a deadline; at the shot's the browser is killed and the fallback skipped); a view not shot is a failed `evidence` check, never a skipped summary, and a run held on a promise nothing settles still writes summary.json and its --report at exit, non-zero",
+        "Cleanup": "unless --keep: the PR is closed with --delete-branch, the Build run stopped if live, the card dropped through the ledger, the session killed",
+        "Dry run": "`pa e2e <workflow> --dry-run`: the acceptance block, GET /api/workflow-limits, the chat tool and its policy answer, GET /api/build, that claude is logged in, gh write access for build-pr; creates nothing"
       },
       "env": [
         {
@@ -1262,10 +1163,10 @@
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
         "Embeddings (audit 2026-11-07)": "text-embedding-3-small, 1536 dims, embed once and never re-embed (plan D5). Embedded: message and document chunks (chunk), memory claims (claim), memory pages (memory_page), commitment text for semantic dedupe (commitment_vector). Never embedded: identifiers, statuses, board state, numbers, dates; PR and ticket refs dedupe by key (commitment anchors), not by vector. No call site embeds changing data or exact keys; stored vectors are 41.5k (31.1k chunks, 10.0k claims, 105 pages, 242 commitments) and re-embed only when their own text changes (a changed item body, a regenerated page) or when CONTEXT_VERSION is bumped, which is a decision, not a cleanup",
         "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
-        "Secrets": "never here: the OS keychain (Windows Credential Manager resource dev-tools/<stack>, Linux Secret Service service=dev-tools stack=<stack>; stack work on Windows, personal on Linux, PA_STACK overrides; entries from before the label under personal-assistant are still read) or the gitignored .env. `pa secrets migrate --from-env` (dry run by default, names only) moves the values the code reads back (config.secret(); the Anthropic and Azure keys through lazy config getters) and empties their .env lines. The software-factory reads its provider keys from the same keychain when .env leaves them unset (factory/keychain.py)",
-        "Backups": "every 24 h, 14 kept (PA_BACKUP_DIR): pg_dump plus the factory state dir (logs and locks left out) plus a manifest of table row counts, in one tar encrypted with AES-256-GCM (src/backupCrypto.ts, pa-<stamp>.pabak). The key is the PA_BACKUP_KEY secret, generated into the OS keychain on the first backup (pa backup key init / export --to <file>); never beside the backups. A machine with no keychain still writes a plain .dump and says so. Restore drill: `pa backup restore --to <scratch db>` restores into a throwaway database, compares row counts with the manifest and drops it (needs CREATEDB and the vector/pg_trgm extensions). Since the 3.5 cutover both stacks back up their SQLite file instead (sqlite-store); its drill passed on both on 2026-11-08",
+        "Secrets": "never here: the OS keychain (Windows Credential Manager resource dev-tools/<stack>, Linux Secret Service service=dev-tools stack=<stack>; stack work on Windows, personal on Linux, PA_STACK overrides; entries from before the label under personal-assistant are still read) or the gitignored .env. `pa secrets migrate --from-env` (dry run by default, names only) moves the values the code reads back (config.secret(); the Anthropic and Azure keys through lazy config getters) and empties their .env lines.",
+        "Backups": "every 24 h, 14 kept (PA_BACKUP_DIR): pg_dump plus a manifest of table row counts, in one tar encrypted with AES-256-GCM (src/backupCrypto.ts, pa-<stamp>.pabak). The key is the PA_BACKUP_KEY secret, generated into the OS keychain on the first backup (pa backup key init / export --to <file>); never beside the backups. A machine with no keychain still writes a plain .dump and says so. Restore drill: `pa backup restore --to <scratch db>` restores into a throwaway database, compares row counts with the manifest and drops it (needs CREATEDB and the vector/pg_trgm extensions). Since the 3.5 cutover both stacks back up their SQLite file instead (sqlite-store); its drill passed on both on 2026-11-08",
         "Signed self-update": "deploy.js --pull fetches, checks `git log %G?` on the fetched range against a trusted-signers file outside the repo (PA_ALLOWED_SIGNERS, default <data dir>/allowed_signers), then merges; with --from the same check refuses the roll. Until that file exists an unsigned commit only warns (--require-signed / PA_REQUIRE_SIGNED=1 refuse regardless). docs/native/SIGNED-UPDATES.md says how to enable signing",
-        "Id chain": "plan E1: card -> run -> job -> step -> session -> PR as stored ids. run (commitment_id, factory_job_id, termhub_session_id, mr_url, external_id) plus run_pr (every PR of a run: number, state, CI) and run_step (every factory step: job, story, persona, termhub session id, machine, URL), written by the worker factory pass from job status (sql/033); read by the board (card.chain), the card detail, Build and the card / factory_job / sessions MCP tools"
+        "Id chain": "plan E1: card -> run -> session -> PR as stored ids. run (commitment_id, termhub_session_id, mr_url, external_id) for the older Claude-session runs, and build_run for Build (sql-sqlite, src/repo/buildRuns.ts); run_pr, run_step and the run.factory_* columns (sql/033) are no longer written (the software factory was removed, D32); read by the board (card.chain), the card detail, Build and the card / sessions MCP tools"
       },
       "tables": [
         "attention_weight",
@@ -1524,8 +1425,7 @@
       "details": {
         "Hosts": [
           "the PA chat (Jarvis)",
-          "dispatched Claude Code sessions",
-          "on the factory machine: claude_session runs"
+          "dispatched Claude Code sessions"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
         "Restart": "restarting sessiond adopts the terminals ptyd still has (same id). It does not restart ptyd. Do it on purpose. A sessiond process from before the node-pty retirement that is not yet on ptyd ends its terminals once",
@@ -1644,7 +1544,7 @@
       "id": "claude-sub",
       "layer": "outside",
       "name": "Claude Code (subscription)",
-      "role": "The claude CLI on a claude.ai login: the PA chat, dispatched sessions, the connector relay and claude_session factory runs.",
+      "role": "The claude CLI on a claude.ai login: the PA chat, Build agents, the connector relay and `claude -p` passes.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1652,9 +1552,8 @@
       "details": {
         "Used by": [
           "Jarvis (interactive session)",
-          "dispatched sessions (pa do / session_start)",
-          "`claude -p` passes: connector relay, and bare-model passes when no ANTHROPIC_API_KEY",
-          "factory claude_session runs (API-key variables removed)"
+          "Build agents (pa do / session_start / build_start)",
+          "`claude -p` passes: connector relay, and bare-model passes when no ANTHROPIC_API_KEY"
         ],
         "PA login": "PA_CLAUDE_CONFIG_DIR gives `claude -p` children the PA's own login; dispatched sessions never get it",
         "Billing": "subscription; usage limits apply and are not visible in advance"
@@ -1668,7 +1567,7 @@
       "id": "azure",
       "layer": "outside",
       "name": "Azure OpenAI / Foundry",
-      "role": "Metered models: the PA's azure/pa deployment (the fast lane's fallback and the block-dedupe default), embeddings and rerank. The frozen factory's azure_routes (D30) are the only Build use left, and Build does not use them.",
+      "role": "Metered models: the PA's azure/pa deployment (the fast lane's fallback and the block-dedupe default), embeddings and rerank. Build does not use it.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1679,8 +1578,7 @@
           "embeddings text-embedding-3-small (1536 dims)",
           "rerank cohere-rerank-v4-fast"
         ],
-        "Factory": "azure_routes in routes.yaml (deepseek-v4-pro, Kimi-K2.7-Code, DeepSeek-V4-Flash)",
-        "Billing": "metered; PA spend in llm_spend, factory spend in cost_usd",
+        "Billing": "metered; PA spend in llm_spend",
         "Embedding spend": "every embed call records tokens (from the endpoint usage) and cost at PA_EMBED_USD_PER_MTOK ($0.02 per 1M tokens) in llm_spend under purposes embed-chunk, embed-claim, embed-page, embed-query, dedupe-embed, embed-probe; `pa spend` and the Meter show it. All stored vectors cost about $0.18 in total (35.5M characters at ~4 per token); a cached query costs nothing"
       },
       "env": [
@@ -1748,7 +1646,7 @@
       "id": "github",
       "layer": "outside",
       "name": "GitHub",
-      "role": "Source of work items (PA) and where the factory pushes branches, opens PRs and watches CI.",
+      "role": "Source of work items (PA); Build agents push their branches and open draft PRs through the signed-in gh CLI.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -1758,8 +1656,7 @@
         "personal": "the personal account (xvanov)"
       },
       "details": {
-        "PA": "gh CLI ingest; GitHub puts work on you only where GitHub names you (githubGate)",
-        "Factory": "push, PR, CI checks, auto-merge per delivery level"
+        "PA": "gh CLI ingest; GitHub puts work on you only where GitHub names you (githubGate)"
       },
       "code": [
         "personal-assistant/src/ingest/github.ts",
@@ -1886,7 +1783,7 @@
     {
       "from": "mcp",
       "to": "dispatcher",
-      "label": "factory_* / session_start"
+      "label": "session_start / build_start"
     },
     {
       "from": "notify",
@@ -2106,7 +2003,7 @@
         },
         {
           "c": "dispatcher",
-          "t": "Build start (src/build/index.ts): a fresh git worktree on a new branch jarvis/<run>-<slug>, the card's own words plus the one agent prompt (src/build/agent-prompt.md) as claude's opening prompt, a build_run row; a fetch only when FETCH_HEAD is over 2 min old. The POST answers in about 3-5 s with a timings breakdown. An ended run's worktree is removed by the heartbeat (session gone, or 15 min after the end). Nothing metered, no factory (D30)."
+          "t": "Build start (src/build/index.ts): a fresh git worktree on a new branch jarvis/<run>-<slug>, the card's own words plus the one agent prompt (src/build/agent-prompt.md) as claude's opening prompt, a build_run row; a fetch only when FETCH_HEAD is over 2 min old. The POST answers in about 3-5 s with a timings breakdown. An ended run's worktree is removed by the heartbeat (session gone, or 15 min after the end). Nothing metered (D30)."
         },
         {
           "c": "build-agent",

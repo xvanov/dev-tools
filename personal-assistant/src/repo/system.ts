@@ -27,7 +27,7 @@ function create(db: Db) {
 
     /**
      * Makes `id` the install id: a restored store is a new install (sql/026),
-     * so the factory idempotency keys never collide with a live twin.
+     * so run idempotency keys never collide with a live twin.
      * @param {string} id  a uuid
      */
     async replaceInstallId(id: number | string) {
@@ -117,7 +117,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/dispatch/factory.ts
+    // --- the install id
 
     /** Makes `id` the install id when the store has none (a no-op otherwise). */
     async insertInstallIfNone(id: number | string) {

@@ -18,7 +18,7 @@
 //      waiting, idleReason blocked);
 //   4. its screen, read now, really is Claude Code's permission prompt for
 //      that tool: "Do you want to proceed?" with no input box after it, the
-//      server and tool named above it ("pa-chat - factory_start (MCP)", as
+//      server and tool named above it ("pa-chat - session_start (MCP)", as
 //      Claude Code's userFacingName writes an MCP tool), and — for Approve —
 //      the cursor on "1. Yes";
 // then one keystroke: Enter on "1. Yes" (once — never option 2, "don't ask
@@ -47,7 +47,7 @@ const QUESTION = 'Doyouwanttoproceed?';
 // question, the prompt was already answered.
 const READY = /\?forshortcuts|shift\+tabtocycle|bypasspermissions/gi;
 
-/** Pure. The chat action a tool_use name is, or null: `mcp__pa-chat__factory_start` → factory_start. */
+/** Pure. The chat action a tool_use name is, or null: `mcp__pa-chat__session_start` → session_start. */
 function chatAction(name: string) {
   const m = /^mcp__([A-Za-z0-9_-]+)__([A-Za-z0-9_]+)$/.exec(String(name || ''));
   if (!m || m[1] !== SERVER) return null;
@@ -72,7 +72,7 @@ function readPrompt(text: string, tool: any) {
   const after = s.slice(q + QUESTION.length);
   if (lastIndex(READY, after) >= 0) return { ok: false, reason: 'the prompt on screen was already answered' };
   if (!/Yes/.test(after) || !/No/.test(after)) return { ok: false, reason: 'the prompt on screen does not offer Yes and No' };
-  // What it asks about: the tool line above the question, "pa-chat - factory_start(…) (MCP)".
+  // What it asks about: the tool line above the question, "pa-chat - session_start(…) (MCP)".
   const before = s.slice(Math.max(0, q - 1500), q);
   const head = before.lastIndexOf(`${SERVER}-${tool}(`);
   if (head < 0) return { ok: false, reason: `the prompt on screen is not for ${SERVER} ${tool}` };

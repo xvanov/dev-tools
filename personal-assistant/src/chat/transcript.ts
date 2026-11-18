@@ -50,23 +50,8 @@ function base(p: Json) {
 }
 
 /**
- * A short, present-tense line for a tool call, for a UI that wants to show the
- * assistant is working ("searching your history: renewal…"). Never the tool's
- * full input: it can be long, and it can quote other people's messages.
- */
-const DELIVERY_SAID: Json = {
-  none: 'committing without pushing',
-  branch: 'pushing a branch',
-  draft_pr: 'opening a draft PR',
-  pr: 'opening a PR for review',
-  auto_merge: 'merging it once checks pass',
-  push_to_main: 'pushing straight to main',
-};
-
-/**
  * The question Jarvis asks out loud before one of the chat's actions runs
- * ("Start a factory job for card 412 on your subscription, opening a PR for
- * review. Shall I?"), or null for any other tool. From the tool's structured
+ * ("Start a Claude Code agent on dev-tools to fix the login test. Shall I?"), or null for any other tool. From the tool's structured
  * input only, shortened: the Talk page speaks it and the user's spoken yes or
  * no answers the permission prompt (src/chat/permission.js).
  */
@@ -74,30 +59,9 @@ function askTool(name: string, input: Json = {}) {
   const m = /^mcp__pa-chat__([a-z_]+)$/.exec(String(name || ''));
   if (!m) return null;
   const i = input && typeof input === 'object' ? input : {};
-  const job = (j: any) => String(j || 'that job').replace(':', ' ');
-  const how = () => {
-    const parts = [];
-    parts.push(i.runtime === 'api' ? `on the API${i.model ? ` with ${shorten(i.model, 40)}` : ''}` : 'on your subscription');
-    if (DELIVERY_SAID[i.delivery]) parts.push(DELIVERY_SAID[i.delivery]);
-    return parts.join(', ');
-  };
   let q;
   switch (m[1]) {
-    case 'factory_start': {
-      const kind = i.kind && i.kind !== 'code' ? `${i.kind} ` : '';
-      const what = i.card ? `card ${shorten(i.card, 12)}` : shorten(i.title || i.ask || 'this', 70);
-      q = `Start a factory ${kind}job for ${what} ${how()}`;
-      break;
-    }
-    case 'factory_continue': {
-      const on = i.pr ? `PR ${Number(i.pr) || ''}` : `branch ${shorten(i.branch, 40)}`;
-      q = `Continue ${on} on ${shorten(i.repo || 'the repo', 40)} in the factory ${how()}`;
-      break;
-    }
-    case 'factory_resume': q = `Resume factory job ${job(i.job)}`; break;
-    case 'factory_cancel': q = `Cancel factory job ${job(i.job)}`; break;
-    case 'factory_approve': q = `Approve the direction factory job ${job(i.job)} is waiting on`; break;
-    case 'session_start': q = `Start a Claude session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}${i.mode === 'plan' ? ', read only,' : ''} to ${shorten(i.prompt, 70)}`; break;
+    case 'session_start': q = `Start a Claude Code agent${i.repo ? ` on ${shorten(i.repo, 40)}` : ''} to ${shorten(i.prompt, 70)}`; break;
     case 'card_plan_apply': {
       const skip = Array.isArray(i.skip) ? i.skip.length : 0;
       q = `Apply card plan ${shorten(i.plan, 12)}${skip ? `, leaving out ${skip} item${skip === 1 ? '' : 's'}` : ''}, in one go (see the plan on the dashboard)`;
@@ -118,6 +82,11 @@ function askTool(name: string, input: Json = {}) {
   return `${q.replace(/\s+/g, ' ').trim()}. Shall I?`;
 }
 
+/**
+ * A short, present-tense line for a tool call, for a UI that wants to show the
+ * assistant is working ("searching your history: renewal…"). Never the tool's
+ * full input: it can be long, and it can quote other people's messages.
+ */
 function describeTool(name: string, input: Json = {}) {
   const n = String(name || '');
   const i = input && typeof input === 'object' ? input : {};
@@ -135,19 +104,8 @@ function describeTool(name: string, input: Json = {}) {
       case 'get_thread': return 'reading a thread…';
       case 'board': return 'reading your board…';
       case 'card': return `reading card ${shorten(i.id, 20)}…`;
-      case 'factory_jobs': return 'checking factory jobs…';
-      case 'factory_job': return `checking factory job ${shorten(i.job, 40)}…`;
       case 'sessions': return 'listing sessions…';
       // The actions: what the permission prompt is for, named (src/chat/feed.js waitingText).
-      case 'factory_start':
-      case 'factory_continue': {
-        const on = i.branch ? ` on branch ${shorten(i.branch, 40)}` : i.pr ? ` on PR #${Number(i.pr) || '?'}` : '';
-        const what = i.title || (i.card ? `card ${i.card}` : i.ask) || 'a job';
-        return `starting a factory ${i.kind && i.kind !== 'code' ? `${i.kind} ` : ''}job${on}: ${shorten(what, 60)} (${i.runtime || 'claude_session'}${i.delivery ? `, ${i.delivery}` : ''})…`;
-      }
-      case 'factory_resume': return `resuming factory job ${shorten(i.job, 40)}…`;
-      case 'factory_cancel': return `cancelling factory job ${shorten(i.job, 40)}…`;
-      case 'factory_approve': return `approving factory job ${shorten(i.job, 40)}…`;
       case 'card_plan_apply': return `applying card plan ${shorten(i.plan, 12)}…`;
       case 'card_plan_propose': return `writing up ${Array.isArray(i.items) ? i.items.length : ''} card changes…`;
       case 'card_edit': return `editing card ${shorten(i.card, 12)}…`;

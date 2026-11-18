@@ -91,7 +91,7 @@ module.exports = {
     assert.deepStrictEqual((await repos.system.setting(key)).value, { day: '2026-11-08' });
   },
 
-  // --- for dispatch/factory.ts (chunk E)
+  // --- the install id
 
   'insertInstallIfNone: makes the id the install only when none exists': async ({ repos, db, assert }) => {
     await db.query('delete from pa_install');

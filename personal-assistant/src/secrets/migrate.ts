@@ -50,22 +50,6 @@ function parseLine(raw: string) {
   return { name: m[1] as string, value: v };
 }
 
-/** The factory's own key names: what its .env.example declares and the factory reads (software-factory/factory/keychain.py). */
-function factoryReadable(exampleFile: string) {
-  let text = '';
-  try {
-    text = fs.readFileSync(exampleFile, 'utf8');
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const p = parseLine(raw);
-    if (p && NAME_RE.test(p.name) && LOOKS_SECRET.test(p.name)) out.push(p.name);
-  }
-  return out;
-}
-
 /** Blanks `NAME=` lines in place (other lines, comments and order kept); the file is written whole, then renamed. */
 function blankEnvLines(file: string, names: string[]) {
   const text = fs.readFileSync(file, 'utf8');
@@ -178,12 +162,10 @@ function migrate(sources: Source[], { vault, apply = false, onStored = () => {} 
 
 /** The .env files `pa secrets migrate` looks at by default, with what each may move. */
 function defaultSources({ toolDir, repoRoot }: { toolDir?: unknown; repoRoot?: unknown }) {
-  const factoryDir = path.join(repoRoot, 'software-factory');
   return [
     { file: path.join(toolDir, '.env'), readable: PA_READABLE },
     { file: path.join(repoRoot, '.env'), readable: PA_READABLE },
-    { file: path.join(factoryDir, '.env'), readable: factoryReadable(path.join(factoryDir, '.env.example')) },
   ];
 }
 
-module.exports = { PA_READABLE, plan, migrate, defaultSources, factoryReadable, blankEnvLines, parseLine };
+module.exports = { PA_READABLE, plan, migrate, defaultSources, blankEnvLines, parseLine };

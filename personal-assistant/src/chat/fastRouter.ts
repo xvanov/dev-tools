@@ -60,7 +60,7 @@ Examples:
 "write back to the vendor that we agree" -> C
 "get the slides over to my manager" -> C
 "put a reminder in for Friday" -> C
-"have the factory open a PR for it" -> C
+"have an agent open a PR for it" -> C
 "I want the meeting pushed to Thursday" -> C`;
 
 const clip = (s: any, n: number) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');

@@ -2,29 +2,22 @@
 
 // The Claude subscription credit pool (plan 7.5; Risks: billing changed 15 Jun 2026).
 //
-// Headless Claude Code (`claude -p` calls and factory claude_session runs) draws
-// from a credit pool of its own, apart from the interactive allowance. Both
-// report what a run would have cost at API prices (`total_cost_usd` on the
-// stream-json result record), and both leave an llm_spend row: backend `cli`
-// for the PA's own calls, `claude_session` for factory runs (posted to
-// POST /api/telemetry by the factory). The pool's usage is the sum of those
-// rows since the pool last reset.
+// Headless Claude Code (`claude -p` calls) draws from a credit pool of its own,
+// apart from the interactive allowance. Each call reports what it would have cost
+// at API prices (`total_cost_usd` on the stream-json result record) and leaves an
+// llm_spend row (backend `cli`, or `claude_session` from the removed factory, D32,
+// which old rows still carry). The pool's usage is the sum of those rows since the
+// pool last reset.
 //
 // PA_CLAUDE_POOL_USD is the pool in API-equivalent dollars; unset = not tracked,
-// and nothing here ever refuses or reroutes. A spent pool is a runtime limit
-// that lasts until the pool refills, so the one runtime-failover policy
-// applies (src/dispatch/failover.ts; PA_RUNTIME_FAILOVER, or its older name
-// PA_CLAUDE_POOL_FALLBACK_API=1; default off): on, a claude_session job is
-// dispatched on the `api` runtime when the wait for the refill is over the
-// failover threshold, and the operator is notified; otherwise it keeps running
-// and the Meter page says it is over.
+// and nothing here ever refuses or reroutes: a spent pool shows on the Meter page.
 //
 // The arithmetic is pure and tested (test/claudePool.test.js). The rest is one
-// query, cached briefly: dispatch may ask for every job.
+// query, cached briefly.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-type Pool = { tracked: boolean; monthlyUsd: number | null; usedUsd: number; remainingUsd: number | null; calls: number; exhausted: boolean; fallbackApi: boolean; since: string | null; resetsAt: string | null };
+type Pool = { tracked: boolean; monthlyUsd: number | null; usedUsd: number; remainingUsd: number | null; calls: number; exhausted: boolean; since: string | null; resetsAt: string | null };
 
 const { config } = require('./config.ts');
 const { logger } = require('./log.ts');
@@ -49,7 +42,7 @@ function periodEnd(now: Date = new Date(), resetDay: number = config.claudePool.
 }
 
 /** The pool's state from its size and what has been drawn. Pure. */
-function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt, fallbackApi = false }: { monthlyUsd?: number | null; usedUsd?: unknown; calls?: number; since?: Date | string | number | null; resetsAt?: Date | string | number | null; fallbackApi?: boolean }): Pool {
+function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt }: { monthlyUsd?: number | null; usedUsd?: unknown; calls?: number; since?: Date | string | number | null; resetsAt?: Date | string | number | null }): Pool {
   const tracked = typeof monthlyUsd === 'number' && Number.isFinite(monthlyUsd) && monthlyUsd > 0;
   const used = Number(usedUsd) || 0;
   const remainingUsd = tracked ? Math.max(0, (monthlyUsd as number) - used) : null;
@@ -60,26 +53,9 @@ function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt, fallbackApi 
     remainingUsd,
     calls: Number(calls) || 0,
     exhausted: tracked && used >= (monthlyUsd as number),
-    fallbackApi: Boolean(fallbackApi),
     since: since ? new Date(since).toISOString() : null,
     resetsAt: resetsAt ? new Date(resetsAt).toISOString() : null,
   };
-}
-
-/**
- * Which runtime a job asking for `requested` should get, given the pool. Pure:
- * the pool spent = claude_session limited until it refills, decided by the
- * shared failover policy (src/dispatch/failover.ts).
- */
-function decideRuntime(requested: string, pool: Pool | null | undefined, { now = new Date(), minWaitMin = 30 }: { now?: Date; minWaitMin?: number } = {}) {
-  if (requested !== 'claude_session' || !pool?.tracked || !pool.exhausted) {
-    return { runtime: requested, fellBack: false, reason: null };
-  }
-  const out = require('./dispatch/failover.ts').decide({
-    requested, limitedUntil: pool.resetsAt || 'unknown', now, enabled: pool.fallbackApi, minWaitMin,
-    why: `the Claude credit pool is spent ($${pool.usedUsd.toFixed(2)} of $${(pool.monthlyUsd ?? 0).toFixed(2)} since ${(pool.since ?? '').slice(0, 10)})`,
-  });
-  return { runtime: out.runtime, fellBack: out.fellBack, reason: out.fellBack ? out.reason : null };
 }
 
 let cache: { since: number; at: number; value: Pool } | null = null;
@@ -92,7 +68,7 @@ async function status({ now = new Date(), fresh = false }: { now?: Date; fresh?:
   const resetsAt = periodEnd(now, cfg.resetDay);
   let used = { usd: 0, calls: 0 };
   if (cfg.monthlyUsd) used = await repoSpend().claudePoolSince(since);
-  const value = compute({ monthlyUsd: cfg.monthlyUsd, usedUsd: used.usd, calls: used.calls, since, resetsAt, fallbackApi: cfg.fallbackApi });
+  const value = compute({ monthlyUsd: cfg.monthlyUsd, usedUsd: used.usd, calls: used.calls, since, resetsAt });
   cache = { since: since.getTime(), at: Date.now(), value };
   return value;
 }
@@ -102,29 +78,4 @@ function invalidate() {
   cache = null;
 }
 
-/**
- * The runtime a job should use. Fails open: when the pool cannot be read, the
- * requested runtime stands (a broken ledger must not silently move work onto
- * metered billing).
- */
-async function route(requested: string) {
-  if (requested !== 'claude_session' || !config.claudePool.fallbackApi || !config.claudePool.monthlyUsd) {
-    return { runtime: requested, fellBack: false, reason: null };
-  }
-  try {
-    const out = decideRuntime(requested, await status(), { minWaitMin: require('./dispatch/failover.ts').policy().minWaitMin });
-    if (out.fellBack) {
-      log.warn('claude_session job rerouted to the api runtime', { reason: out.reason });
-      // Always said out loud (JOBS-API v1.9 failover policy).
-      require('./notify')
-        .notify({ kind: 'info', title: 'Factory job moved to the api runtime', body: out.reason, dedupeKey: `pool-failover:${new Date().toISOString().slice(0, 13)}` })
-        .catch((err: Error) => log.warn('failover notice not sent', { message: err.message }));
-    }
-    return out;
-  } catch (err) {
-    log.warn('claude pool unknown, keeping the requested runtime', { message: (err as Error).message });
-    return { runtime: requested, fellBack: false, reason: null };
-  }
-}
-
-module.exports = { periodStart, periodEnd, compute, decideRuntime, status, invalidate, route };
+module.exports = { periodStart, periodEnd, compute, status, invalidate };

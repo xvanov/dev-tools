@@ -120,7 +120,7 @@ for (const x of A.examples) {
   }
 }
 for (const [id, h] of Object.entries(A.health)) {
-  assert.ok(['self', 'postgres', 'http', 'tcp', 'machine'].includes(h.kind), `health ${id}: kind`);
+  assert.ok(['self', 'postgres', 'http', 'tcp'].includes(h.kind), `health ${id}: kind`);
   assert.ok(h.label, `health ${id}: label`);
 }
 // Every check is used, and a planned-everywhere component has none.
@@ -198,18 +198,13 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
     providers: { local: { baseUrl: 'http://127.0.0.1:11434/v1' } },
     audio: { transcribeHost: '127.0.0.1', transcribePort: 47821 },
     termhub: { url: 'http://127.0.0.1:7000' },
-    factory: { machine: 'lab', path: '/x', serveUrl: 'http://127.0.0.1:7330' },
     dispatch: { machines: { lab: { url: 'https://lab.example.ts.net:7443' } }, host: '127.0.0.1', port: 7300 },
     databaseUrl: 'postgres://pa:secretpw@127.0.0.1:5433/pa',
   };
   assert.deepStrictEqual(arch.resolveCheck(A.health.ollama, cfg), { kind: 'http', url: 'http://127.0.0.1:11434/api/tags' });
   assert.deepStrictEqual(arch.resolveCheck(A.health.voice, cfg), { kind: 'http', url: 'http://127.0.0.1:47830/health' });
   assert.deepStrictEqual(arch.resolveCheck(A.health.whisper, cfg), { kind: 'tcp', host: '127.0.0.1', port: 47821 });
-  assert.deepStrictEqual(arch.resolveCheck({ kind: 'machine' }, cfg), { kind: 'http', url: 'https://lab.example.ts.net:7443/api/health', remote: true });
-  assert.deepStrictEqual(arch.resolveCheck({ kind: 'machine' }, { ...cfg, factory: { machine: 'local', path: '/x' } }), { kind: 'self' });
   assert.ok(arch.resolveCheck({ kind: 'http', url: 'http://evil.example/' }, cfg).error, 'a non-loopback URL is refused');
-  assert.ok(arch.resolveCheck({ kind: 'machine' }, { ...cfg, factory: { machine: 'nope' } }).error, 'an unknown machine is refused');
-  assert.deepStrictEqual(arch.resolveCheck({ kind: 'machine' }, { ...cfg, factory: { machine: '', path: '/x' } }), { kind: 'self' });
   const live = arch.liveConfig({ ...cfg, chat: {}, fastLane: {}, anthropic: {} });
   assert.ok(!JSON.stringify(live).includes('secretpw'), 'liveConfig never shows the database password');
   assert.strictEqual(live.database, '127.0.0.1:5433/pa');

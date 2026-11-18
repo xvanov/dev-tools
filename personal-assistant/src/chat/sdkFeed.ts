@@ -102,7 +102,7 @@ function subscriptionEnv(base: any = process.env) {
   return env;
 }
 
-/** Pure. `mcp__pa-chat__factory_start` → {server: 'pa-chat', tool: 'factory_start'}; `Read` → {server: null, tool: 'Read'}. */
+/** Pure. `mcp__pa-chat__session_start` → {server: 'pa-chat', tool: 'session_start'}; `Read` → {server: null, tool: 'Read'}. */
 function splitTool(name: any) {
   const m = /^mcp__(.+?)__(.+)$/.exec(String(name || ''));
   return m ? { server: m[1], tool: m[2] } : { server: null, tool: String(name || '') };
@@ -252,7 +252,6 @@ function createSdkFeed({
   stateDir = () => require('./index.ts').homeDir(),
   model = () => require('../config.ts').config.chat.model,
   approvalTimeoutMs = () => require('../config.ts').config.chat.approvalTimeoutMs,
-  jobLookup = null,
   env = () => subscriptionEnv(),
   executable = () => claudeExecutable(),
   hub = () => require('../dispatch/termhub.ts'),
@@ -553,8 +552,7 @@ function createSdkFeed({
     const tool = P.chatAction(p.name) || splitTool(p.name).tool;
     try {
       const pol = policy();
-      let req = { tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, actor: 'pa-chat', subject: p.toolUseId, args: p.input };
-      if (typeof pol.withJobDelivery === 'function') req = await pol.withJobDelivery(req, jobLookup);
+      const req = { tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, actor: 'pa-chat', subject: p.toolUseId, args: p.input };
       const verdict = await pol.enforce(req);
       // A passkey tap (7.1) is spent on this one approval, before it is released.
       if (typeof pol.consumeStepUp === 'function') await pol.consumeStepUp(req, verdict);

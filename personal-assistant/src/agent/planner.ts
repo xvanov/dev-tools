@@ -58,9 +58,8 @@ async function act(p: Json) {
     });
     if (ok) {
       try {
-        // Always plan mode: a read-only factory plan job (JOBS-API v1.8; on
-        // claude_session Claude Code's own plan permission mode) — nothing the
-        // planner starts alone may change code.
+        // A research ask, read-only by intent: nothing the planner starts alone
+        // may change code (the agent prompt for a question says so).
         const run = await require('../dispatch').start({
           commitmentId: c.id, task: p.brief, mode: 'plan', routeReason: 'planner research run (read-only)',
         });
@@ -85,31 +84,22 @@ async function act(p: Json) {
   }
   if (p.action === 'offer_run') {
     // Everything the card shows is decided now and frozen into the proposal
-    // (src/dispatch/offer.ts): route, app, the end state, pipeline, models,
-    // done-criteria and the composed brief — accepting runs exactly that. A
-    // factory job changes code, so it is only ever offered, never started
-    // here. The end state is the repo's default (or PA_DELIVERY_DEFAULT): it
-    // is never inferred from the ask's text, which someone else wrote.
+    // (src/dispatch/offer.ts): the task, the repo and the model — accepting
+    // starts one Build agent with exactly that. It changes code, so it is only
+    // ever offered, never started here.
     const offer = require('../dispatch/offer.ts');
-    const useModel = await require('../budget.ts').allow('planner').catch(() => false);
     const o = {
       commitmentId: c.id,
-      kind: p.kind,
-      mode: plan.mode === 'plan' ? 'plan' : null,
-      useModel,
       why: p.brief,
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
     };
-    const row = await offer.propose(o).catch(async (err: any) => {
-      // A composition failure still leaves an offer, with the deterministic brief.
-      log.warn('offer not prepared; offering it without the composing model', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
-      return offer.propose({ ...o, useModel: false }).catch(() => null);
+    const row = await offer.propose(o).catch((err: any) => {
+      log.warn('offer not prepared', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
+      return null;
     });
-    plan.route = row?.payload?.via || 'factory';
+    plan.route = row?.payload?.via || 'build';
     plan.routeReason = row?.payload?.routeReason || null;
-    plan.mode = row?.payload?.mode || plan.mode || null;
-    plan.delivery = row?.payload?.delivery || null;
   }
   if (p.action === 'ask_repo') {
     await require('../proposals').create({

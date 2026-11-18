@@ -14,10 +14,6 @@ const { LiveRunError } = require('../runs.ts');
 const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 const LIVE = "('starting','running','waiting')";
-// A job the factory has not ended (factoryCore.ACTIVE_STATES): a run that ended
-// on the PA's side first (dropped, cancelled from the chat) is still asked
-// until the factory's last word is on it (8.4.23).
-const FACTORY_LIVE = "('queued','triaging','in_progress','blocked','needs_human')";
 const ids = (list: unknown[]) => (list || []).map(Number);
 
 function create(db: Db) {
@@ -50,17 +46,6 @@ function create(db: Db) {
       );
     },
 
-    /** A factory run (route factory), status starting. Guarded. */
-    async insertFactory(v: Row, guard?: { commitmentId?: number | string | null; again?: boolean; externalId?: ((row: Row) => string) | null }) {
-      return guarded(
-        `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      pipeline, delivery_requested, models, delivery_source, job_kind, runtime)
-     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
-        [v.commitmentId, v.mode, v.task, v.repoPath, v.machine, v.routeReason, v.kind,
-          v.pipeline, v.deliveryRequested, v.models, v.deliverySource, v.jobKind, v.runtime],
-        guard
-      );
-    },
 
     /** One run row, or null. */
     async byId(id: number | string) {
@@ -103,10 +88,6 @@ function create(db: Db) {
       );
     },
 
-    /** The factory runs that have a job: {id, factory_job_id}. */
-    async factoryJobs() {
-      return db.rows(`select id, factory_job_id from run where route = 'factory' and factory_job_id is not null`);
-    },
 
     /** The mode of the newest run that used a worktree, or null. */
     async modeByWorktree(worktreePath: string) {
@@ -243,162 +224,6 @@ function create(db: Db) {
       await db.query('update run set status = $2 where id = $1', [id, status]);
     },
 
-    // --- for src/dispatch/factory.ts
-
-    /** A factory submit failed before it went out: failed, with the note and the brief's path and author. */
-    async markSubmitRefused(id: number | string, note: string, briefPath: unknown, by: unknown) {
-      await db.query(
-        `update run set status = 'failed', outcome = 'failed', outcome_at = ${NOW}, ended_at = ${NOW}, exit_note = $2, brief_path = $3, brief_by = $4 where id = $1`,
-        [id, note, briefPath, by]
-      );
-    },
-
-    /** Stores the termhub session that follows a factory job. */
-    async setSession(id: number | string, sessionId: number | string) {
-      await db.query('update run set termhub_session_id = $2 where id = $1', [id, sessionId]);
-    },
-
-    /** Records the job the factory made for a run: running, queued. Only while live; resolves whether a row changed. */
-    async recordJob(id: number | string, { jobId, delivery, pipeline, briefPath, warnings, exitNote, by }: { jobId?: number | string | null; delivery?: string | null; pipeline?: unknown; briefPath?: unknown; warnings?: unknown[] | null; exitNote?: unknown; by?: unknown }) {
-      const r = await db.query(
-        `update run set factory_job_id = $2, delivery = $3, pipeline = $4, brief_path = coalesce($5, brief_path), status = 'running',
-                    factory_state = 'queued', factory_warnings = $6, exit_note = $7, brief_by = coalesce($8, brief_by)
-      where id = $1 and status in ('starting', 'waiting', 'running')`,
-        [id, jobId, delivery, pipeline, briefPath, warnings && warnings.length ? JSON.stringify(warnings) : null, exitNote, by]
-      );
-      return (r.rowCount || 0) > 0;
-    },
-
-    /** A job turned up for a run that had ended: remembers it, state cancelled. */
-    async markLateJobCancelled(id: number | string, jobId: number | string) {
-      await db.query(`update run set factory_job_id = coalesce(factory_job_id, $2), factory_state = 'cancelled' where id = $1`, [id, jobId]);
-    },
-
-    /** The factory has no job for a submit that went unanswered: failed (only while no job is recorded). */
-    async markSubmitFailed(id: number | string, note: string) {
-      await db.query(
-        `update run set status = 'failed', outcome = 'failed', outcome_at = ${NOW}, ended_at = ${NOW}, factory_state = 'not_submitted',
-                        exit_note = $2 where id = $1 and factory_job_id is null`,
-        [id, note]
-      );
-    },
-
-    /** A submit's answer was lost: waiting, submit_unknown (only while no job is recorded). */
-    async markSubmitUnknown(id: number | string, note: string, briefPath: unknown) {
-      await db.query(
-        `update run set status = 'waiting', factory_state = 'submit_unknown', exit_note = $2, brief_path = coalesce($3, brief_path)
-          where id = $1 and factory_job_id is null`,
-        [id, note, briefPath]
-      );
-    },
-
-    /**
-     * Writes what the factory now says about a job onto its run (`ended`: stamp ended_at when unset;
-     * `whileStatus`: only while the run's status is still that one). Resolves whether the row was written.
-     */
-    async applyFactoryState(id: number | string, { status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, ended, whileStatus = null }: { status?: string | null; outcome?: unknown; factoryState?: unknown; costUsd?: unknown; mrUrl?: unknown; exitNote?: unknown; delivery?: string | null; ended?: unknown; whileStatus?: string | null }) {
-      const r = await db.query(
-        `update run set status = $2, outcome = $3, outcome_at = case when $3 is not outcome then ${NOW} else outcome_at end,
-                      factory_state = $4, cost_usd = coalesce($5, cost_usd), mr_url = coalesce($6, mr_url),
-                      exit_note = coalesce($7, exit_note), delivery = coalesce($8, delivery),
-                      ended_at = case when $9 and ended_at is null then ${NOW} else ended_at end
-        where id = $1 and ($10 is null or status = $10)`,
-        [id, status, outcome, factoryState, costUsd, mrUrl, exitNote, delivery, Boolean(ended), whileStatus]
-      );
-      return (r.rowCount || 0) > 0;
-    },
-
-    /** Stores the subscription-equivalent cost. */
-    async setSubscriptionEquiv(id: number | string, usd: unknown) {
-      await db.query('update run set subscription_equiv_usd = $2 where id = $1', [id, usd]);
-    },
-
-    /** Records one PR of a run (run_pr); a repeat updates only what changed. */
-    async upsertPr(runId: number | string, p: Row) {
-      await db.query(
-        `insert into run_pr (run_id, url, number, story_id, state, ci_state, ci_failing, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, ${NOW})
-       on conflict (run_id, url) do update set
-         number = coalesce(excluded.number, run_pr.number), story_id = coalesce(excluded.story_id, run_pr.story_id),
-         state = coalesce(excluded.state, run_pr.state), ci_state = coalesce(excluded.ci_state, run_pr.ci_state),
-         ci_failing = coalesce(excluded.ci_failing, run_pr.ci_failing), updated_at = ${NOW}
-       where (run_pr.number, run_pr.story_id, run_pr.state, run_pr.ci_state, run_pr.ci_failing)
-             is not (coalesce(excluded.number, run_pr.number), coalesce(excluded.story_id, run_pr.story_id),
-                     coalesce(excluded.state, run_pr.state), coalesce(excluded.ci_state, run_pr.ci_state),
-                     coalesce(excluded.ci_failing, run_pr.ci_failing))`,
-        [runId, p.url, p.number, p.story_id, p.state, p.ci_state, p.ci_failing ? JSON.stringify(p.ci_failing) : null]
-      );
-    },
-
-    /** Records one step of a run (run_step); a repeat updates only what changed. */
-    async upsertStep(runId: number | string, s: Row) {
-      await db.query(
-        `insert into run_step (run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, ${NOW})
-       on conflict (run_id, step_id) do update set
-         job_id = excluded.job_id, story_id = excluded.story_id, persona = excluded.persona, runtime = excluded.runtime,
-         model = excluded.model, state = excluded.state, started_at = excluded.started_at, ended_at = excluded.ended_at,
-         machine = coalesce(excluded.machine, run_step.machine),
-         termhub_session_id = coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
-         url = coalesce(excluded.url, run_step.url), updated_at = ${NOW}
-       where (run_step.state, run_step.ended_at, run_step.termhub_session_id, run_step.url, run_step.model)
-             is not (excluded.state, excluded.ended_at,
-                     coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
-                     coalesce(excluded.url, run_step.url), excluded.model)`,
-        [runId, s.step_id, s.job_id, s.story_id, s.persona, s.runtime, s.model, s.state, s.started_at, s.ended_at, s.machine, s.termhub_session_id, s.url]
-      );
-    },
-
-    /** The PRs of these runs (run_pr), by run then number. */
-    async prsOf(runIds: unknown[]) {
-      return db.rows(
-        `select run_id, url, number, story_id, state, ci_state, ci_failing from run_pr
-          where run_id in (select value from json_each($1)) order by run_id, number nulls last, url`,
-        [ids(runIds)]
-      );
-    },
-
-    /** The steps of these runs (run_step), newest first within a run. */
-    async stepsOf(runIds: unknown[]) {
-      return db.rows(
-        `select run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url
-         from run_step where run_id in (select value from json_each($1)) order by run_id, started_at desc nulls last, step_id desc`,
-        [ids(runIds)]
-      );
-    },
-
-    /** Factory runs with a job that are live, were delivered in the last 14 days, or started in them with a job not ended yet. */
-    async watchedFactoryRuns() {
-      return db.rows(
-        `select * from run
-      where route = 'factory' and factory_job_id is not null
-        and (status in ${LIVE} or (outcome = 'delivered' and ended_at > $1)
-             or (factory_state in ${FACTORY_LIVE} and started_at > $1))`,
-        [sinceMs(14 * DAY)]
-      );
-    },
-
-    /** The distinct job ids of factory runs: [{factory_job_id}]. */
-    async distinctFactoryJobIds() {
-      return db.rows(`select distinct factory_job_id from run where route = 'factory' and factory_job_id is not null`);
-    },
-
-    /** The newest live run of a factory job: {id}, or null. */
-    async liveRunOfJob(jobId: number | string) {
-      return db.one(`select id from run where route = 'factory' and factory_job_id = $1 and status in ${LIVE} order by id desc limit 1`, [jobId]);
-    },
-
-    /** Factory runs whose submit was never confirmed (with `age_ms`). */
-    async unsettledFactory() {
-      return db.rows(
-        `select *, (julianday('now') - julianday(started_at)) * 86400000.0 as age_ms from run
-      where route = 'factory' and factory_job_id is null
-        and (factory_state = 'submit_unknown' and status = 'waiting'
-             or status = 'starting' and started_at < $1)`,
-        [sinceMs(2 * 60_000)]
-      );
-    },
-
     // --- for src/dispatch/stats.ts
 
     /** Runs started in the last `days` days with their commitment's kind, for the route summary. */
@@ -440,25 +265,7 @@ function create(db: Db) {
 
     // --- for src/dashboard/factory.js, src/mcp
 
-    /** For each factory job id, its newest run (pg: distinct on). */
-    async latestRunPerJob(jobIds: unknown[]) {
-      return db.rows(
-        `select id, commitment_id, factory_job_id, termhub_session_id, machine from (
-           select id, commitment_id, factory_job_id, termhub_session_id, machine,
-                  row_number() over (partition by factory_job_id order by id desc) as n
-             from run where route = 'factory' and factory_job_id in (select value from json_each($1))) r
-          where n = 1 order by factory_job_id`,
-        [jobIds || []]
-      );
-    },
 
-    /** The newest run of one factory job, or null. */
-    async newestOfJob(jobId: number | string) {
-      return db.one(
-        `select id, commitment_id, termhub_session_id, machine from run where route = 'factory' and factory_job_id = $1 order by id desc limit 1`,
-        [jobId]
-      );
-    },
 
     /** A commitment's five newest runs for the chat's card view. */
     async cardRuns(commitmentId: number | string) {
@@ -477,14 +284,6 @@ function create(db: Db) {
       );
     },
 
-    /** The factory steps whose sessions are among `sessionIds`, with their run's status. */
-    async stepsBySessions(sessionIds: unknown[]) {
-      return db.rows(
-        `select s.termhub_session_id, s.step_id, s.job_id, r.id as run_id, r.status, r.commitment_id
-         from run_step s join run r on r.id = s.run_id where s.termhub_session_id in (select value from json_each($1))`,
-        [sessionIds || []]
-      );
-    },
 
     /** The ten newest runs in a repo folder. */
     async inRepo(repoPath: string) {
@@ -495,29 +294,6 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/e2e/goldenPath.ts
-
-    /** Runs of these commitments: {id, commitment_id, factory_job_id, factory_state, started_at, termhub_session_id, machine}. */
-    async jobsOfCommitments(commitmentIds: unknown[]) {
-      return db.rows(
-        `select id, commitment_id, factory_job_id, factory_state, started_at, termhub_session_id, machine
-           from run where commitment_id in (select value from json_each($1))`,
-        [ids(commitmentIds)]
-      );
-    },
-
-    /** The distinct PRs of these runs: {run_id, pr_number, pr_url}. */
-    async prLinksOf(runIds: unknown[]) {
-      return db.rows('select distinct run_id, number as pr_number, url as pr_url from run_pr where run_id in (select value from json_each($1))', [ids(runIds)]);
-    },
-
-    /** The sessions of these runs' steps: {run_id, termhub_session_id, machine}. */
-    async stepSessionsOf(runIds: unknown[]) {
-      return db.rows(
-        'select run_id, termhub_session_id, machine from run_step where run_id in (select value from json_each($1)) and termhub_session_id is not null',
-        [ids(runIds)]
-      );
-    },
   };
 }
 

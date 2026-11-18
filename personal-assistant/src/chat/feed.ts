@@ -97,14 +97,13 @@ function httpError(status: any, message: any) {
 /**
  * Everything external is injectable, for tests: `home()` the chat's cwd,
  * `root()` Claude Code's projects directory, `hub()` the termhub client,
- * `ensureSession()` src/chat's, `jobLookup(jobId)` the factory job a voice approval is judged by.
+ * `ensureSession()` src/chat's.
  */
 function createFeed({
   home = () => require('./index.ts').homeDir(),
   root = projectsRoot,
   hub = () => require('../dispatch/termhub.ts'),
   ensureSession = () => require('./index.ts').ensureSession(),
-  jobLookup = null, // (jobId) => {delivery} | null; default: the factory's snapshot (src/policy withJobDelivery)
   pollMs = 1000,
   fastPollMs = 200,
   statusMs = 2000,
@@ -156,8 +155,7 @@ function createFeed({
     // secret reveal) is refused before any key is pressed.
     try {
       const policy = require('../policy');
-      // A voice yes to a factory job's approval is judged by the job's delivery (looked up now; fails closed).
-      const req = await policy.withJobDelivery({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId, args: lastTool?.args }, jobLookup);
+      const req = { tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId, args: lastTool?.args };
       const verdict = await policy.enforce(req);
       await policy.consumeStepUp(req, verdict); // a passkey tap is spent on this one approval
     } catch (err: any) {

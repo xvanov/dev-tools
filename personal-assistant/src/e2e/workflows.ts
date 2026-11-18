@@ -52,7 +52,6 @@ const S = require('./screens.ts');
 
 function deps0(): Deps {
   const d = G.defaultDeps();
-  const factory = require('../dispatch/factory.ts');
   const repo = require('../repo');
   return {
     ...d,
@@ -80,12 +79,8 @@ function deps0(): Deps {
       return raw ? Buffer.from(await res.arrayBuffer()) : res.text();
     },
     spendToday: () => require('../budget.ts').status().then((s: Json) => s.today),
-    jobReport: (id: string) => factory.report(id),
-    // On the factory's own machine (where --on runs the dry run), claude as the factory finds it: termhub's exec PATH lacks ~/.local/bin (8.4.43).
-    claudeAuth: () => {
-      const m = factory.machine();
-      return d.runCommand(m, [m ? 'claude' : require('../config.ts').claudeBinary(), 'auth', 'status'], { timeoutMs: 30_000 });
-    },
+    // claude as this machine finds it: a service's exec PATH lacks ~/.local/bin (8.4.43).
+    claudeAuth: () => d.runCommand(null, [require('../config.ts').claudeBinary(), 'auth', 'status'], { timeoutMs: 30_000 }),
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),
     hubBase: (machine: string | null | undefined) => require('../dispatch/termhub.ts').forMachine(machine || null).base,
     capture: (dir: string, pages: Page[]) => S.capture(dir, pages),

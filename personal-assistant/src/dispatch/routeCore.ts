@@ -1,17 +1,10 @@
 'use strict';
 
-// Pure helpers for where a piece of work goes. There is no route to choose
-// any more (decision D28, docs/native/PLAN.md): every dispatch is a software-
-// factory job (src/dispatch/factory.ts), so the old claude/factory/auto rule
-// (chooseRoute, guard, PA_DISPATCH_VIA, PA_ROUTE_CHOOSER) is gone. What is
-// left: a repo's owner/name, the registered factory app for it, the
-// done-criteria a commitment states, and the measured outcomes per route ×
-// kind (`pa runs stats`; older runs carry route `claude`).
+// Pure helpers over runs: a repo's owner/name, and the measured outcomes per route × kind
+// (`pa runs stats`; older runs carry route `claude` or `factory` — the factory was removed in D32).
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-/** A `factory app list` row: JSON from the factory CLI. */
-type FactoryApp = { app: string; repo?: string | null; [k: string]: unknown };
 type StatsRow = { route?: string | null; kind?: string | null; outcome?: string | null; status?: string | null; cost_usd?: unknown };
 type RouteStats = { route: string; kind: string; runs: number; delivered: number; merged: number; failed: number; dropped: number; open: number; successRate: number | null; costUsd: number | null; costPerSuccess: number | null };
 
@@ -23,31 +16,6 @@ const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 function normSlug(s: string | null | undefined): string | null {
   const t = String(s || '').trim().replace(/\.git$/i, '').toLowerCase();
   return SLUG.test(t) ? t : null;
-}
-
-/** The registered factory app for a repo slug, or null. */
-function appFor(slug: string | null | undefined, apps: FactoryApp[] | null | undefined): FactoryApp | null {
-  const s = normSlug(slug);
-  if (!s) return null;
-  return (apps || []).find((a) => normSlug(a.repo) === s) || null;
-}
-
-const BULLET = /^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s+/;
-
-/**
- * Done-criteria from a commitment: its `detail` ("what done looks like" in the
- * brief), one criterion per line or bullet. A one-paragraph detail is one
- * criterion. Nothing stated is an empty list, not an invented one.
- */
-function doneCriteria(commitment: { detail?: string | null } | null | undefined): string[] {
-  const detail = String(commitment?.detail || '').trim();
-  if (!detail) return [];
-  return detail
-    .split(/\r?\n/)
-    .map((l) => l.replace(BULLET, '').replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length >= 3)
-    .map((l) => (l.length > 500 ? `${l.slice(0, 499)}…` : l))
-    .slice(0, 8);
 }
 
 /**
@@ -97,4 +65,4 @@ function summarize(rows: StatsRow[] | null | undefined): RouteStats[] {
     .sort((a, b) => a.route.localeCompare(b.route) || b.runs - a.runs || a.kind.localeCompare(b.kind));
 }
 
-module.exports = { ROUTES, OUTCOMES, normSlug, appFor, doneCriteria, summarize };
+module.exports = { ROUTES, OUTCOMES, normSlug, summarize };

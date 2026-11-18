@@ -19,7 +19,7 @@
 //    (60): the most a disk loss costs is that much (RPO). Point PA_BACKUP_DIR
 //    at a synced or network folder to keep it off the machine.
 //  - **nightly bundle**: `pa-<stamp>.pabak` (manifest with row counts, the
-//    snapshot as `pa.sqlite`, the factory state), encrypted, PA_BACKUP_KEEP kept.
+//    snapshot as `pa.sqlite`), encrypted, PA_BACKUP_KEEP kept.
 //  - **drill** (`pa backup restore --to <new file>`): restores a bundle or a
 //    snapshot into a scratch file and proves it: integrity_check, the FTS
 //    index's integrity-check, foreign_key_check, row counts against the

@@ -1,7 +1,7 @@
 'use strict';
 
 // The policy engine (plan 4.3): one function every tool call, approval and
-// factory action goes through, answering allow | deny | ask from a declarative
+// action goes through, answering allow | deny | ask from a declarative
 // policy file, and writing each answer to the hash-chained audit log
 // (src/repo/audit.js, `pa audit verify`).
 //
@@ -11,9 +11,9 @@
 //
 // request: {tool, action: 'call' | 'approve' (default call), channel, actor?,
 //           args?, subject?}
-//   tool     the bare tool name (factory_start, recall, pa) or verb
+//   tool     the bare tool name (session_start, recall, pa) or verb
 //   channel  where it came from: mcp (a coding session), chat (the PA chat's
-//            MCP), voice, dashboard, termhub, cli, factory, e2e (`pa e2e`
+//            MCP), voice, dashboard, termhub, cli, e2e (`pa e2e`
 //            answering the prompt for its own dummy call, headless)
 //   args     used to classify (delivery level, the pa verb) and hashed for the
 //            audit row; never stored
@@ -166,8 +166,6 @@ function classify(tool: unknown, args: Args | null | undefined = {}): string[] {
   const name = String(tool || '');
   const a: Args = args && typeof args === 'object' ? args : {};
   const delivery = String(a.delivery ?? a.delivery_level ?? a.level ?? '').toLowerCase();
-  // A job's delivery could not be looked up: unknown is treated as the worst (the voice lock denies it).
-  if (a.delivery_unknown === true) tags.add('unverified');
   if (delivery === 'auto_merge' || a.merge === true) tags.add('merge');
   if (delivery === 'push_to_main') tags.add('push_main');
   if (/(^|[_.\-:])merge([_.\-:]|$)/i.test(name)) tags.add('merge');
@@ -212,35 +210,6 @@ function evaluate(request: PolicyRequest, policy: Policy = load()): PolicyResult
     if (matches(r, req, tags)) return { decision: r.decision, rule: r.id, reason: r.reason || '', tags };
   }
   return { decision: policy.default, rule: 'default', reason: 'no rule matches', tags };
-}
-
-// Approvals of an existing factory job: what they do depends on the job's delivery ceiling.
-const JOB_TOOLS = ['factory_approve', 'factory_resume'];
-
-/**
- * For a voice approval of a factory job, looks up the job's delivery and puts
- * it in `args` (so an auto_merge or push_to_main job classifies as merge /
- * push_main and the locked voice rule denies it). Fails closed: when the job
- * cannot be found or looked up, args.delivery_unknown is set and the voice
- * lock denies the request. Other channels and tools are returned as they are.
- * `lookup(jobId)` resolves the job ({delivery}) or null; default: the
- * factory's snapshot.
- */
-async function withJobDelivery(request: PolicyRequest, lookup: ((jobId: string) => Promise<{ delivery?: string } | null>) | null = null): Promise<PolicyRequest> {
-  // voice is judged by it; the dashboard's approvals are tagged by it (passkey step-up, plan 7.1)
-  if (!['voice', 'dashboard'].includes(String(request.channel)) || !JOB_TOOLS.includes(request.tool)) return request;
-  const args: Args = { ...(request.args || {}) };
-  try {
-    const find = lookup || ((id: string) => require('../dispatch/factory.ts').snapshotJob(id));
-    const job = args.job ? await find(String(args.job)) : null;
-    if (!job) throw new Error('job not found');
-    args.delivery = job.delivery || 'none';
-    delete args.delivery_unknown;
-  } catch {
-    delete args.delivery;
-    args.delivery_unknown = true;
-  }
-  return { ...request, args };
 }
 
 /** The short, never-secret subject an audit row carries: a card/job id or the pa verb, not content. */
@@ -340,4 +309,4 @@ async function enforce(request: PolicyRequest, opts?: AuthorizeOptions): Promise
   return res;
 }
 
-module.exports = { evaluate, classify, withJobDelivery, consumeStepUp, STEPUP_RULE, JOB_TOOLS, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };
+module.exports = { evaluate, classify, consumeStepUp, STEPUP_RULE, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };

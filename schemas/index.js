@@ -1,10 +1,9 @@
 'use strict';
 
 // The contract schemas (plan 1.1, D15): one JSON Schema source per object the
-// parts exchange (Job, Run, Card, Event, Approval). TypeScript types are
-// generated from them (gen-types.js -> types.d.ts); Python validates with
-// `jsonschema` (software-factory/factory/contract_schemas.py); JS validates
-// here.
+// parts exchange (Card, Event, Approval). TypeScript types are generated from
+// them (gen-types.js -> types.d.ts); JS validates here. (Job and Run were the
+// software factory's, removed in D32; its Python side validated with `jsonschema`.)
 //
 // This validator is deliberately small and dependency-free: it implements only
 // the keywords the schemas use and THROWS on any other keyword, so a schema
@@ -15,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DIR = __dirname;
-const NAMES = ['job', 'run', 'card', 'event', 'approval'];
+const NAMES = ['card', 'event', 'approval'];
 const KEYWORDS = new Set([
   '$schema', '$id', '$ref', '$defs', 'title', 'description',
   'type', 'enum', 'const', 'properties', 'required', 'additionalProperties', 'items',
@@ -30,7 +29,7 @@ function load() {
   return cache;
 }
 
-/** The parsed schema `name` ('job', 'run', ...). */
+/** The parsed schema `name` ('card', 'event', ...). */
 function schema(name) {
   const s = load().get(`${name}.schema.json`);
   if (!s) throw new Error(`no schema "${name}" (have: ${NAMES.join(', ')})`);

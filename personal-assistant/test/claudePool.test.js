@@ -75,51 +75,8 @@ const POOL = { monthlyUsd: 100, usedUsd: 40, since: new Date(2026, 10, 1), reset
     assert.deepStrictEqual([c.tracked, c.monthlyUsd, c.remainingUsd, c.exhausted], [false, null, null, false]);
   });
 
-  await t('decideRuntime: only a spent pool with the flag on moves claude_session to api', () => {
-    const spent = pool.compute({ ...POOL, usedUsd: 100, fallbackApi: true });
-    const out = pool.decideRuntime('claude_session', spent);
-    assert.deepStrictEqual([out.runtime, out.fellBack], ['api', true]);
-    assert.match(out.reason, /pool is spent/);
-    assert.strictEqual(pool.decideRuntime('claude_session', { ...spent, fallbackApi: false }).runtime, 'claude_session', 'flag off');
-    assert.strictEqual(pool.decideRuntime('claude_session', pool.compute({ ...POOL, fallbackApi: true })).runtime, 'claude_session', 'credit left');
-    assert.strictEqual(pool.decideRuntime('api', spent).runtime, 'api');
-    assert.strictEqual(pool.decideRuntime('claude_session', pool.compute({ ...POOL, monthlyUsd: null, fallbackApi: true })).fellBack, false, 'untracked');
-  });
-
-  await t('route: the default config never reroutes and never reads the store', async () => {
-    assert.strictEqual(config.claudePool.fallbackApi, false, 'default off');
-    const out = await pool.route('claude_session');
-    assert.deepStrictEqual([out.runtime, out.fellBack], ['claude_session', false]);
-    assert.strictEqual(store.asked.length, 0);
-  });
-
-  await t('route: flag on and pool spent -> api; credit left -> claude_session', async () => {
-    Object.assign(config.claudePool, { monthlyUsd: 50, fallbackApi: true, resetDay: 1 });
-    try {
-      store.poolUsd = 20;
-      assert.strictEqual((await pool.route('claude_session')).runtime, 'claude_session');
-      pool.invalidate();
-      store.poolUsd = 50.01;
-      const out = await pool.route('claude_session');
-      assert.deepStrictEqual([out.runtime, out.fellBack], ['api', true]);
-      assert.strictEqual((await pool.route('api')).runtime, 'api');
-    } finally {
-      Object.assign(config.claudePool, { monthlyUsd: null, fallbackApi: false });
-    }
-  });
-
-  await t('route: fails open when the store cannot say', async () => {
-    Object.assign(config.claudePool, { monthlyUsd: 50, fallbackApi: true });
-    try {
-      store.fail = true;
-      assert.strictEqual((await pool.route('claude_session')).runtime, 'claude_session');
-    } finally {
-      Object.assign(config.claudePool, { monthlyUsd: null, fallbackApi: false });
-    }
-  });
-
   await t('status: usage since the period start, cached until a usage row is recorded', async () => {
-    Object.assign(config.claudePool, { monthlyUsd: 80, fallbackApi: false, resetDay: 1 });
+    Object.assign(config.claudePool, { monthlyUsd: 80, resetDay: 1 });
     try {
       store.poolUsd = 30;
       store.poolCalls = 4;

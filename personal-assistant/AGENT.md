@@ -47,12 +47,7 @@ the end state is what the PA does, not a limit on what that agent can do. The sa
 no-push run: it is the operator's OS user, so `GH_CONFIG_DIR=$HOME/.config/gh gh …` or `~/.ssh/id_*`
 restores the login. **The real boundary for work that must never exceed its level is a separate OS
 user (or machine) without those credentials — not set up yet; a follow-up.** `pa doctor` says so on
-every run (`run isolation`). `PA_SANDBOX=on` (default off; `src/dispatch/sandbox.ts`, native plan
-5.2/5.3) is the first step: the session starts inside the factory's OS sandbox, whose environment
-is an allowlist (no token, no SSH socket, no gh login) and whose filesystem hides the profile, and
-pushes / draft PRs go through a broker capped at the mode's ceiling. It covers `plan` sessions
-only: a sandboxed session cannot write the repo's shared `.git`, so it cannot commit, and a code
-mode is refused while the flag is on rather than run unsandboxed.
+every run (`run isolation`). (`PA_SANDBOX=on`, the factory's OS sandbox for plan sessions, was removed with the factory, D32.)
 
 **Unattended levels cannot be started from inside a run — by mitigation, not by boundary.** A
 dispatched agent runs as the same user with prompts skipped, so it can reach the dashboard API with
@@ -87,18 +82,9 @@ the id must be a UUID and a machine missing from `PA_MACHINES` is refused, never
 Card links are built server-side from stored URLs and only `http(s)` ones are rendered. The Memory tab's writes (remember, forget,
 approve, merge) are POSTs under the same guards, and memory pages reach the browser as a parsed
 tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
-`test/memoryui.test.js` fails if one appears. The Factory page (`/factory`) is the same: its
-writes (Cancel, Approve, Open in termhub, New job, and the Repos section's Add repo and gate edits, `factory app add|set` with each value one argv element) are POSTs under the same guards, a job id is
-checked against `factoryCore.JOB_ID` before anything, Approve runs only the `approve-direction` the
-factory named in that job's own warning (read from the stored list, never from the request), a new
-code job at `auto_merge`/`push_to_main` needs the page token and the level confirmed, and a report —
-agent-written — arrives as a parsed tree (`test/factoryBoard.test.js` fails on an HTML sink).
-Its Board view (`factory.board.client.js`, plan 8.8.2) shows each step's turns in the page — agent
-text, tool arguments and results, all built with `textContent` (`test/factoryBoardView.test.js`
-fails on an HTML sink) — through two reads, `GET /api/factory/board` and
-`GET /api/factory/steps/<id>/events` (`src/dashboard/factoryBoard.ts`), whose query values are
-checked (step id digits, cursor `<file>:<offset>`, limit, wait ≤ 20 s) before each becomes one
-argv element of `factory job board|step` (JOBS-API v1.11).
+`test/memoryui.test.js` fails if one appears. The Build page (`/factory`) is the same: its
+writes (Stop, Reply, Send, New run) are POSTs under the same guards (`src/dashboard/buildBoard.ts`), and what an agent wrote (task, notes, tool arguments) is
+data: the page sets it with `textContent` only (`test/buildBoard.test.js`).
 
 The one sanctioned way off loopback is **termhub's `/pa/` proxy** (`TERMHUB_PA_URL`), which
 rewrites `Host` to loopback and forwards `X-PA`. That reaches exactly the people who can already
@@ -137,13 +123,11 @@ reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs a
 command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
 `pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
 (a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
-chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, factory_jobs,
-factory_job, sessions, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: factory_start, factory_continue,
-factory_resume, factory_cancel, factory_approve, session_start, build_*, card_edit, card_plan_apply) are on no allow list, so every call asks,
+chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, sessions,
+build_runs, build_run, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: session_start, build_*, card_edit, card_plan_apply) are on no allow list, so every call asks,
 and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
-the dispatch paths themselves (`dispatch.start`, `factory.cancelJob|approve|resume`), never a second
-implementation, and an unattended end state from them becomes a card (`suggested by the chat`), as
-`pa do` does for a non-interactive caller. Its CLAUDE.md is rewritten from code on every start — change it in
+the dispatch paths themselves (`dispatch.start`, then `src/build`), never a second
+implementation. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
 differently because opencode parses a command line its own way and every bash allow-pattern was a
@@ -274,10 +258,9 @@ allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-s
 The defaults are the allow/ask split above, unchanged (`test/policy.test.js` pins them to
 `CHAT_READ_TOOLS` / `CHAT_ACTION_TOOLS`): `ask` means the host owns the prompt (Claude Code), the MCP
 server still runs the call. It is applied in the MCP server's `handle` (every tool), in `answerPermission`
-(a chat approval, with the channel it came from: dashboard or voice) and in `factory.approve`. A locked
+(a chat approval, with the channel it came from: dashboard or voice) . A locked
 rule denies the voice channel anything tagged `merge`, `push_main` or `secret_reveal` and no override
-can loosen it (a voice yes to a factory job's approval looks the job's delivery up and is refused for
-auto_merge / push_to_main, or when the job cannot be looked up); do not add a path that approves those from voice. With PA_PASSKEYS=on, `enforce` also refuses (`STEPUP_REQUIRED`, rule `stepup-required`) a
+can loosen it; do not add a path that approves those from voice. With PA_PASSKEYS=on, `enforce` also refuses (`STEPUP_REQUIRED`, rule `stepup-required`) a
 non-voice approval tagged merge / push_main / secret_reveal until a passkey grant exists for its
 `subject` (src/auth/stepup.js); the policy only looks at the grant, and `consumeStepUp` spends it right
 after `enforce` passes: a new caller that runs such an approval must do both.
@@ -287,8 +270,7 @@ dry-runs the policy. Adding a tool: add it to the default policy (an unlisted to
 
 **Talk is audio in, audio out, and a spoken yes counts only while awake.** No buttons on `/talk`: the
 click path is the dashboard. Jarvis speaks the question the server wrote from the call's structured
-input (`transcript.askTool`: "Start a factory job for card 412 on your subscription, opening a PR for
-review. Shall I?"), and the next utterance answers it under `createVoiceAsk` (`talk.core.js`, tested):
+input (`transcript.askTool`: "Start a Claude Code agent to fix the export. Shall I?"), and the next utterance answers it under `createVoiceAsk` (`talk.core.js`, tested):
 only from words *begun after* the question was spoken to the end (barge-in or words already on their
 way re-ask it), only while awake — woken by "hey Jarvis" or push-to-talk, never asleep and never in
 hands-free mode without the wake word — matched strictly by `permissionAnswer` (the whole utterance a
@@ -496,65 +478,23 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 `budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a
 `dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
 
-**The factory is THE dispatch target (decision D28), reached only through its contract.**
-Every agent session the PA dispatches is a factory job (`src/dispatch/factory.ts`), so it shows
-on Build and is metered (the credit pool on `claude_session`, the API keys on `api`): `pa do`,
-the dashboard's Do, the planner, accepted cards, and the chat's `factory_start` and
-`session_start`. There is no route to pick: `PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `--via claude`
-and `--machine` are gone and refused. `dispatch.startSession` (a raw Claude Code session) has no
-production caller and is kept only to seed the land/drop tests (docs/native/PLAN.md 8.6.3); if
-anything calls it, it logs and writes an `llm_spend` row of unknown cost. The PA never imports factory code or reads its store: it runs `uv run factory
-job|app …` through `runCommand` (`src/dispatch/exec.ts`) and parses the one JSON object the
-factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit
-`--delivery` (the end state above; a research/report/plan job delivers `none`) and the factory
-honours it as asked. A code job changes code, so the planner only ever *offers* one; its own runs
-are `plan` mode, a read-only factory `plan` job (JOBS-API v1.8: on `claude_session` Claude Code
-runs in its plan permission mode; `test/factoryDispatch.test.js` checks the planner source). A job's end moves its
-commitment only through `ledger.transition` (actor `factory`) and only from `dispatched`, and
-GitHub reconcile closes only `open` asks, so a merged factory PR is never closed twice. A job id is
-checked against `factoryCore.JOB_ID` before it is typed into a terminal. Every job carries a kind
-(`code` | `research` | `report` | `plan`) and a runtime (`api` | `claude_session`), JOBS-API v1.2;
-whatever a start does not choose comes from the card's dispatch settings (`src/dispatch/settings.ts`:
-the card's stored overrides, else runtime `PA_FACTORY_RUNTIME` = claude_session, mode
-`PA_DISPATCH_MODE` = full, the kind from `factoryCore.inferKind`, the end state from the factory
-app's `delivery.default`). A research/report/plan job needs no repo, delivers `none` (its
-deliverable is the factory's report) and its ask is the operator's own words
-(`factoryCore.researchAsk`, no composing model). A v1 factory refuses the v1.2 flags in its CLI
-parser (`unsupported_option`, before anything is written): a code job on `api` is resent without
-them, anything else fails saying so. A code job may continue an existing branch or PR (`job submit --branch|--pr`,
-`F.BRANCH` checks the name); a factory without the flag refuses it in its parser and the job fails
-saying so — it is never resent without it, which would start fresh work instead. `job resume <id>`
-(`factory.resume`) on a factory without it says the factory must be updated. Every code job is
-sent with a `--flow-file` (`factoryCore.flowMarkdown`,
-deterministic), since the factory parks a job without a flow; content reaches another machine
-on the writer's stdin (never argv, where `ps` shows it and a large brief overflows the limit), into
-a fresh `mkdtemp` directory (0700) with `O_EXCL|O_NOFOLLOW` files, removed once the factory has the
-job (kept while a submit's outcome is unknown, since it may still be read). A submit is idempotent on
-`--source pa --external-id <install id>-<run id>` (sql/026 `pa_install`; a first submit answered
-`created: false` is someone else's job and is refused); only the factory's known pre-creation refusal
-codes (`factoryCore.REFUSAL_CODES`) or a command that never ran (exit 127) fail a run outright; after
-any other failure once a submit went out, the run is settled
-against `job status`/`job list` (`factory.settle`, `factoryCore.submitVerdict`) — adopted, failed
-only after the factory has said "no such job" for `SUBMIT_GRACE_MS`, or `waiting` as
-`submit_unknown` for the worker, failed and notified after a day either way — and never left
-`starting`. `pa drop` settles such a run first (cancelling a job it finds) and refuses while the
-factory cannot be asked. One live run per commitment holds under concurrency: every run insert goes
-through `runRow.insertRun`, which re-checks under a transaction-scoped advisory lock.
+**Build is THE dispatch target (decisions D28, D30; the software factory was removed, D32).**
+Every agent the PA starts is one Claude Code agent in Build (`src/build`): `pa do`, the dashboard's Do, the
+planner, accepted cards, and the chat's `build_start` and `session_start`. There is no route to pick:
+`PA_DISPATCH_VIA`, `PA_ROUTE_CHOOSER`, `--via`, `--machine` and the factory's flags (`--delivery`,
+`--pipeline`, `--runtime`, `--kind`, `--done`, `--app`, `--register`, `--mode`) are refused by name.
+`dispatch.startSession` (a raw Claude Code session in a worktree) has no production caller and is kept only to seed
+the land/drop tests (docs/native/PLAN.md 8.6.3); if anything calls it, it logs and writes an `llm_spend` row of unknown
+cost. The older runs (`runs` table; route `claude`, or `factory` for jobs from before D32) are still managed by
+`pa review|land|drop`, but a `factory` run has nothing left to show or cancel. A run's end moves its commitment only
+through `ledger.transition` and only from `dispatched`. One live run per commitment holds under concurrency: every
+run insert goes through `runRow.insertRun`, which re-checks under a transaction-scoped advisory lock.
 
-**A factory brief carries what the task needs, not my private material.** The ask is composed
-(`src/dispatch/compose.ts`; every rule pure and tested in `composeCore.js`): goal, done-criteria,
-constraints, decisions, facts, pointers to existing files to reuse or extend, and the fixed
-instruction to search before writing, extend rather than duplicate, follow conventions and add
-tests. Memory pages and message bodies go to the composing model to select from and never into
-the brief wholesale (`copiesPrivate`: 12 verbatim words is a dump and is dropped); secrets are
-redacted before the model sees anything and again after; reuse paths must be files the repo has.
-The model is a mockable seam (`compose._setModel`) and is chosen by `compose.pickModel`: a keyed
-path (Anthropic API, else `PA_COMPOSE_FALLBACK_MODEL` with its key present) beats `claude -p`, which
-is only the last resort. When it fails, the brief is the deterministic
-one, which holds nothing private. What a dispatch card shows is frozen in the proposal
-(`src/dispatch/offer.ts`) and is exactly what runs at accept — app, criteria, brief, pipeline,
-models, end state (re-rendered, never recomposed, if I change it on the card). Nothing outward
-happens before the yes: registering a repo with the factory (`factory app add`) waits for accept.
+**A dispatch card carries what the task needs, not my private material.** What a card shows is frozen in the
+proposal (`src/dispatch/offer.ts`) and is exactly what starts at accept: the task, the repo (checked when the card
+is made, never re-judged at accept) and the model. Nothing is composed from memory pages or message bodies: the
+agent reads the card's own words and the repo, and Build's agent prompt (`src/build/agent-prompt.md`) is one file.
+Nothing outward happens before the yes.
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
@@ -591,8 +531,7 @@ Service `service=dev-tools stack=<stack> name=<NAME>`; entries from before the l
 are still read and move on the next write. `pa secrets migrate --from-env` moves `.env` values into
 the keychain: dry run by default, names only, a line is emptied (`NAME=`) only after the keychain
 reads back the same value, and only names the code resolves through the keychain move
-(`src/secrets/migrate.js`). The software-factory reads its provider keys from the same keychain
-when `.env` leaves them unset (`software-factory/factory/keychain.py`). Code reads a
+(`src/secrets/migrate.js`). Code reads a
 secret with `config.secret(name)` and nothing else; errors are scrubbed of it. Agents may
 `request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
 verb that shows a value. `test/secrets.test.js` fails if one echoes.
@@ -633,8 +572,7 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 Do on a card (and `pa do`, the planner, accepted cards, the chat's start tools) calls `dispatch.start`, which
 hands to `src/build`: one interactive Claude Code session in termhub on the subscription, model haiku | sonnet |
 opus (card setting, default sonnet), in a fresh worktree on a new branch when the card names a repo. The agent
-prompt is one file, `src/build/agent-prompt.md`; edit it there. The factory path (`src/dispatch/factory.ts`,
-`settings.ts`) is frozen and reachable only with `PA_BUILD=factory`.
+prompt is one file, `src/build/agent-prompt.md`; edit it there. The software factory that used to sit beside it was removed in D32 (git history, `4eee22f`).
 
 - Rows: `build_run`, `build_msg` (`src/repo/buildRuns.ts`; the SQLite twin re-exports it, the SQL is portable).
 - Agent verbs, run id from `$JARVIS_RUN_ID`: `pa run note "<text>"`, `pa run ask "<question>"` (blocks up to
@@ -774,15 +712,9 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The factory path
 Wrap a main hop in `telemetry.span(hop, name, attrs, fn)` (`src/telemetry`), never in a hand-timed log line: it is an
 `@opentelemetry/api` span that a local exporter writes to `trace_span`, and it is a no-op in a test process or with
 `PA_TELEMETRY=0`, so `fn` must cope with `span === null`. Attributes are ids, names and counts: no prompt, reply or tool
-arguments. New hops use the `hop` vocabulary Meter groups by (`voice.turn`, `tool.call`, `factory.cli`, `deploy`, the
-factory's `factory.*`). Percentiles are computed in JS over `repo.telemetry.hopDurations`, not in SQL, so SQLite serves them
-too. Headless Claude usage is `llm_spend` with backend `cli` (PA) or `claude_session` (the factory, via `POST /api/telemetry`);
-`src/claudePool.js` sums both against `PA_CLAUDE_POOL_USD`. A spent pool is a runtime limit like the factory's provider
-limits (JOBS-API v1.9), so the API fallback is the one failover policy, `src/dispatch/failover.ts` (`PA_RUNTIME_FAILOVER`,
-older name `PA_CLAUDE_POOL_FALLBACK_API`, default off; only when the wait is over `PA_RUNTIME_FAILOVER_MIN_WAIT_MIN`, 30;
-always notified). It is applied in one place, `claudePool.route`, called by `dispatch/factory.start`; it fails open. With
-the policy on, every job is also submitted with `--failover on`, so the factory may move a job that hits a provider limit. Anything new that runs headless
-Claude must record its `total_cost_usd` with one of those two backends, or the pool under-counts.
+arguments. New hops use the `hop` vocabulary Meter groups by (`voice.turn`, `tool.call`, `deploy`). Percentiles are computed in JS over `repo.telemetry.hopDurations`, not in SQL, so SQLite serves them
+too. Headless Claude usage is `llm_spend` with backend `cli` (rows of backend `claude_session` are the removed factory's, history); `src/claudePool.ts` sums both against `PA_CLAUDE_POOL_USD`. A spent pool is shown on Meter and nothing is rerouted (the factory's runtime failover was removed, D32). Anything new that runs headless
+Claude must record its `total_cost_usd` with the `cli` backend, or the pool under-counts.
 
 ## Where the store lives
 

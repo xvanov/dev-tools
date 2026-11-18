@@ -31,40 +31,6 @@ test('scoreHops: bounded hops pass or fail on max_ms; unbounded never fail; unme
   assert.strictEqual(s[2].note, 'not measured');
 });
 
-test('workerHop: factory transition to the run, and a terminal state to the Plan card (8.4.10)', () => {
-  const job = 'dev-tools:r1';
-  const base = '2026-11-08T23:35:00.000Z';
-  const at = (ms) => new Date(Date.parse(base) + ms).toISOString();
-  const run = (state, ms) => ({ topic: 'run', at: at(ms), payload: { table: 'run', id: 7, factory_job_id: job, factory_state: state } });
-  const card = (ms) => ({ topic: 'board', at: at(ms), payload: { table: 'commitment', op: 'update', id: 90, status: 'done' } });
-  const push = (state, ms) => ({ topic: 'factory', at: at(ms + 5000), payload: { table: 'push', op: 'push', jobs: [{ job_id: job, state, updated_at: at(ms) }] } });
-
-  const mid = W.workerHop({ job, card: 90, run: 7, frames: [push('in_progress', 0), run('in_progress', 180)], statuses: [{ state: 'in_progress', updated_at: at(9000) }] });
-  assert.strictEqual(mid.ms, 180);
-  assert.match(mid.note, /in_progress non-terminal 180 ms via run \(push\)/);
-
-  const done = W.workerHop({
-    job, card: 90, run: 7,
-    statuses: [{ state: 'in_progress', updated_at: at(0) }, { state: 'done', updated_at: at(1000) }],
-    frames: [
-      { topic: 'factory', at: at(1000), payload: { table: 'push', op: 'push', jobs: [job, 'other:1'], updated_at: at(1000) } },
-      run('in_progress', 120), run('done', 1017), card(1400),
-    ],
-  });
-  assert.strictEqual(done.ms, 400, 'the terminal hop is the Plan card, and a shared push stamp is not the clock');
-  assert.match(done.note, /in_progress non-terminal 120 ms via run \(job status\)/);
-  assert.match(done.note, /done terminal 400 ms via plan card \(job status\)/);
-
-  const missing = W.workerHop({ job, card: 90, run: 7, statuses: [{ state: 'done', updated_at: at(0) }], frames: [run('done', 17)] });
-  assert.strictEqual(missing.ms, null, 'a fast run row does not pass while the Plan card was not seen');
-  assert.match(missing.note, /done terminal plan card not seen, run row 17 ms \(job status\)/);
-
-  const other = W.workerHop({ job, card: 90, run: 7, frames: [push('done', 0)], statuses: [] });
-  assert.strictEqual(other.ms, null);
-  assert.match(other.note, /plan card not seen/);
-  assert.deepStrictEqual(W.workerHop({ job, frames: [], statuses: [] }), { ms: null, note: 'no factory transition seen' });
-});
-
 test('askView: Ask is the tool and an excerpt of its answer (8.4.47)', () => {
   assert.deepStrictEqual(W.askView('chat', 'You have standup at ten. '), { method: 'tool', tool: 'chat', excerpt: 'You have standup at ten.' });
   const job = W.askView('factory_job', { card: '90', report: { title: 'r' } });
@@ -72,15 +38,6 @@ test('askView: Ask is the tool and an excerpt of its answer (8.4.47)', () => {
   assert.match(job.excerpt, /"card":"90"/);
   assert.strictEqual(W.askView('factory_continue', 'x'.repeat(500)).excerpt.length, 240);
   assert.deepStrictEqual(W.askView('chat', null), { method: 'tool', tool: 'chat', excerpt: '' });
-});
-
-test('toolCallMs: the jarvis hop excludes the composing model (8.4.22)', () => {
-  const t = W.toolCallMs({ at: 0, ms: 6701 }, { started: true, timings_ms: { route: 40, compose_model: 2954, submit: 1000 } });
-  assert.strictEqual(t.ms, 3747);
-  assert.match(t.note, /less the composing model's 2954 ms/);
-  const old = W.toolCallMs({ at: 0, ms: 6701 }, { started: true });
-  assert.deepStrictEqual([old.ms, /including the brief composing model/.test(old.note)], [6701, true], 'a PA without timings_ms is timed whole and says so');
-  assert.strictEqual(W.toolCallMs(null, null).ms, null);
 });
 
 test('scoreCost uses the effective ceiling', () => {
@@ -164,9 +121,6 @@ function fakeDeps(over = {}) {
     hub: () => ({ screen: async () => 'reading update.ps1', listSessions: async () => [{ id: 'rs1', alive: false, links: { job: 'dev-tools:r001', step: '3' } }], killSession: async (id) => { log.killed.push(id); return true; } }),
     jobsOfCommitments: async () => [{ id: 7, commitment_id: 90, factory_job_id: 'dev-tools:r001', factory_state: 'done', termhub_session_id: 'follow7', machine: null }],
     stepSessionsOf: async () => [{ run_id: 7, termhub_session_id: 'rs1', machine: null }],
-    factoryEnabled: () => true,
-    factoryMachine: () => null,
-    factoryApps: async () => [{ app: 'dev-tools', repo: 'xvanov/dev-tools' }],
     claudeAuth: async () => ({ code: 0, stdout: '{"loggedIn": true, "authMethod": "claude.ai"}', stderr: '' }),
     dbProbe: async () => ({ ok: 1 }),
     gh: async () => ({ code: 0, stdout: JSON.stringify({ viewerPermission: 'ADMIN' }), stderr: '' }),
@@ -411,37 +365,6 @@ function prJson({ head = 'a'.repeat(40), state = 'OPEN', merged = false, unresol
       },
     },
   };
-}
-
-function reviewFixDeps({ after = {}, compare = 'ahead', start = {}, job = {} } = {}) {
-  let phase = 'before';
-  const gh = [];
-  const { deps, log } = fakeDeps({
-    async gh(args, owner) {
-      gh.push([args, owner]);
-      if (args[0] === 'api' && args[1] === 'graphql') {
-        return { code: 0, stdout: JSON.stringify(phase === 'before' ? prJson() : prJson({ head: 'b'.repeat(40), ...after })), stderr: '' };
-      }
-      if (args[0] === 'api' && /\/compare\//.test(args[1])) return { code: 0, stdout: JSON.stringify({ status: compare, ahead_by: compare === 'ahead' ? 2 : 1, behind_by: compare === 'ahead' ? 0 : 3 }), stderr: '' };
-      return { code: 0, stdout: JSON.stringify({ viewerPermission: 'ADMIN' }), stderr: '' };
-    },
-    async chat(name, args) {
-      log.chat.push([name, args]);
-      if (name === 'factory_continue') return { started: true, run: 8, job: 'dev-tools:042', kind: 'code', runtime: 'claude_session', delivery: args.delivery, continues: { branch: 'fix/retry', pr: 12, into: 'main' }, follow: 'http://hub/#session=follow8', timings_ms: { compose_model: 900 }, ...start };
-      if (name === 'factory_cancel') return {};
-      throw new Error(name);
-    },
-    // the chat's MCP server audits the call with policy's subject ('' for a card-less call) and the args' hash
-    chatCall: async (tool, args) => {
-      log.audit.unshift({ seq: log.audit.length + 1, tool, action: 'call', channel: 'chat', actor: 'pa-e2e', subject: '', args_hash: P.argsHash(args), decision: 'ask', rule: 'chat-actions-ask' });
-      return deps.chat(tool, args);
-    },
-    jobStatus: async () => {
-      phase = 'after';
-      return { job_id: 'dev-tools:042', state: 'done', terminal: true, cost_usd: 0, base: { branch: 'fix/retry', pr: 12, into: 'main' }, stories: [], runs: [{ id: 5, runtime: 'claude_session', state: 'ok', session: { termhub_session_id: 'rf5', url: 'http://hub:7000/#session=rf5' } }], ...job };
-    },
-  });
-  return { deps, log, gh };
 }
 
 test('--on runs the workflow on that machine (8.4.25): the dry run by exec, a real run in a termhub session', async () => {

@@ -199,8 +199,7 @@ function probes(pa: any = require('./index.ts').paCommand()) {
     [`personal-assistant_${PA_TOOL}`, '*', 'allow'],
     // The structured tools: reads allowed, every action asks.
     ['personal-assistant_board', '*', 'allow'],
-    ['personal-assistant_factory_start', '*', 'ask'],
-    ['personal-assistant_factory_cancel', '*', 'ask'],
+    ['personal-assistant_build_start', '*', 'ask'],
     ['personal-assistant_session_start', '*', 'ask'],
   ];
 }

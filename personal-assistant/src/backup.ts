@@ -44,7 +44,6 @@ const { config } = require('./config.ts');
 const repo = require('./repo');
 const { logger } = require('./log.ts');
 const crypt = require('./backupCrypto.ts');
-const { resolveStateDir } = require('./dispatch/factoryPace.ts');
 
 const exec = promisify(execFile);
 const log = logger('backup');
@@ -52,7 +51,7 @@ const log = logger('backup');
 // PA_DB=sqlite: the same verbs on a SQLite file (src/backupSqlite.js); Postgres is unchanged.
 const sqliteStore = () => repo.backend.dialect === 'sqlite';
 
-// `.pabak` is the encrypted bundle (pg_dump + factory state + a manifest, see
+// `.pabak` is the encrypted bundle (pg_dump + a manifest, see
 // bundle() below); `.dump` is a bare pg_dump, what older versions wrote and
 // what a machine with no keychain still writes.
 const PATTERN = /^pa-(\d{8}-\d{6})\.(dump|pabak)$/;
@@ -201,17 +200,9 @@ function backupKey({ create = false }: { create?: boolean } = {}) {
   return { key, created: true };
 }
 
-// The factory's state dir, when the factory runs on this machine.
-function factoryStateDir() {
-  const f = config.factory;
-  if (!f.path || f.machine) return null;
-  // Out of the repo once `factory state migrate` ran (its .state-dir pointer).
-  const dir = resolveStateDir(f.path);
-  return fs.existsSync(dir) ? dir : null;
-}
-
-// What a backup leaves out of the factory state: logs are huge and rebuildable,
-// locks are meaningless on another machine.
+// What a bundle's state dir leaves out. Only bundles from before the software
+// factory was removed (D32) carry one: new ones pass no `state`, but a restore still
+// reads the old shape. Logs are huge and rebuildable, locks meaningless elsewhere.
 const STATE_EXCLUDE = ['logs', 'locks'];
 
 function stateStats(dir: string) {
@@ -239,19 +230,19 @@ function tarBin() {
 }
 
 /**
- * The encrypted bundle: `pa.dump` (the pg_dump), `state/` (the factory's state
- * dir, when the factory is local) and `manifest.json` (the table row counts at
+ * The encrypted bundle: `pa.dump` (the pg_dump), `state/` (an optional state
+ * dir; none since the factory was removed, D32) and `manifest.json` (the table row counts at
  * backup time, which the restore drill checks), in a tar, encrypted with
  * AES-256-GCM (src/backupCrypto.js). Consumes `dumpFile`.
  */
-async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, entry = 'pa.dump' }: { dumpFile: string; out: string; key?: Buffer | null; state?: string; counts?: unknown; entry?: string }) {
+async function bundle({ dumpFile, out, key, state, counts, entry = 'pa.dump' }: { dumpFile: string; out: string; key?: Buffer | null; state?: string; counts?: unknown; entry?: string }) {
   const stage = fs.mkdtempSync(path.join(path.dirname(out), '.stage-'));
   try {
     // entry: pa.dump (pg_dump), or pa.sqlite (a SQLite store's snapshot, src/backupSqlite.js).
     fs.renameSync(dumpFile, path.join(stage, entry));
     if (counts === undefined) counts = await require('./repo').backupDrill.tableCounts().catch(() => null);
-    // The state dir goes in under its own name (`factory state migrate --to` may
-    // pick one that is not `state`); the manifest says which.
+    // The state dir goes in under its own name (older bundles'
+    // was not always `state`); the manifest says which.
     const stateEntry = state ? path.basename(state) : null;
     const manifest = {
       format: 1,

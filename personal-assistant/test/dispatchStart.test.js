@@ -1,8 +1,5 @@
 'use strict';
 
-// These exercise the frozen factory path (D30): PA_BUILD=factory keeps it reachable.
-process.env.PA_BUILD = 'factory';
-
 // A local run's start and land against real git, with the store, termhub and
 // the brief's memory stubbed. What earns a test here is each promise a past
 // bug broke:
@@ -32,7 +29,6 @@ require('./_portable').preferDirectGit();
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-start-')));
 process.env.PA_WORKTREES_ROOT = path.join(tmp, 'worktrees');
 process.env.PA_DATA_DIR = path.join(tmp, 'data');
-delete process.env.PA_FACTORY_PATH;
 
 function stub(rel, exports) {
   const p = require.resolve(path.join(__dirname, '..', 'src', rel));
@@ -134,16 +130,23 @@ const sharedPushurls = (repo) => {
 };
 
 (async () => {
-  // ---- D28: start() never opens a Claude session of its own ---------------------
-  // Every dispatch is a factory job: without a factory it refuses, and the old
-  // route and machine choices are refused rather than quietly honoured. The
-  // rest of this file drives the legacy startSession (kept only to seed runs).
+  // ---- D30: start() never opens a Claude session of its own ---------------------
+  // Every dispatch is one Build agent (src/build): start() hands over the card, task, repo and
+  // model, ignores an end state or a mode, and writes nothing itself. The rest of this file
+  // drives the legacy startSession (kept only to seed runs).
   {
+    const seen = [];
+    stub('build/index.ts', {
+      MODELS: ['haiku', 'sonnet', 'opus', 'fable'],
+      start: async (o) => { seen.push(o); return { id: 41, machine: null, url: 'http://hub/#session=s', repo_path: o.repoPath, branch: 'jarvis/41-x', model: o.model || 'sonnet' }; },
+    });
     const before = store.queries.length;
-    await assert.rejects(dispatch.start({ task: 'fix the thing', mode: 'local' }), /every dispatch is a software-factory job and the factory is not configured/);
-    await assert.rejects(dispatch.start({ task: 'fix the thing', via: 'claude' }), /no route to pick.*drop --via claude/);
-    await assert.rejects(dispatch.start({ task: 'fix the thing', via: 'factory', machine: 'lab' }), /factory is not configured|--machine is gone/);
-    assert.strictEqual(store.queries.length, before, 'nothing written');
+    const r = await dispatch.start({ commitmentId: 7, task: 'fix the thing', mode: 'local', delivery: 'pr', model: 'opus', repoPath: '/r' });
+    assert.deepStrictEqual(seen, [{ commitmentId: 7, task: 'fix the thing', model: 'opus', repoPath: '/r' }]);
+    assert.deepStrictEqual([r.id, r.route, r.model, r.branch, r.delivery], [41, 'build', 'opus', 'jarvis/41-x', null]);
+    await dispatch.start({ task: 'x', model: 'gpt-9' });
+    assert.strictEqual(seen[1].model, null, 'a model Build does not know is dropped, not passed on');
+    assert.strictEqual(store.queries.length, before, 'nothing written here');
   }
 
   // ---- MH4: the old shared push block is cleared, and only it -----------------

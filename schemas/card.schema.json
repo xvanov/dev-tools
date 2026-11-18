@@ -71,14 +71,13 @@
         "id": { "type": "string", "pattern": "^p[0-9]+$" },
         "offer": {
           "type": "object",
-          "required": ["proposal", "kind", "status", "title", "body", "delivery", "repo"],
+          "required": ["proposal", "kind", "status", "title", "body", "repo"],
           "properties": {
             "proposal": { "type": "integer" },
             "kind": { "type": "string" },
             "status": { "type": "string" },
             "title": { "type": "string" },
             "body": { "type": "string" },
-            "delivery": { "type": ["string", "null"] },
             "repo": { "type": ["string", "null"] }
           },
           "additionalProperties": false
@@ -89,53 +88,25 @@
     },
     "run": {
       "type": "object",
-      "description": "One run of a card with its id chain flattened for the chat (chatTools chainFields over Run).",
+      "description": "One older run of a card (a Claude session in a worktree, or a software-factory job from before D32) as the chat reads it.",
       "required": ["run", "status", "route", "mode"],
       "properties": {
         "run": { "type": "integer" },
         "status": { "type": "string" },
         "route": { "type": "string" },
         "mode": { "type": ["string", "null"] },
-        "job": { "type": "string" },
-        "job_state": { "type": "string" },
         "delivery": { "type": "string" },
         "pr": { "type": "string" },
         "cost_usd": { "type": "number" },
         "session_id": { "type": "string" },
-        "session": { "type": "string" },
-        "steps": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["step"],
-            "properties": {
-              "step": { "type": "string" },
-              "story": { "type": "integer" },
-              "persona": { "type": "string" },
-              "runtime": { "type": "string" },
-              "state": { "type": "string" },
-              "session": { "type": "string" },
-              "session_id": { "type": "string" }
-            },
-            "additionalProperties": false
-          }
-        },
-        "prs": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["url"],
-            "properties": { "url": { "type": "string" }, "number": { "type": "integer" }, "state": { "type": "string" }, "ci": { "type": "string" } },
-            "additionalProperties": false
-          }
-        }
+        "session": { "type": "string" }
       },
       "additionalProperties": false
     },
     "offerRef": {
       "type": "object",
-      "required": ["proposal", "kind", "title", "delivery"],
-      "properties": { "proposal": { "type": "integer" }, "kind": { "type": "string" }, "title": { "type": "string" }, "delivery": { "type": ["string", "null"] } },
+      "required": ["proposal", "kind", "title"],
+      "properties": { "proposal": { "type": "integer" }, "kind": { "type": "string" }, "title": { "type": "string" } },
       "additionalProperties": false
     },
     "person": {
@@ -173,8 +144,8 @@
         "waiting_on": { "const": true },
         "offer": {
           "type": "object",
-          "required": ["proposal", "title", "delivery"],
-          "properties": { "proposal": { "type": "integer" }, "title": { "type": "string" }, "delivery": { "type": ["string", "null"] } },
+          "required": ["proposal", "title"],
+          "properties": { "proposal": { "type": "integer" }, "title": { "type": "string" } },
           "additionalProperties": false
         },
         "asks": {

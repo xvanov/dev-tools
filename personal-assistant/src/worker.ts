@@ -455,59 +455,6 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
     await require('./build/track.ts').tick();
   });
 
-  // Factory jobs (src/dispatch/factory.ts): their status onto the run rows,
-  // and a finished or failed one moves its commitment through the ledger.
-  // A no-op, without a command, while no factory run is live.
-  // Then the whole job list for the /factory page (factory_board), and a
-  // notice for a job that finished, needs you, failed or has red CI.
-  // Paced, not fixed (src/dispatch/factoryPace.ts): every 5 s while a job
-  // moves, at once when a factory on this machine writes its state, else every
-  // PA_FACTORY_POLL_SECONDS. Its writes reach the pages through the live feed.
-  // A service on the scheduler: its timer, watcher and subscription run only
-  // while this generation holds the lease, and stop on drain.
-  if (require('./dispatch/factory.ts').enabled()) sched.service('factory-pacer', () => {
-    const factory = require('./dispatch/factory.ts');
-    const pace = require('./dispatch/factoryPace.ts');
-    const pacer = pace.createPacer({
-      run: () =>
-        exclusive('factory', async () => {
-          let failed = null;
-          await factory.poll().catch((err: Error) => { failed = err; });
-          await factory.refreshBoard();
-          if (failed) throw failed;
-        }),
-      nextMs: async () => pace.nextDelayMs({
-        jobs: (await factory.snapshot()).jobs,
-        slowSeconds: config.factory.pollSeconds,
-        fastSeconds: config.factory.activePollSeconds,
-      }),
-      onError: (err: unknown) => log.warn('factory pacing failed', { message: (err as Error).message }),
-    });
-    pacer.start(2000 + Math.random() * 3000);
-    const stateDir = pace.localStateDir(config.factory);
-    const unwatch = stateDir ? pace.watchState(stateDir, { onChange: () => pacer.kick(), ignore: () => pacer.busy() }) : null;
-    if (unwatch) log.info('watching the local factory state', { dir: stateDir });
-    // A run that just got its factory job (dispatch.start, Jarvis's
-    // factory_start, `pa do`, in any process) moves now: switch to the fast
-    // cadence without waiting out a slow one. hurry() only ever pulls the next
-    // pass in to the fast interval, so the pass's own run updates cannot loop.
-    const events = require('./events');
-    events.ensureListening();
-    // The same for a job status a factory pushed (POST /api/factory/events):
-    // the full list follows within the fast interval.
-    const unsubscribe = events.bus().subscribe((e: Json) => {
-      const p = e.payload || {};
-      if (e.topic === 'factory' ? p.op === 'push' : p.factory_job_id && ['starting', 'running'].includes(p.status)) {
-        pacer.hurry(config.factory.activePollSeconds * 1000);
-      }
-    }, { topics: ['run', 'factory'] });
-    return () => {
-      pacer.stop();
-      if (unwatch) unwatch();
-      unsubscribe();
-    };
-  });
-
   // Routines: due ones run one at a time; a missed slot runs once, never a
   // backlog (src/routines). Suggestions are proposed nightly, never enabled.
   if (config.routines.enabled) {

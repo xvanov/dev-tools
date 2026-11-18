@@ -162,14 +162,14 @@ const sdkMsg = {
   assert.strictEqual(env.PA_CHAT_SESSION, '1');
   assert.strictEqual(env.CLAUDE_CODE_ARTIFACT, '1', 'the Artifact tool is on: shared Claude pages are found by voice, no link pasted');
 
-  assert.deepStrictEqual(S.splitTool('mcp__pa-chat__factory_start'), { server: 'pa-chat', tool: 'factory_start' });
+  assert.deepStrictEqual(S.splitTool('mcp__pa-chat__session_start'), { server: 'pa-chat', tool: 'session_start' });
   assert.deepStrictEqual(S.splitTool('mcp__personal-assistant__recall'), { server: 'personal-assistant', tool: 'recall' });
   assert.deepStrictEqual(S.splitTool('Read'), { server: null, tool: 'Read' });
 
   // The hook: deny wins; the chat's actions always ask; an explicit rule stands; no rule defers.
-  assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', { decision: 'deny', rule: 'voice-no-merge' }).decision, 'deny');
-  assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', { decision: 'allow', rule: 'oops' }).decision, 'ask', 'no rule makes an action run unasked');
-  assert.strictEqual(S.hookDecision('mcp__pa-chat__factory_start', null).decision, 'ask', 'without a policy an action still asks');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'deny', rule: 'voice-no-merge' }).decision, 'deny');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'allow', rule: 'oops' }).decision, 'ask', 'no rule makes an action run unasked');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', null).decision, 'ask', 'without a policy an action still asks');
   // Shared Claude pages: listing and reading run unasked; publishing, deleting, pinning still ask.
   assert.strictEqual(S.artifactRead('Artifact', { action: 'list', scope: 'shared' }), true);
   assert.strictEqual(S.artifactRead('Artifact', { action: 'read', url: 'https://claude.ai/artifact/x' }), true);
@@ -322,11 +322,11 @@ const sdkMsg = {
       const hook = run.options.hooks.PreToolUse[0].hooks[0];
 
       // The hook: an action asks (audited by the MCP server, not twice here); a read is allowed.
-      const input = { card: '412', delivery: 'pr' };
-      const h = await hook({ hook_event_name: 'PreToolUse', tool_name: 'mcp__pa-chat__factory_start', tool_input: input, tool_use_id: 'tu1' }, 'tu1', { signal: new AbortController().signal });
+      const input = { card: '412', prompt: 'fix the export' };
+      const h = await hook({ hook_event_name: 'PreToolUse', tool_name: 'mcp__pa-chat__session_start', tool_input: input, tool_use_id: 'tu1' }, 'tu1', { signal: new AbortController().signal });
       assert.deepStrictEqual([h.hookSpecificOutput.hookEventName, h.hookSpecificOutput.permissionDecision], ['PreToolUse', 'ask']);
       const last = policy.calls.authorize.at(-1);
-      assert.deepStrictEqual([last.req.tool, last.req.channel, last.req.action, last.opts.audit], ['factory_start', 'chat', 'call', false]);
+      assert.deepStrictEqual([last.req.tool, last.req.channel, last.req.action, last.opts.audit], ['session_start', 'chat', 'call', false]);
       const r = await hook({ tool_name: 'mcp__pa-chat__board', tool_input: {}, tool_use_id: 'tu0' });
       assert.strictEqual(r.hookSpecificOutput.permissionDecision, 'allow');
       const rd = await hook({ tool_name: 'Read', tool_input: { file_path: 'INBOX.md' }, tool_use_id: 'tuR' });
@@ -337,16 +337,16 @@ const sdkMsg = {
       const bh = await hook({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'tuB' });
       assert.deepStrictEqual(bh, { continue: true }, 'no rule: Claude Code\'s own settings decide');
 
-      run.emit(sdkMsg.assistant('msg_a', [{ type: 'tool_use', id: 'tu1', name: 'mcp__pa-chat__factory_start', input }], 'tool_use'));
+      run.emit(sdkMsg.assistant('msg_a', [{ type: 'tool_use', id: 'tu1', name: 'mcp__pa-chat__session_start', input }], 'tool_use'));
       await until(() => got.some((e) => e.type === 'activity' && e.toolUseId === 'tu1'), 'tool activity');
       const ac = new AbortController();
-      const decided = run.options.canUseTool('mcp__pa-chat__factory_start', input, { signal: ac.signal, toolUseID: 'tu1' });
+      const decided = run.options.canUseTool('mcp__pa-chat__session_start', input, { signal: ac.signal, toolUseID: 'tu1' });
       await tick();
       const offer = got.find((e) => e.type === 'permission' && e.toolUseId === 'tu1');
       assert.ok(offer, 'the card and Talk are offered the prompt');
       assert.strictEqual(offer.approvable, true);
-      assert.strictEqual(offer.ask, 'Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?');
-      assert.ok(got.some((e) => e.type === 'activity' && /^waiting for your yes: starting a factory job/.test(e.text)));
+      assert.strictEqual(offer.ask, 'Start a Claude Code agent to fix the export. Shall I?');
+      assert.ok(got.some((e) => e.type === 'activity' && /^waiting for your yes: starting a session/.test(e.text)));
       const s = await feed.session();
       assert.strictEqual(s.waitingOn, 'dashboard');
       assert.strictEqual(s.permission.toolUseId, 'tu1');
@@ -357,10 +357,10 @@ const sdkMsg = {
       await assert.rejects(feed.answerPermission({ answer: 'maybe', toolUseId: 'tu1' }), (e) => e.status === 409);
 
       const ok = await feed.answerPermission({ answer: 'yes', toolUseId: 'tu1', via: 'dashboard' });
-      assert.deepStrictEqual(ok, { ok: true, answer: 'yes', tool: 'factory_start' });
+      assert.deepStrictEqual(ok, { ok: true, answer: 'yes', tool: 'session_start' });
       assert.deepStrictEqual(await decided, { behavior: 'allow', updatedInput: input }, 'that one call is allowed, nothing broader');
       const enf = policy.calls.enforce.at(-1);
-      assert.deepStrictEqual([enf.tool, enf.action, enf.channel, enf.subject], ['factory_start', 'approve', 'dashboard', 'tu1'], 'the answer goes through the policy engine');
+      assert.deepStrictEqual([enf.tool, enf.action, enf.channel, enf.subject], ['session_start', 'approve', 'dashboard', 'tu1'], 'the answer goes through the policy engine');
       assert.ok(got.some((e) => e.type === 'permission' && e.cleared && e.answered === 'yes'));
       assert.strictEqual((await feed.session()).permission, null);
       await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'tu1' }), (e) => e.status === 409, 'answered once only');
@@ -375,7 +375,7 @@ const sdkMsg = {
       assert.deepStrictEqual([policy.calls.enforce.at(-1).action, policy.calls.enforce.at(-1).channel], ['deny', 'voice']);
 
       // The policy bars voice from approving a merge: 403, and the prompt still waits for the click path.
-      const d3 = run.options.canUseTool('mcp__pa-chat__factory_start', { card: '7', delivery: 'auto_merge' }, { signal: ac.signal, toolUseID: 'tu3' });
+      const d3 = run.options.canUseTool('mcp__pa-chat__session_start', { card: '7', delivery: 'auto_merge' }, { signal: ac.signal, toolUseID: 'tu3' });
       await tick();
       await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'tu3', via: 'voice' }), (e) => e.status === 403);
       assert.strictEqual((await feed.session()).permission.toolUseId, 'tu3');
@@ -401,7 +401,7 @@ const sdkMsg = {
           consumed.push([req.subject, verdict.tags]);
           return true;
         };
-        const ps = run.options.canUseTool('mcp__pa-chat__factory_start', { card: '9', delivery: 'auto_merge' }, { signal: ac.signal, toolUseID: 'tuS' });
+        const ps = run.options.canUseTool('mcp__pa-chat__session_start', { card: '9', delivery: 'auto_merge' }, { signal: ac.signal, toolUseID: 'tuS' });
         await tick();
         await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'tuS', via: 'dashboard' }), (e) => e.status === 403 && e.needsStepUp === true && e.approvalId === 'tuS' && /passkey/.test(e.message));
         assert.strictEqual((await feed.session()).permission.toolUseId, 'tuS', 'still waiting for the tap');
@@ -579,7 +579,7 @@ const sdkMsg = {
       const runA = sdkA.runs[0];
       await runA.next();
       runA.emit(sdkMsg.init('sess-A'));
-      const pending = runA.options.canUseTool('mcp__pa-chat__factory_start', { card: '5' }, { signal: new AbortController().signal, toolUseID: 'tuZ' });
+      const pending = runA.options.canUseTool('mcp__pa-chat__session_start', { card: '5' }, { signal: new AbortController().signal, toolUseID: 'tuZ' });
       await tick();
       // Routing moves to generation B; A drains while its turn is still running.
       const drained = genA.drain({ waitMs: 1000 });

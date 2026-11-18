@@ -9,7 +9,7 @@
 //   node schemas/gen-types.js --check   exit 1 if types.d.ts is stale
 //
 // Each schema becomes an exported type named after its title; each $defs entry
-// becomes `<Title><Def>` (job.schema.json#/$defs/story -> JobStory).
+// becomes `<Title><Def>` (card.schema.json#/$defs/run -> CardRun).
 
 const fs = require('fs');
 const path = require('path');

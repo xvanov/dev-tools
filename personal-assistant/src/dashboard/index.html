@@ -127,8 +127,6 @@
   pre.sub { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; margin: 4px 0 0; }
   .endstate { margin: 6px 0 2px; font-weight: 600; }
   .endstate.loud { color: var(--bad); }
-  .endstate-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-  .done-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
   details.brief summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-top: 4px; }
   details.brief pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 420px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 4px; }
   .why { margin-top: 6px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line-strong);
@@ -337,7 +335,7 @@
   <section id="onme" class="psec"><details data-fold="onme" data-open><summary><h2 title="Your to-do list, each task once. When a task waits on someone it says &quot;blocked on&quot; them: click it to see what you are waiting for and why. Something you need from someone with no task of its own says &quot;waiting on&quot;. Things that look done are listed to confirm.">On me</h2><span class="n"></span></summary><div class="psec-body">
     <form class="row" id="addtask" title="A task because you say so. Others come from what people say in Teams, mail and meetings."><input type="text" name="text" maxlength="500" placeholder="+ task — what?" aria-label="New task"><input type="text" name="due" maxlength="60" placeholder="due (friday, tomorrow 3pm)" aria-label="Due" style="flex:0 1 13em"><button type="submit">Add</button></form>
     <div class="list"></div></div></details></section>
-  <section id="runs" class="psec" hidden><details data-fold="runs" data-open><summary><h2 title="Runs the assistant dispatched that are not factory jobs (those are on Build), and factory runs that are blocked on you.">Agent runs</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="runs" class="psec" hidden><details data-fold="runs" data-open><summary><h2 title="Older runs the assistant dispatched as Claude sessions in a worktree. Build agents are on Build.">Agent runs</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
   <section id="waiting" class="psec"><details data-fold="waiting"><summary><h2 title="People&#39;s own to-dos you heard about. Off your list because nothing of yours waits on them. If one does, press &quot;This blocks me&quot;.">Others' work, not blocking you</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
   <section id="closed" class="psec"><details data-fold="closed"><summary><h2>Closed recently</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
   <section id="feed" class="psec"><details data-fold="feed"><summary><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
@@ -578,16 +576,11 @@ function contextPanel(x) {
   }
   for (const r of x.runs || []) {
     const where = r.route === 'factory'
-      ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.delivery ? ` · ${r.delivery}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}`
-      : `${r.machine ? `${r.machine} · ` : ''}${r.branch || ''}`;
-    lines.push(el('div', { class: 'who', title: [r.route_reason, ...(r.factory_warnings || []).map((w) => `warning: ${w}`)].filter(Boolean).join('\n') }, `run #${r.id} · ${r.status} · ${r.mode} · ${where}${(r.factory_warnings || []).length ? ' · factory warned' : ''} `,
-      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, r.route === 'factory' ? 'follow job' : 'open session') : null,
+      ? 'a software-factory job (the factory was removed)' + (r.cost_usd != null ? ' · $' + Number(r.cost_usd).toFixed(2) : '')
+      : (r.machine ? r.machine + ' · ' : '') + (r.branch || '');
+    lines.push(el('div', { class: 'who', title: r.route_reason || '' }, 'run #' + r.id + ' · ' + r.status + ' · ' + r.mode + ' · ' + where + ' ',
+      r.url && r.route !== 'factory' && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, 'open session') : null,
       r.mr_url ? link(r.mr_url, 'PR') : null));
-    // A job nothing ticks never starts: shown on the card, not only in a tooltip.
-    const notTicked = (r.factory_warnings || []).find((w) => /^ticker:/.test(String(w)));
-    if (notTicked && ['starting', 'running', 'waiting'].includes(r.status) && (!r.factory_state || r.factory_state === 'queued')) {
-      lines.push(el('div', { class: 'who warn' }, `will not start: ${String(notTicked).replace(/^ticker:\s*/, '')}`));
-    }
   }
   // Every run's full chain: job, steps and their sessions, every PR with CI (plan E1).
   lines.push(...chainLines(x));
@@ -606,10 +599,8 @@ function alsoInChips(x) {
     el('a', { href: l.url, target: '_blank', rel: 'noopener', class: 'k-also', title: `#${l.id}: ${l.url}` }, l.label)));
 }
 
-// Plan E1: the card's id chain, one line per run — run → job (Build) → each
-// step's live session (Run) → PRs with CI — built from stored ids
-// (dashboard/cards.js chainsFor), never from titles. Job links are relative
-// (`factory#job=…`): nav.js switches to Build and carries the anchor along.
+// Plan E1: the card's id chain, one line per older run — run → its session (Run) → its PR —
+// built from stored ids (dashboard/cards.js chainsFor), never from titles.
 // A card's Build run (src/build): state chip, started to ended and elapsed, notional
 // cost, links to its board card and termhub session; with several runs, the aggregate.
 function buildLine(c) {
@@ -633,16 +624,9 @@ function buildLine(c) {
 
 function chainLines(x) {
   const http = (u) => /^https?:\/\//.test(u || '');
-  return (x.chain || []).filter((r) => r.job || r.session?.url || (r.prs || []).length || (r.steps || []).length).map((r) => {
+  return (x.chain || []).filter((r) => r.session?.url || (r.prs || []).length).map((r) => {
     const parts = [el('span', {}, `run #${r.run}${r.status ? ` (${r.status})` : ''}`)];
-    if (r.session?.url && http(r.session.url)) parts.push(el('a', { href: r.session.url, title: 'The run\'s session in Run' }, r.job ? 'follow' : 'session'));
-    if (r.job) parts.push(el('a', { href: `factory#job=${encodeURIComponent(r.job)}`, title: 'The job in Build' }, `job ${r.job}${r.jobState ? ` · ${r.jobState}` : ''}`));
-    for (const s of (r.steps || []).slice(0, 6)) {
-      const label = `step ${s.step}${s.persona ? ` ${s.persona}` : ''}${s.state ? ` · ${s.state}` : ''}`;
-      parts.push(s.session?.url && http(s.session.url)
-        ? el('a', { href: s.session.url, title: `This step's session${s.session.machine ? ` on ${s.session.machine}` : ''} in Run` }, label)
-        : el('span', { title: 'No live session for this step' }, label));
-    }
+    if (r.session?.url && http(r.session.url)) parts.push(el('a', { href: r.session.url, title: 'The run\'s session in Run' }, 'session'));
     for (const p of (r.prs || []).slice(0, 6)) {
       if (!http(p.url)) continue;
       const ci = p.ci && p.ci !== 'none' ? ` · CI ${p.ci}` : '';
@@ -1221,34 +1205,14 @@ function render(s) {
   // Columns with nothing in them are not drawn: fewer boxes to read past.
   document.getElementById('drafts').hidden = !s.drafts.length;
 
-  // A run routed to the factory is a job on Build, with its state, PR and cost:
-  // here only when it is blocked (it waits on you), else one line pointing there.
+  // Older runs (Claude sessions in a worktree; software-factory jobs from before its removal).
+  // Build agents are on Build.
   const allRuns = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
-  // A factory job parked on your approval (needs_human) is shown here too, with
-  // the same Approve as Build's (POST api/factory/jobs/<id>/approve; the server
-  // runs only the approval the factory itself named).
-  const needsApproval = (r) => r.route === 'factory' && r.factory_state === 'needs_human' && r.factory_job_id;
-  const onBuild = allRuns.filter((r) => r.route === 'factory' && r.status !== 'blocked' && !needsApproval(r));
-  const runs = allRuns.filter((r) => !onBuild.includes(r));
-  const approveJob = (r) => {
-    const b = el('button', { class: 'primary', title: 'Run the approve-direction the factory named for this job' }, 'Approve');
-    b.addEventListener('click', act(b, async () => {
-      await post(`api/factory/jobs/${encodeURIComponent(r.factory_job_id)}/approve`, {});
-      toast(`${r.factory_job_id} approved`);
-    }));
-    return b;
-  };
-  fill('runs', runs, (r) => el('div', { class: 'item' },
+  fill('runs', allRuns, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
-    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, needsApproval(r) ? el('span', { class: 'flag blocked' }, 'waiting for your approval') : r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
-      r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
-      r.repo_path, link(r.mr_url, 'MR')])),
-    needsApproval(r) ? el('div', { class: 'actions' }, approveJob(r)) : null), 'No agent runs.');
-  if (onBuild.length) {
-    const more = el('div', { class: 'item sub' }, `${onBuild.length} factory run${onBuild.length === 1 ? '' : 's'} in progress or done: `, el('a', { href: 'factory' }, 'see Build'));
-    if (runs.length) document.querySelector('#runs .list').append(more);
-    else document.querySelector('#runs .list').replaceChildren(more);
-  }
+    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
+      r.route === 'factory' ? 'software-factory job (removed)' : null,
+      r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
   document.getElementById('runs').hidden = !allRuns.length;
 
   fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
@@ -1300,48 +1264,20 @@ function noteCard(n) {
       thumb('down', '👎', 'Not worth an interruption — fewer like this')));
 }
 
-// A dispatch offer frozen by src/dispatch/offer.ts: the end state first, in
-// plain words (loud when nothing human follows the yes), a picker to change
-// it when accepting, the route, the done-criteria, and — one click away — the
-// exact brief that will be sent.
-const UNATTENDED = new Set(['auto_merge', 'push_to_main']);
+// A dispatch offer frozen by src/dispatch/offer.ts: what starting it does (one Build agent, its
+// model and repo) and why. Cards from before the software factory was removed also carry a brief,
+// which stays one click away.
 function offerDetails(p) {
   const pl = p.payload || {};
-  const plain = pl.deliveryPlain || {};
-  const line = el('div', { class: 'endstate' });
-  const show = (d) => {
-    line.textContent = d ? `End state: ${d} — ${plain[d] || ''}` : 'End state: none — read-only research; changes nothing.';
-    line.className = UNATTENDED.has(d) ? 'endstate loud' : 'endstate';
-  };
-  show(pl.delivery);
-  let select = null;
-  const nodes = [line];
-  if (pl.delivery) {
-    select = el('select', { 'aria-label': 'End state on accept' });
-    for (const d of Object.keys(plain)) {
-      const o = el('option', { value: d }, d);
-      if (d === pl.delivery) o.selected = true;
-      select.append(o);
-    }
-    select.addEventListener('change', () => show(select.value));
-    nodes.push(el('div', { class: 'endstate-pick' }, 'Change it before accepting:', select));
-  }
-  const route = pl.via === 'factory'
-    ? `Software factory · app ${pl.app || `${pl.slug} (registered on accept)`} · pipeline ${pl.pipeline}` +
-      (pl.models && Object.keys(pl.models).length ? ` · models ${Object.entries(pl.models).map(([k, v]) => `${k}=${v}`).join(' ')}` : '')
-    : `Claude session · mode ${pl.mode || '?'}`;
-  nodes.push(el('div', { class: 'sub' }, route));
-  if (pl.routeReason) nodes.push(el('div', { class: 'sub' }, `Why: ${pl.routeReason}`));
-  if (Array.isArray(pl.done)) {
-    nodes.push(el('div', { class: 'sub' }, pl.done.length ? 'Done when:' : 'Done when: (no criteria)'));
-    if (pl.done.length) nodes.push(el('ul', { class: 'done-list' }, ...pl.done.map((d) => el('li', {}, d))));
-  }
+  const nodes = [];
+  nodes.push(el('div', { class: 'sub' }, 'Build agent (one Claude Code agent)' + (pl.model ? ' · ' + pl.model : '') + (pl.repoPath ? ' · ' + pl.repoPath : '')));
+  if (pl.routeReason) nodes.push(el('div', { class: 'sub' }, 'Why: ' + pl.routeReason));
   if (pl.brief) {
     nodes.push(el('details', { class: 'brief' },
-      el('summary', {}, `The brief that will be sent (${pl.briefBy || 'composed'}) — at the end state shown when it was prepared`),
+      el('summary', {}, 'The older brief (' + (pl.briefBy || 'composed') + ')'),
       el('pre', {}, pl.brief)));
   }
-  return { nodes, select };
+  return { nodes, select: null };
 }
 
 // A prepared action or a question (src/proposals), on the card of the ask it
@@ -1351,7 +1287,6 @@ function askBlock(p, standalone) {
   const offer = p.kind === 'dispatch' && p.payload?.frozen ? offerDetails(p) : null;
   const decide = (accept, answer) => async () => {
     const body = { answer };
-    if (accept && offer?.select && offer.select.value !== p.payload.delivery) body.delivery = offer.select.value;
     const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, body);
     toast(r.result || (accept ? 'done' : 'declined'));
   };

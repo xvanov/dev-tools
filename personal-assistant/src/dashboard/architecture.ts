@@ -9,8 +9,7 @@
 //   GET /api/architecture?health=1    { health: { <check id>: {state, ms, detail} } }
 //
 // Health is a separate request so the diagram never waits on a probe. Every
-// check is a short-timeout local probe (loopback, or the factory machine's
-// termhub from PA_MACHINES), run in parallel and cached for a few seconds.
+// check is a short-timeout local probe (loopback), run in parallel and cached for a few seconds.
 // The checks are declared in the JSON but resolved here: a check names a
 // config key or a loopback URL, never an arbitrary host.
 //
@@ -79,17 +78,8 @@ function resolveCheck(check: Check | null | undefined, cfg: unknown = config): T
     if (check.origin) base = new URL(base as string).origin;
     const url = String(base).replace(/\/+$/, '') + (check.path || '');
     if (!isLoopback(url)) return { error: 'not loopback' };
-    // headers: factory serve's /api/health refuses a GET without X-Factory.
+    // headers: a check may send fixed ones (none today).
     return check.headers ? { kind: 'http', url, headers: check.headers } : { kind: 'http', url };
-  }
-  if (check.kind === 'machine') {
-    const name = pick(cfg, 'factory.machine');
-    // Empty or "local" is this machine's factory (PA_FACTORY_MACHINE=local), not a PA_MACHINES entry.
-    if (!name || String(name).toLowerCase() === 'local') return pick(cfg, 'factory.path') ? { kind: 'self' } : { error: 'no factory configured' };
-    const m = ((pick(cfg, 'dispatch.machines') || {}) as Record<string, { url?: string; termhub?: string } | undefined>)[String(name)];
-    const base = m && (m.url || m.termhub);
-    if (!base) return { error: `machine ${name} not in PA_MACHINES` };
-    return { kind: 'http', url: String(base).replace(/\/+$/, '') + '/api/health', remote: true };
   }
   return { error: `unknown check kind ${check.kind}` };
 }
@@ -177,12 +167,7 @@ function liveConfig(cfg: Row = config) {
     fastModel: pick(cfg, 'fastLane.model') || null,
     fastFallback: pick(cfg, 'fastLane.fallback') || null,
     distillModel: pick(cfg, 'anthropic.model') || null,
-    // No route to pick (D28): every dispatch is a factory job.
-    dispatchVia: pick(cfg, 'factory.path') ? 'factory (always)' : 'not configured',
-    factoryMachine: pick(cfg, 'factory.machine') || (pick(cfg, 'factory.path') ? 'this machine' : null),
-    factoryPath: pick(cfg, 'factory.path') || null,
-    factoryRuntime: pick(cfg, 'factory.runtime') || null,
-    factoryPipeline: pick(cfg, 'factory.pipeline') || null,
+    dispatchVia: 'Build agent (always)',
     termhub: pick(cfg, 'termhub.url') || null,
     voice: pick(cfg, 'voice.url') || null,
     database: db,

@@ -42,12 +42,12 @@ async function pending({ limit = 40 }: { limit?: number } = {}) {
 // Typed actions for proposals no task is waiting on. Each gets the proposal
 // and my answer and returns a short result line.
 const HANDLERS = {
-  // Start a run on an ask. A frozen offer (src/dispatch/offer.ts) runs
-  // exactly what its card showed — route, app, done-criteria, brief,
-  // pipeline, models — at the delivery level shown, or the one I picked on the
-  // card when accepting. An older proposal without frozen values is a run in
-  // the mode and on the route it named (a Claude session if none).
-  async dispatch(p: any, answer: string, { delivery: picked = null }: { delivery?: string | null } = {}) {
+  // Start a run on an ask: one Build agent (src/build; D30). A frozen offer
+  // (src/dispatch/offer.ts) carries the task, the repo (checked when the card
+  // was made) and the model, and runs exactly what its card showed. Cards from
+  // before the factory was removed (D32) carry more (end state, app, pipeline,
+  // models, done-criteria); Build ignores those fields.
+  async dispatch(p: any, answer: string, _opts: { delivery?: string | null } = {}) {
     const pl = p.payload || {};
     if (pl.repoPath && !pl.repoVerifiedAt) {
       // A card made before `--repo` had to be a known project: checked now, with the way out.
@@ -55,46 +55,12 @@ const HANDLERS = {
         throw new Error(`this card's repo ${pl.repoPath} is not a known project — decline it and offer it again (pa propose …), or add the checkout with \`pa projects sync\``);
       });
     }
-    if (pl.frozen) {
-      const D = require('../dispatch/deliveryCore.ts');
-      const delivery = picked ? D.delivery(picked) : pl.delivery || null;
-      const changed = Boolean(picked) && delivery !== pl.delivery;
-      if (pl.via === 'factory' && !delivery) throw new Error('a factory offer without a delivery level — decline it and offer it again');
-      const run = await require('../dispatch').start({
-        commitmentId: p.commitment_id,
-        task: pl.task || null,
-        repoPath: pl.repoPath || null,
-        // Every start is a factory job (D28). A card made for a Claude session
-        // (before D28) runs as a code job in its mode; plan stays a plan job.
-        mode: (changed ? undefined : pl.mode) || undefined,
-        delivery: delivery || undefined,
-        deliverySource: changed ? 'explicit' : pl.deliverySource || null,
-        deliveryPhrase: changed ? null : pl.deliveryPhrase || null,
-        app: pl.app || null,
-        register: pl.via === 'factory' ? Boolean(pl.register) : true,
-        done: Array.isArray(pl.done) ? pl.done : [],
-        pipeline: pl.pipeline || null,
-        models: pl.models || null,
-        brief: pl.via === 'factory' ? require('../dispatch/offer.ts').briefAt(pl, delivery) : null,
-        briefBy: pl.briefBy || null,
-        frozen: true,
-        // Accepting the card IS the operator's confirmation of its end state
-        // (the CLI refuses to accept an unattended one without a terminal).
-        confirmedUnattended: true,
-        repoVerified: true, // checked when the card was made, or just above
-        routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
-        // JOBS-API v1.2: what kind of work, and who does it (older cards: code, the default runtime).
-        jobKind: pl.via === 'factory' ? pl.jobKind || null : null,
-        runtime: pl.via === 'factory' ? pl.runtime || null : null,
-        title: pl.title || null,
-      });
-      return describeStart(run);
-    }
     const run = await require('../dispatch').start({
       commitmentId: p.commitment_id,
-      mode: pl.mode || undefined,
+      task: pl.task || null,
       repoPath: pl.repoPath || null,
-      repoVerified: true,
+      model: pl.model || null,
+      repoVerified: true, // checked when the card was made, or just above
       routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
     });
     return describeStart(run);
@@ -113,11 +79,7 @@ const HANDLERS = {
 };
 
 function describeStart(run: any) {
-  if (run.route === 'factory') {
-    if (run.submitUnknown) return `run #${run.id} sent to the factory; its answer was lost — the worker matches it to its job (pa review ${run.id})`;
-    return `run #${run.id} sent to the factory (job ${run.jobId}, ${run.jobKind && run.jobKind !== 'code' ? `${run.jobKind}` : run.delivery})`;
-  }
-  return `run #${run.id} started (${run.mode}${run.delivery ? ` → ${run.delivery}` : ''})`;
+  return `run #${run.id} started (one Claude Code agent${run.model ? `, ${run.model}` : ''})`;
 }
 
 /**
@@ -148,7 +110,7 @@ async function decide(id: any, { accept, answer = null, delivery = null }: { acc
     return { ok: false, result: cur ? `already ${cur.status}` : `no proposal #${id}` };
   }
   let result = accept ? 'accepted' : 'declined';
-  if (p.payload?.task) {
+  if (p.kind !== 'dispatch' && p.payload?.task) {
     // A durable task is waiting: it does the work (src/durable).
     await require('../durable').emit(`proposal:${p.id}`, { accepted: !!accept, answer });
   } else if (accept && (HANDLERS as any)[p.kind]) {
@@ -168,7 +130,7 @@ async function decide(id: any, { accept, answer = null, delivery = null }: { acc
 async function expire() {
   const expired = await repo.proposals.expireDue();
   for (const p of expired) {
-    if (p.payload?.task) await require('../durable').emit(`proposal:${p.id}`, { accepted: false, expired: true }).catch(() => {});
+    if (p.kind !== 'dispatch' && p.payload?.task) await require('../durable').emit(`proposal:${p.id}`, { accepted: false, expired: true }).catch(() => {});
   }
   return expired.length;
 }

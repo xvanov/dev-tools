@@ -54,7 +54,7 @@
   var DESTS = [
     { id: 'talk', label: 'Ask', about: 'talk to Jarvis', host: 'pa', path: 'talk' },
     { id: 'dashboard', label: 'Plan', about: 'the board, chat, memory, routines', host: 'pa', path: '' },
-    { id: 'factory', label: 'Build', about: 'every job the software factory runs', host: 'pa', path: 'factory' },
+    { id: 'factory', label: 'Build', about: 'the Build agents: one Claude Code agent per task', host: 'pa', path: 'factory' },
     { id: 'sessions', label: 'Run', about: 'every terminal in termhub', host: 'termhub', path: '/' },
     { id: 'agenttime', label: 'Meter', about: 'how long agents worked, and waited on you', host: 'termhub', path: '/dashboard' },
     { id: 'architecture', label: 'Map', about: 'how the parts fit together', host: 'pa', path: 'architecture' },

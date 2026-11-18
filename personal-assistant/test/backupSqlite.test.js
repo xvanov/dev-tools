@@ -18,7 +18,6 @@ process.env.PA_SQLITE_PATH = path.join(dir, 'pa_test_store.sqlite');
 process.env.PA_SQLITE_KEY = 'backup-test-store-key';
 process.env.PA_BACKUP_DIR = path.join(dir, 'backups');
 process.env.PA_BACKUP_KEY = crypto.randomBytes(32).toString('base64');
-process.env.PA_FACTORY_MACHINE = 'none'; // no factory state to bundle
 
 const { available } = require('../src/db/sqlite.ts');
 

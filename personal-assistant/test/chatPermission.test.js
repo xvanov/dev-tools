@@ -19,7 +19,7 @@ const T = require('../src/chat/transcript.ts');
 const { createFeed } = require('../src/chat/feed.ts');
 
 // A Claude Code permission prompt for an MCP tool, as termhub's replay gives it.
-const PROMPT = (tool = 'factory_start', cursor = 1, extra = '') => [
+const PROMPT = (tool = 'session_start', cursor = 1, extra = '') => [
   '● Starting the factory job for card 412.',
   '',
   '╭──────────────────────────────────────────────────────────────╮',
@@ -35,41 +35,41 @@ const PROMPT = (tool = 'factory_start', cursor = 1, extra = '') => [
   '╰──────────────────────────────────────────────────────────────╯',
 ].join('\n');
 const SESSION = { id: 's1', alive: true, kind: 'claude', idleState: 'waiting', idleReason: 'blocked' };
-const PENDING = { toolUseId: 'toolu_01', name: 'mcp__pa-chat__factory_start' };
+const PENDING = { toolUseId: 'toolu_01', name: 'mcp__pa-chat__session_start' };
 
 // --- which calls may be answered here ---------------------------------------------
-assert.strictEqual(P.chatAction('mcp__pa-chat__factory_start'), 'factory_start');
+assert.strictEqual(P.chatAction('mcp__pa-chat__session_start'), 'session_start');
 assert.strictEqual(P.chatAction('mcp__pa-chat__session_start'), 'session_start');
 assert.strictEqual(P.chatAction('mcp__pa-chat__board'), null, 'a read never prompts; not an action');
-assert.strictEqual(P.chatAction('mcp__personal-assistant__factory_start'), null, 'only the chat\'s own server');
+assert.strictEqual(P.chatAction('mcp__personal-assistant__session_start'), null, 'only the chat\'s own server');
 assert.strictEqual(P.chatAction('Bash'), null, 'a shell command is answered in termhub');
 assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
 
 // --- reading the screen ----------------------------------------------------------
 {
-  const r = P.readPrompt(PROMPT(), 'factory_start');
+  const r = P.readPrompt(PROMPT(), 'session_start');
   assert.deepStrictEqual(r, { ok: true, cursorOnYes: true, escOffered: true });
   // termhub's replay often loses the spaces of a full-screen prompt.
-  assert.deepStrictEqual(P.readPrompt(PROMPT().replace(/ /g, ''), 'factory_start'), { ok: true, cursorOnYes: true, escOffered: true });
-  assert.strictEqual(P.readPrompt(PROMPT(), 'factory_cancel').ok, false, 'a prompt for another tool');
-  assert.strictEqual(P.readPrompt(PROMPT('factory_start', 2), 'factory_start').cursorOnYes, false, 'cursor on "don\'t ask again"');
-  assert.match(P.readPrompt('● Done.\n> \n? for shortcuts', 'factory_start').reason, /no permission prompt/);
-  assert.match(P.readPrompt(`${PROMPT()}\n● Started.\n> \n? for shortcuts`, 'factory_start').reason, /already answered/);
-  assert.match(P.readPrompt(`│   pa-chat - factory_start(card: "1") (MCP) │\n│ pa-chat - factory_cancel(job: "w:1") (MCP) │\nDo you want to proceed?\n❯ 1. Yes\n  3. No (esc)`, 'factory_start').reason, /another tool call/);
-  assert.match(P.readPrompt('pa-chat - factory_start(x) (MCP)\nDo you want to proceed?\n❯ 1. Yes', 'factory_start').reason, /Yes and No/);
-  assert.strictEqual(P.readPrompt('pa-chat - factory_start_all (MCP)\nDo you want to proceed?\n❯ 1. Yes\n 3. No (esc)', 'factory_start').ok, false, 'a longer tool name is another tool');
-  // Claude Code's own tool line ("pa-chat - factory_start (MCP)", no parameters), and options without numbers.
-  const bare = ['│ pa-chat - factory_start (MCP) │', '│ Do you want to proceed? │', '│ ❯ Yes │', "│   Yes, and don't ask again for pa-chat - factory_start │", '│   No, and tell Claude what to do differently (esc) │'].join('\n');
-  assert.deepStrictEqual(P.readPrompt(bare, 'factory_start'), { ok: true, cursorOnYes: true, escOffered: true });
+  assert.deepStrictEqual(P.readPrompt(PROMPT().replace(/ /g, ''), 'session_start'), { ok: true, cursorOnYes: true, escOffered: true });
+  assert.strictEqual(P.readPrompt(PROMPT(), 'build_stop').ok, false, 'a prompt for another tool');
+  assert.strictEqual(P.readPrompt(PROMPT('session_start', 2), 'session_start').cursorOnYes, false, 'cursor on "don\'t ask again"');
+  assert.match(P.readPrompt('● Done.\n> \n? for shortcuts', 'session_start').reason, /no permission prompt/);
+  assert.match(P.readPrompt(`${PROMPT()}\n● Started.\n> \n? for shortcuts`, 'session_start').reason, /already answered/);
+  assert.match(P.readPrompt(`│   pa-chat - session_start(card: "1") (MCP) │\n│ pa-chat - build_stop(job: "w:1") (MCP) │\nDo you want to proceed?\n❯ 1. Yes\n  3. No (esc)`, 'session_start').reason, /another tool call/);
+  assert.match(P.readPrompt('pa-chat - session_start(x) (MCP)\nDo you want to proceed?\n❯ 1. Yes', 'session_start').reason, /Yes and No/);
+  assert.strictEqual(P.readPrompt('pa-chat - session_start_all (MCP)\nDo you want to proceed?\n❯ 1. Yes\n 3. No (esc)', 'session_start').ok, false, 'a longer tool name is another tool');
+  // Claude Code's own tool line ("pa-chat - session_start (MCP)", no parameters), and options without numbers.
+  const bare = ['│ pa-chat - session_start (MCP) │', '│ Do you want to proceed? │', '│ ❯ Yes │', "│   Yes, and don't ask again for pa-chat - session_start │", '│   No, and tell Claude what to do differently (esc) │'].join('\n');
+  assert.deepStrictEqual(P.readPrompt(bare, 'session_start'), { ok: true, cursorOnYes: true, escOffered: true });
   const onAlways = bare.replace('❯ Yes │', '  Yes │').replace('  Yes, and', '❯ Yes, and');
-  assert.strictEqual(P.readPrompt(onAlways, 'factory_start').cursorOnYes, false, 'never "Yes, and don\'t ask again"');
+  assert.strictEqual(P.readPrompt(onAlways, 'session_start').cursorOnYes, false, 'never "Yes, and don\'t ask again"');
 }
 
 // --- every check before a keystroke ------------------------------------------------
 {
   const ok = { answer: 'yes', toolUseId: 'toolu_01', pending: PENDING, session: SESSION, screen: PROMPT() };
-  assert.deepStrictEqual(P.decide(ok), { ok: true, keys: [P.ENTER], tool: 'factory_start' }, 'Enter on "1. Yes", once');
-  assert.deepStrictEqual(P.decide({ ...ok, answer: 'no' }), { ok: true, keys: [P.ESC], tool: 'factory_start' });
+  assert.deepStrictEqual(P.decide(ok), { ok: true, keys: [P.ENTER], tool: 'session_start' }, 'Enter on "1. Yes", once');
+  assert.deepStrictEqual(P.decide({ ...ok, answer: 'no' }), { ok: true, keys: [P.ESC], tool: 'session_start' });
   const no = (o, re) => {
     const d = P.decide({ ...ok, ...o });
     assert.strictEqual(d.ok, false, JSON.stringify(o).slice(0, 80));
@@ -84,18 +84,18 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   no({ session: { ...SESSION, kind: 'opencode' } }, /not a Claude Code session/);
   no({ session: { ...SESSION, idleReason: 'question' } }, /not.*permission prompt/);
   no({ session: { ...SESSION, idleState: 'working' } }, /not.*permission prompt/);
-  no({ screen: PROMPT('factory_cancel') }, /not for pa-chat factory_start/);
-  no({ screen: PROMPT('factory_start', 2) }, /cursor is not on "1. Yes"/);
+  no({ screen: PROMPT('build_stop') }, /not for pa-chat session_start/);
+  no({ screen: PROMPT('session_start', 2) }, /cursor is not on "1. Yes"/);
   no({ screen: '' }, /no permission prompt/);
   // Deny works wherever the cursor is: Esc is No.
-  assert.strictEqual(P.decide({ ...ok, answer: 'no', screen: PROMPT('factory_start', 2) }).ok, true);
+  assert.strictEqual(P.decide({ ...ok, answer: 'no', screen: PROMPT('session_start', 2) }).ok, true);
 }
 
 // --- the tool call's id reaches the feed (never its input) ---------------------------
 {
-  const [e] = T.entryEvents({ type: 'assistant', uuid: 'a1', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_01', name: 'mcp__pa-chat__factory_start', input: { card: '412', ask: 'secret words' } }] } });
+  const [e] = T.entryEvents({ type: 'assistant', uuid: 'a1', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_01', name: 'mcp__pa-chat__session_start', input: { card: '412', ask: 'secret words' } }] } });
   assert.strictEqual(e.toolUseId, 'toolu_01');
-  assert.strictEqual(e.tool, 'mcp__pa-chat__factory_start');
+  assert.strictEqual(e.tool, 'mcp__pa-chat__session_start');
   assert.ok(!JSON.stringify(e).includes('secret words'), 'the input stays out of the stream');
 }
 
@@ -118,15 +118,12 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
 
 // --- what Jarvis asks out loud ---------------------------------------------------------
 {
-  assert.strictEqual(T.askTool('mcp__pa-chat__factory_start', { card: '412', delivery: 'pr' }), 'Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?');
-  assert.strictEqual(T.askTool('mcp__pa-chat__factory_start', { ask: 'add retries', runtime: 'api', model: 'deepseek/deepseek-coder', kind: 'research' }), 'Start a factory research job for add retries on the API with deepseek/deepseek-coder. Shall I?');
-  assert.strictEqual(T.askTool('mcp__pa-chat__factory_continue', { repo: 'acme/widget', pr: 12 }), 'Continue PR 12 on acme/widget in the factory on your subscription. Shall I?');
-  assert.strictEqual(T.askTool('mcp__pa-chat__factory_cancel', { job: 'widget:0042' }), 'Cancel factory job widget 0042. Shall I?');
-  assert.strictEqual(T.askTool('mcp__pa-chat__session_start', { repo: 'acme/widget', prompt: 'look at the flaky test', mode: 'plan' }), 'Start a Claude session on acme/widget, read only, to look at the flaky test. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__session_start', { repo: 'acme/widget', prompt: 'look at the flaky test' }), 'Start a Claude Code agent on acme/widget to look at the flaky test. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__factory' + '_start', { card: '412' }), null, 'the removed factory tools are never asked about');
   assert.strictEqual(T.askTool('mcp__pa-chat__board', {}), null, 'a read is never asked');
   assert.strictEqual(T.askTool('Bash', { command: 'pa do' }), null, 'a shell command is never asked by voice');
-  const [e] = T.entryEvents({ type: 'assistant', uuid: 'a9', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_09', name: 'mcp__pa-chat__factory_cancel', input: { job: 'widget:1' } }] } });
-  assert.strictEqual(e.ask, 'Cancel factory job widget 1. Shall I?');
+  const [e] = T.entryEvents({ type: 'assistant', uuid: 'a9', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_09', name: 'mcp__pa-chat__session_start', input: { prompt: 'fix it' } }] } });
+  assert.strictEqual(e.ask, 'Start a Claude Code agent to fix it. Shall I?');
 }
 
 // --- a spoken yes or no -------------------------------------------------------------
@@ -215,48 +212,26 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   const unsubscribe = feed.subscribe((e) => got.push(e));
   await new Promise((r) => setTimeout(r, 40));
 
-  fs.appendFileSync(file, line({ type: 'assistant', uuid: 'a1', timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_01', name: 'mcp__pa-chat__factory_start', input: { card: '412', delivery: 'pr' } }] } }));
+  fs.appendFileSync(file, line({ type: 'assistant', uuid: 'a1', timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_01', name: 'mcp__pa-chat__session_start', input: { prompt: 'fix the export' } }] } }));
   session = { ...session, idleState: 'waiting', idleReason: 'blocked' };
   screen = PROMPT();
   await new Promise((r) => setTimeout(r, 80));
   const perm = got.find((e) => e.type === 'permission' && !e.cleared);
   assert.ok(perm, 'the page is offered the prompt');
-  assert.deepStrictEqual([perm.toolUseId, perm.approvable, perm.text, perm.ask], ['toolu_01', true, 'starting a factory job: card 412 (claude_session, pr)…', 'Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?']);
+  assert.deepStrictEqual([perm.toolUseId, perm.approvable, perm.text, perm.ask], ['toolu_01', true, 'starting a session: fix the export…', 'Start a Claude Code agent to fix the export. Shall I?']);
   assert.ok(got.indexOf(perm) < got.findIndex((e) => e.type === 'activity' && /termhub/.test(e.text)), 'buttons before the "go to termhub" line');
   assert.strictEqual((await feed.session()).permission.toolUseId, 'toolu_01', 'a page opened later sees it too');
 
   // A stale id, then a screen that moved on: nothing typed.
   await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_00' }), (err) => err.status === 409);
-  screen = PROMPT('factory_start', 2);
+  screen = PROMPT('session_start', 2);
   await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_01' }), (err) => err.status === 409 && /1\. Yes/.test(err.message));
   assert.strictEqual(typed.length, 0);
 
   screen = PROMPT();
   const r = await feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_01' });
-  assert.deepStrictEqual(r, { ok: true, answer: 'yes', tool: 'factory_start' });
+  assert.deepStrictEqual(r, { ok: true, answer: 'yes', tool: 'session_start' });
   assert.deepStrictEqual(typed, [['s1', '', true]], 'one Enter, nothing else');
-
-  // Voice never approves a job whose delivery merges (policy, plan 4.3): the dashboard may, and
-  // a job that cannot be looked up is refused for voice. Nothing is typed on a refusal.
-  const approveCall = async (id, job) => {
-    fs.appendFileSync(file, line({ type: 'assistant', uuid: `ap-${id}`, timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'mcp__pa-chat__factory_approve', input: { job } }] } }));
-    session = { ...session, idleState: 'working', idleReason: 'streaming' };
-    await new Promise((r) => setTimeout(r, 60));
-    session = { ...session, idleState: 'waiting', idleReason: 'blocked' };
-    screen = PROMPT('factory_approve');
-    await new Promise((r) => setTimeout(r, 60));
-  };
-  await approveCall('toolu_ap1', 'app:0001');
-  await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap1', via: 'voice' }), (err) => err.status === 403 && /voice-never-approves-sensitive/.test(err.message));
-  assert.strictEqual(typed.length, 1, 'voice yes on an auto_merge job typed nothing');
-  await approveCall('toolu_ap2', 'app:ghost');
-  await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap2', via: 'voice' }), (err) => err.status === 403, 'unknown job: fail closed');
-  assert.strictEqual(typed.length, 1);
-  await approveCall('toolu_ap3', 'app:0003');
-  assert.strictEqual((await feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap3', via: 'voice' })).ok, true, 'a pr job is fine by voice');
-  await approveCall('toolu_ap4', 'app:0001');
-  assert.strictEqual((await feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap4', via: 'dashboard' })).ok, true, 'the dashboard may approve it');
-  assert.strictEqual(typed.length, 3);
 
   // A prompt for a shell command: offered, but not approvable here.
   fs.appendFileSync(file, line({ type: 'assistant', uuid: 'a2', timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_02', name: 'Bash', input: { command: 'pa do --task x', description: 'start a run' } }] } }));
@@ -268,7 +243,7 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   const bash = got.filter((e) => e.type === 'permission' && !e.cleared).pop();
   assert.deepStrictEqual([bash.toolUseId, bash.approvable], ['toolu_02', false]);
   await assert.rejects(feed.answerPermission({ answer: 'no', toolUseId: 'toolu_02' }), (err) => err.status === 409 && /termhub/.test(err.message));
-  assert.strictEqual(typed.length, 3);
+  assert.strictEqual(typed.length, 1);
   unsubscribe();
   feed.stop();
   fs.rmSync(root, { recursive: true, force: true });

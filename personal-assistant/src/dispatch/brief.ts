@@ -29,7 +29,6 @@ type BriefInputs = {
   run: Json;
   related?: Json[];
   memory?: Memory;
-  factory?: { app: string; delivery: string } | null;
   delivery?: string | null;
 };
 
@@ -46,45 +45,30 @@ function fence(text: unknown): string {
 // `memory` is what the assistant's memory adds, all optional: pages on the
 // requester and the project, and distilled facts recalled for the ask.
 //
-// `factory` ({app, delivery}) makes it the ask of a software-factory job
-// (src/dispatch/factory.ts) rather than a Claude session's BRIEF.md: the stop
-// condition is the job's delivery level, which the factory enforces, and the
-// lines about this tool's worktree and its `pa` MCP server — which a factory
-// persona does not have — are left out.
-//
 // `delivery` (a Claude session) is the end state the operator chose
 // (src/dispatch/deliveryCore.ts): the session works within its mode, and what
 // lies past it — marking the PR ready, merging, pushing to main — the
 // assistant does itself when the session ends.
-function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null, delivery = null }: BriefInputs): string {
+function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, delivery = null }: BriefInputs): string {
   const m = resolveMode(modeName);
   const lines: string[] = [];
 
   lines.push(`# ${commitment ? commitment.summary : run.task}`);
   lines.push('');
-  if (factory) {
-    lines.push(
-      `Sent by the personal assistant as a software-factory job (run #${run.id}, app \`${factory.app}\`), mode \`${m.name}\` → delivery \`${factory.delivery}\`.`
-    );
-  } else {
-    lines.push(
-      `Dispatched by the personal assistant, run #${run.id}, mode \`${m.name}\` — this session may ${describe(m.name)}.`
-    );
-  }
+  lines.push(
+    `Dispatched by the personal assistant, run #${run.id}, mode \`${m.name}\` — this session may ${describe(m.name)}.`
+  );
   lines.push('');
 
   lines.push('## Stop condition');
   lines.push('');
-  lines.push(factory ? FACTORY_STOP[factory.delivery] || `Deliver \`${factory.delivery}\`.` : m.stopCondition);
+  lines.push(m.stopCondition);
   lines.push('');
-  if (!factory && delivery && AFTER[delivery]) {
-    lines.push(`**End state the operator chose:** \`${delivery}\` — ${describeDelivery(delivery, { route: 'claude' })} ${AFTER[delivery]}`);
+  if (delivery && AFTER[delivery]) {
+    lines.push(`**End state the operator chose:** \`${delivery}\` — ${describeDelivery(delivery)} ${AFTER[delivery]}`);
     lines.push('');
   }
-  if (factory) {
-    lines.push('> The delivery level is enforced by the factory, not merely requested here. Nothing is ever sent to the requester.');
-    lines.push('');
-  } else if (!m.mayPush) {
+  if (!m.mayPush) {
     lines.push(
       '> Pushing is blocked at the git level for this run, not merely discouraged. If you find yourself wanting to push, that is the signal to stop and say so.'
     );
@@ -115,8 +99,8 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
     lines.push('## Where');
     lines.push('');
     lines.push(`**Project:** ${project.name}${project.gitlab_path ? ` (\`${project.gitlab_path}\`)` : ''}`);
-    if (!factory && run.worktree_path) lines.push(`**Worktree:** \`${run.worktree_path}\``);
-    if (!factory && run.branch) lines.push(`**Branch:** \`${run.branch}\``);
+    if (run.worktree_path) lines.push(`**Worktree:** \`${run.worktree_path}\``);
+    if (run.branch) lines.push(`**Branch:** \`${run.branch}\``);
     if (commitment && commitment.project_confidence !== null && commitment.project_confidence < 0.6) {
       lines.push('');
       lines.push(
@@ -168,13 +152,10 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
   lines.push(
     '- For cross-repo or org-wide conventions, use the `innergy-knowledge` skill rather than assuming. Do not copy its content in here.'
   );
-  if (!factory) {
-    lines.push(
-      '- The assistant\'s own store is available through the `pa` MCP server: `recall` (questions about people, decisions, history), `memory_page`, `explain_claim`, `search_context`, `get_thread`, `who_is`, `open_commitments`. Use it when the ask references something not quoted above.'
-    );
-  }
+  lines.push(
+    '- The assistant\'s own store is available through the `pa` MCP server: `recall` (questions about people, decisions, history), `memory_page`, `explain_claim`, `search_context`, `get_thread`, `who_is`, `open_commitments`. Use it when the ask references something not quoted above.'
+  );
   lines.push('');
-  if (factory) return lines.join('\n');
   lines.push('## When you are done');
   lines.push('');
   lines.push(
@@ -190,16 +171,6 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
 
   return lines.join('\n');
 }
-
-// What each factory delivery level means, for the job's ask (JOBS-API.md).
-const FACTORY_STOP: Record<string, string> = {
-  none: 'Commit in the factory\'s own worktree. Push nothing and open no pull request.',
-  branch: 'Push the branch. Do not open a pull request.',
-  draft_pr: 'Push and open a DRAFT pull request. Never mark it ready and never merge it.',
-  pr: 'Open a ready pull request. Never merge it.',
-  auto_merge: 'Open a pull request; it merges once every gate and check passes. Never bypass a check.',
-  push_to_main: 'When every gate passes, the change is fast-forwarded onto the default branch with no pull request.',
-};
 
 // What the assistant does after a Claude session ends, per delivery level —
 // told to the session so it leaves the work in the shape that step needs.

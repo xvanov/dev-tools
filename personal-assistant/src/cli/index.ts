@@ -48,13 +48,9 @@ const HELP = `pa — your context layer
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
-    pa do <id> [--mode m] [--repo p] dispatch a commitment: always a software-factory job (no route to pick)
-                     [--kind code|research|report|plan]  unset: decided from the ask (the card's choice wins)
-                     [--runtime claude_session|api]  unset: PA_FACTORY_RUNTIME (claude_session)
-                     [--delivery none|branch|draft_pr|pr|auto_merge|push_to_main]  unset: the factory app's default
-                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a] [--register]
-                     [--model m]  the Claude model of a claude_session job
-                     [--preview]  print the job, end state and the brief that would be sent; start nothing
+    pa do <id> [--repo p] [--model m]  start one Build agent (one Claude Code agent) on a commitment
+    pa do --task "…" [--repo p] [--model haiku|sonnet|opus|fable]  …or on a task you word yourself
+                     [--preview]  print the card the work would be offered as; start nothing
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa task add "<what>" [--due when] [--for person] [--owed-to-me]  a task because you asked for it
     pa cardplan list|show <id>|apply <id> [--skip 1,3]|discard <id>
@@ -68,16 +64,10 @@ const HELP = `pa — your context layer
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
-    pa propose <id>|--task "…" […pa do's flags]  put the work on a card (dashboard → On me) instead of starting it
+    pa propose <id>|--task "…" [--repo p] [--model m]  put the work on a card (dashboard → On me) instead of starting it
     pa proposals                     what the assistant prepared or asks, waiting for you
-    pa answer <id> yes|no|<option>|<when> [--delivery level]  answer one; <when> on a follow-up question: 5m, 2h, 2d, tomorrow 3pm, mon, 2026-11-10 14:00; --delivery changes a card's end state
+    pa answer <id> yes|no|<option>|<when>  answer one; <when> on a follow-up question: 5m, 2h, 2d, tomorrow 3pm, mon, 2026-11-10 14:00
     pa delivery [list] | set <owner/name> <level> | clear <owner/name>  per-repo default end state
-    pa factory apps | add <owner/name> [--delivery-default level] [--path p]  the factory's registered repos
-    pa factory jobs [--all]          every factory job by Needs you / Running / Delivered / Failed (the worker's last list)
-    pa factory status|report <job>   one job: stories, PRs, CI, cost, runs · its research/report markdown
-    pa factory cancel|approve <job>  cancel a job · approve the direction it waits on (only the one the factory names)
-    pa factory submit --title "…" --ask "…" [--kind k] [--runtime r] [--repo owner/name] [--delivery l] [--done "…"]… [--card]
-                                     code → a card you accept; research/report → started now (--card: a card)
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
     pa notify [list] [--unread]      what the assistant told you, and how (push, digest, feed)
     pa notify ack <id>|all           mark read; it leaves the PA chat's INBOX.md
@@ -186,31 +176,20 @@ function relative(iso: any) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-// `pa do` / `pa propose` / `pa do --preview`: one reading of the flags.
+// `pa do` / `pa propose` / `pa do --preview`: one reading of the flags. The software factory's
+// (end state, pipeline, runtime, kind, done-criteria, app, route) are gone (D32): named, they are refused.
+const GONE_FLAGS = ['mode', 'machine', 'via', 'delivery', 'pipeline', 'model-persona', 'done', 'app', 'register', 'kind', 'runtime', 'agent', 'title', 'branch', 'pr'];
 function dispatchFlags(commitmentId: any, task: any, flags: any, lists: any) {
   const str = (name: any) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
+  const gone = GONE_FLAGS.filter((f) => flags[f] !== undefined || (lists[f] || []).length);
+  if (gone.length) throw new Error(`--${gone.join(', --')}: no longer exist (every start is one Build agent; the software factory was removed). What is left: --repo, --model`);
   const models = lists.model || [];
+  if (models.some((m: any) => String(m).includes('='))) throw new Error('--model persona=model is gone with the software factory: a Build model is haiku, sonnet, opus or fable');
   return {
     commitmentId,
     task,
-    mode: str('mode') || undefined,
     repoPath: str('repo'),
-    machine: str('machine'),
-    via: str('via'),
-    delivery: str('delivery'),
-    pipeline: str('pipeline'),
-    // --model is shared: persona=model pairs are factory route overrides,
-    // a bare model names the Claude model of a claude_session job.
-    models: models.filter((m: any) => String(m).includes('=')).length ? models.filter((m: any) => String(m).includes('=')) : null,
-    done: lists.done || null,
-    app: str('app'),
-    register: flagBool(flags, 'register'),
-    // JOBS-API v1.2: code | research | report | plan, and api | claude_session.
-    jobKind: str('kind'),
-    runtime: str('runtime'),
-    title: str('title'),
-    agent: str('agent'),
-    model: models.filter((m: any) => !String(m).includes('=')).pop() || null,
+    model: models.pop() || null,
   };
 }
 
@@ -241,7 +220,7 @@ function printOffer({ body, payload }: { body?: Row | null | undefined; payload?
   if (preview) out('PREVIEW — nothing started, nothing sent.\n');
   out(body);
   if (payload?.brief) {
-    out(`\n--- the brief that ${preview ? 'would be' : 'will be'} sent (${payload.briefBy}) ---\n`);
+    out(`\n--- the older brief (${payload.briefBy || 'composed'}) ---\n`);
     out(payload.brief);
   }
 }
@@ -575,91 +554,38 @@ const commands: Json = {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--kind k] [--runtime r] | pa do --task "..."');
-    const o: any = dispatchFlags(commitmentId, task, flags, lists);
-    if (flagBool(flags, 'preview')) {
-      // Composing is a model call made ahead of any decision: under the daily budget.
-      o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
-      return printOffer(await require('../dispatch/offer.ts').prepare(o), { preview: true });
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--repo p] [--model m] | pa do --task "..."');
+    let o: any;
+    try {
+      o = dispatchFlags(commitmentId, task, flags, lists);
+    } catch (err: any) {
+      return fail(err.message);
     }
-
-    // The end state, shown BEFORE anything starts. One that merges or pushes to
-    // main with no human step after it starts only on a terminal yes; asked
-    // for by the chat (or any non-interactive caller) it becomes a card.
-    const D = require('../dispatch/deliveryCore.ts');
-    const pre = await dispatch.previewDelivery(o);
-    const kind: string = pre.jobKind;
-    if (kind !== 'code') out(`a ${kind} job: the factory writes a report — no code changes, no branch, no PR`);
-    out(pre.delivery ? `end state: ${pre.delivery} — ${D.describe(pre.delivery)} (${D.sourceLine(pre.source, pre.phrase)})` : 'end state: none — read-only');
-    const hint = !o.delivery ? D.unattendedHint(task) : null;
-    if (hint) out(`  your words mention "${hint.phrase}" — merging or pushing to main is only ever set explicitly: --delivery ${hint.delivery}`);
-    if (D.unattended(pre.delivery)) {
-      if (process.env.PA_DISPATCHED_RUN) {
-        return fail(`refused: run #${process.env.PA_DISPATCHED_RUN}'s agent may not start work that ${pre.delivery === 'push_to_main' ? 'pushes to main' : 'merges'} with no human step`);
-      }
-      if (!interactive()) {
-        const row = await require('../dispatch/offer.ts').propose({
-          ...o, useModel: await require('../budget.ts').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
-        });
-        out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → On me)` : 'NOT started: already on a card');
-        return;
-      }
-      if (!(await confirm(`This will ${pre.delivery === 'push_to_main' ? 'push to main' : 'merge'} with no human step after it. Start it? [y/N]`))) return out('not started');
-      o.confirmedUnattended = true;
-    }
-
+    if (flagBool(flags, 'preview')) return printOffer(await require('../dispatch/offer.ts').prepare(o), { preview: true });
     const result = await dispatch.start(o);
-    const end = (r: any, route: any) => r.delivery
-      ? `${r.delivery} — ${D.describe(r.delivery, { route })} (${D.sourceLine(r.deliverySource, r.deliveryPhrase)})`
-      : 'none — read-only';
-
-    if (result.route === 'factory') {
-      if (result.submitUnknown) {
-        out(`run #${result.id} · factory · app ${result.app} · SUBMIT UNCONFIRMED`);
-        out(`  ${result.note}`);
-        out(`  end state ${end(result, 'factory')}`);
-        out(`  ask      ${result.briefPath}`);
-        return;
-      }
-      out(`run #${result.id} · factory job ${result.jobId}${result.created ? '' : ' (already submitted)'} · ${result.app ? `app ${result.app}` : 'no repo'}`);
-      out(`  kind     ${result.jobKind || 'code'} · runtime ${result.runtime === 'claude_session' ? 'claude_session (Claude Code, subscription)' : 'api (metered)'}`);
-      out(`  end state ${end(result, 'factory')}`);
-      if (result.delivery !== result.deliveryRequested) out(`  WARNING  asked for ${result.deliveryRequested}; the factory reports ${result.delivery}`);
-      out(`  pipeline ${result.pipeline} · brief by ${result.briefBy || '?'}`);
-      if (result.routeReason) out(`  route    ${result.routeReason}`);
-      for (const w of result.warnings || []) out(`  WARNING  ${w}`);
-      out(`  ask      ${result.briefPath}`);
-      out(`  follow   ${result.url || '(no session — `uv run factory job follow ' + result.jobId + '` on the factory machine)'}`);
-      return;
-    }
-    out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
-    out(`  end state ${end(result, 'claude')}`);
-    if (result.routeReason) out(`  route    claude — ${result.routeReason}`);
+    out(`run #${result.id} · Build agent · ${result.model}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
     if (result.branch) out(`  branch   ${result.branch}`);
-    if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
-    out(`  brief    ${result.briefPath}`);
     out(`  session  ${result.url}`);
   },
 
-  // The same choices as `pa do`, put on a card instead of started: the
-  // route, end state, pipeline, models, done-criteria and the composed brief
-  // are frozen into the proposal and run exactly as shown on yes.
+  // The same choices as `pa do`, put on a card instead of started: the task, repo and
+  // model are frozen into the proposal and run exactly as shown on yes.
   async propose(args: any, flags: any, lists: any = {}) {
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa propose <commitment-id> | --task "..." [pa do\'s flags]');
-    const o: any = dispatchFlags(commitmentId, task, flags, lists);
-    // The brief's model call happens before anyone said yes: discretionary
-    // spend (PA_BUDGET_DISCRETIONARY `propose`). Over the cap the card still
-    // comes, with the deterministic brief, and says so.
-    o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
-    if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
+    if (!commitmentId && !task) return fail('usage: pa propose <commitment-id> | --task "..." [--repo p] [--model m]');
+    let o: any;
+    try {
+      o = dispatchFlags(commitmentId, task, flags, lists);
+    } catch (err: any) {
+      return fail(err.message);
+    }
     if (!interactive()) o.suggestedBy = suggestedBy();
     const row = await require('../dispatch/offer.ts').propose(o);
     if (!row) return out('already offered');
     out(`proposal ${row.id} · ${row.title}`);
     printOffer({ body: row.body, payload: row.payload }, { preview: false });
-    out(`\nOn the dashboard under On me, or: pa answer ${row.id} yes [--delivery level]`);
+    out(`\nOn the dashboard under On me, or: pa answer ${row.id} yes`);
   },
 
   async delivery(args: any) {
@@ -685,109 +611,6 @@ const commands: Json = {
     return fail('usage: pa delivery [list] | set <owner/name> <level> | clear <owner/name>');
   },
 
-  async factory(args: any, flags: any, lists: any = {}) {
-    const factory = require('../dispatch/factory.ts');
-    const F = require('../dispatch/factoryCore.ts');
-    const [sub, repo] = args;
-    const jobArg = () => {
-      if (!F.JOB_ID.test(String(args[1] || ''))) throw new Error(`usage: pa factory ${sub} <app:direction> — a job id from \`pa factory jobs\``);
-      return args[1];
-    };
-    // Read from the worker's stored list (sql/031): never a factory call.
-    if (sub === 'jobs') {
-      const snap = await factory.snapshot();
-      if (!snap.polledAt) return out(`no job list stored yet${snap.error ? ` (last error: ${snap.error})` : ''} — the worker stores one every ${config.factory.pollSeconds}s`);
-      const runs = await repository.runs.factoryJobs().catch(() => []);
-      const b = F.board(snap.jobs, { paRuns: new Map(runs.map((r: any) => [r.factory_job_id, { id: r.id, url: null }])) });
-      const LABEL: Json = { needs_you: 'Needs you', running: 'Running', delivered: 'Delivered', ended: 'Failed / cancelled' };
-      out(`as of ${relative(snap.polledAt)}${snap.error ? ` (the last list failed: ${snap.error.slice(0, 120)})` : ''} · factory today $${b.spend.factoryToday.metered.toFixed(2)} metered, $${b.spend.factoryToday.subscriptionEquiv.toFixed(2)} subscription-equivalent`);
-      const all = flagBool(flags, 'all');
-      for (const g of F.GROUPS) {
-        const list = b.groups[g].slice(0, all || g !== 'ended' && g !== 'delivered' ? 200 : 5);
-        if (!b.groups[g].length) continue;
-        out(`\n${LABEL[g]} (${b.groups[g].length})`);
-        for (const j of list) {
-          out(`  ${j.jobId.padEnd(22)} ${j.state.padEnd(12)} ${j.kind.padEnd(8)} ${j.runtime === 'claude_session' ? 'claude ' : 'api    '} ${j.title}${j.paRun ? `  (run #${j.paRun.id})` : ''}`);
-          if (j.why && g !== 'delivered') out(`      ${j.why}`);
-          if (j.ciFailing) out('      CI failing on an open PR');
-        }
-        if (list.length < b.groups[g].length) out(`  … ${b.groups[g].length - list.length} more (--all)`);
-      }
-      return;
-    }
-    if (sub === 'status') {
-      const id = jobArg();
-      const job = await factory.snapshotJob(id);
-      if (!job) return fail(`no job ${id} in the stored list — \`pa factory jobs\``);
-      const v = F.jobView(job);
-      out(`${v.jobId} · ${v.state} · ${v.kind} on ${v.runtime} · ${v.app || 'no repo'} · ${v.title}`);
-      if (v.why) out(`  why      ${v.why}`);
-      out(`  cost     $${v.costUsd.toFixed(2)} metered · $${v.subscriptionEquivUsd.toFixed(2)} subscription-equivalent`);
-      for (const s of v.stories) out(`  story ${s.id} ${s.state}${s.prUrl ? ` ${s.prUrl}` : ''}${s.ci ? ` · CI ${s.ci.state}${s.ci.failing.length ? `: ${s.ci.failing.join(', ')}` : ''}` : ''}`);
-      if (v.report) out(`  report   ${v.report.title}${v.report.words ? ` (${v.report.words} words)` : ''} — \`pa factory report ${v.jobId}\`\n    ${v.report.excerpt.replace(/\n/g, '\n    ')}`);
-      for (const r of v.runs.slice(0, 8)) out(`  run ${r.id} ${r.persona || ''} ${r.state} ${r.runtime || ''} ${r.model || ''} $${r.costUsd.toFixed(2)} ${r.billing}${r.session ? ` ${r.session.url}` : ''}`);
-      if (v.canApprove) out(`  waits on an approval — \`pa factory approve ${v.jobId}\``);
-      return;
-    }
-    if (sub === 'report') {
-      const r = await factory.report(jobArg());
-      if (r.none) return out(`job ${r.jobId} has no report yet`);
-      out(r.markdown);
-      return;
-    }
-    if (sub === 'cancel') {
-      const r = await factory.cancelJob(jobArg());
-      return out(`${r.jobId}: ${r.state || 'cancel sent'}${r.run ? ` (run #${r.run} dropped)` : ''}${r.storiesParked != null ? ` · ${r.storiesParked} stor${r.storiesParked === 1 ? 'y' : 'ies'} parked` : ''}${r.why ? ` — ${r.why}` : ''}`);
-    }
-    if (sub === 'approve') {
-      const r = await factory.approve(jobArg());
-      return out(`${r.jobId}: approved${r.output ? ` — ${r.output}` : ''}`);
-    }
-    // A job from the chat or a terminal. Code is always a card you accept (it
-    // changes a repo); research and report start now — the shell prompt you
-    // answered is the yes — unless --card.
-    if (sub === 'submit') {
-      const title = flags.title && flags.title !== true ? String(flags.title) : null;
-      const ask = flags.ask && flags.ask !== true ? String(flags.ask) : null;
-      if (!title && !ask) return fail('usage: pa factory submit --title "…" --ask "…" [--kind code|research|report|plan] [--runtime api|claude_session] [--repo owner/name] [--delivery level] [--done "…"]… [--card]');
-      const o: Json = { ...dispatchFlags(null, ask || title, flags, lists), via: 'factory', title: title || null };
-      const kind = F.jobKind(o.jobKind);
-      if (kind === 'code' || flagBool(flags, 'card')) {
-        o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
-        if (!interactive()) o.suggestedBy = suggestedBy();
-        const row = await require('../dispatch/offer.ts').propose(o);
-        if (!row) return out('already offered');
-        out(`proposal ${row.id} · ${row.title}`);
-        printOffer({ body: row.body, payload: row.payload }, { preview: false });
-        out(`\nNOT started — on the dashboard under On me, or: pa answer ${row.id} yes`);
-        return;
-      }
-      const r = await require('../dispatch').start(o);
-      if (r.submitUnknown) return out(`run #${r.id} · ${kind} job · SUBMIT UNCONFIRMED — ${r.note}`);
-      out(`run #${r.id} · factory ${kind} job ${r.jobId} · runtime ${r.runtime}${r.app ? ` · reads ${r.app}` : ''}`);
-      out(`  follow   ${r.url || '(no session)'}`);
-      out(`  report   pa factory report ${r.jobId} (once it is done; you are notified)`);
-      return;
-    }
-    if (!sub || sub === 'apps') {
-      const apps = await factory.apps({ fresh: true });
-      if (!apps.length) return out('no apps registered — `pa factory add owner/name`');
-      for (const a of apps) out(`${String(a.app).padEnd(24)} ${String(a.repo || '').padEnd(36)} default ${a.delivery?.default || '?'}${a.pipeline_default ? ` · pipeline ${a.pipeline_default}` : ''}`);
-      return;
-    }
-    if (sub === 'add') {
-      if (!repo) return fail('usage: pa factory add <owner/name> [--delivery-default level] [--path p] [--no-serve-tick]');
-      const str = (n: any) => (flags[n] && flags[n] !== true ? String(flags[n]) : null);
-      // Worked on automatically unless asked not to: you add a repo to send work to it.
-      const r = await factory.addApp({ repo, deliveryDefault: str('delivery-default'), path: str('path'), serveTick: flagBool(flags, 'serve-tick', true) });
-      out(`registered ${r.repo || repo} as factory app ${r.app}${r.delivery?.default ? ` (its default ${r.delivery.default})` : ''}`);
-      if (typeof r.serve_tick === 'boolean') out(`  worked on automatically: ${r.serve_tick ? 'yes' : 'no (only while a job is active)'}`);
-      if (r.config_path) out(`  config ${r.config_path}`);
-      return;
-    }
-    return fail('usage: pa factory apps | add <owner/name> | jobs [--all] | status|report|cancel|approve <job> | submit --title … --ask … [--kind] [--runtime] [--repo] [--card]');
-  },
-
   async done(args: any, flags: any) {
     const { setStatus } = require('../commitments.ts');
     const id = Number(args[0]);
@@ -800,12 +623,8 @@ const commands: Json = {
   async proposals() {
     const list = await require('../proposals').pending();
     if (!list.length) return out('Nothing waiting on you.');
-    const D = require('../dispatch/deliveryCore.ts');
     for (const p of list) {
       out(`${p.id} · ${p.kind} · ${p.title}`);
-      if (p.kind === 'dispatch' && p.payload?.delivery) {
-        out(`    end state ${p.payload.delivery} — ${D.describe(p.payload.delivery, { route: p.payload.via })}`);
-      }
       if (Array.isArray(p.options) && p.options.length) out(`    options: ${p.options.map((o: any) => o.value).join(', ')}`);
     }
   },
@@ -885,7 +704,7 @@ const commands: Json = {
     if (pool?.tracked) {
       out(
         `claude credit pool · ${budget.usd(pool.usedUsd)} of ${budget.usd(pool.monthlyUsd)} used since ${pool.since.slice(0, 10)}, ${budget.usd(pool.remainingUsd)} left` +
-          `${pool.exhausted ? ` · SPENT${pool.fallbackApi ? ': claude_session jobs fail over to the api runtime (PA_RUNTIME_FAILOVER)' : ' (PA_RUNTIME_FAILOVER is off)'}` : ''}`
+          `${pool.exhausted ? ' · SPENT' : ''}`
       );
     } else if (pool) {
       out('claude credit pool · not tracked (set PA_CLAUDE_POOL_USD)');
@@ -975,7 +794,7 @@ const commands: Json = {
             `${String(g.failed).padStart(6)} ${String(g.dropped).padStart(7)} ${String(g.open).padStart(4)} ${pct.padStart(7)} ${money(g.costUsd).padStart(8)} ${money(g.costPerSuccess).padStart(9)}`
         );
       }
-      out('\nCost is the factory\'s reported spend; a Claude session\'s is not measured per run, so its $ is "-".');
+      out('\nA Claude session\'s cost is not measured per run (Build agents record theirs: pa run list), so its $ is "-"; factory rows are history.');
       return;
     }
     const dispatch = require('../dispatch');
@@ -1024,15 +843,8 @@ const commands: Json = {
 
     const r = await dispatch.review(id);
     if (r.run.route === 'factory') {
-      const j = r.factory;
-      out(`run #${r.run.id} · ${r.run.status} · factory ${r.run.factory_job_id || '(not submitted)'} · ${r.run.task}`);
-      if (r.run.route_reason) out(`route: ${r.run.route_reason}`);
-      for (const w of r.run.factory_warnings || []) out(`warning at submit: ${w}`);
-      if (!j) return out(r.run.exit_note ? `\n${r.run.exit_note}` : '');
-      out(`state ${j.state}${j.terminal ? ' (final)' : ''} · delivery ${j.delivery} · pipeline ${j.pipeline} · $${Number(j.cost_usd || 0).toFixed(2)}`);
-      if (j.why) out(`why: ${j.why}`);
-      for (const st of j.stories || []) out(`  story ${st.id} · ${st.state}${st.pr_url ? ` · ${st.pr_url}${st.pr_state ? ` (${st.pr_state})` : ''}` : ''}`);
-      for (const u of j.pr_urls || []) out(u);
+      out(`run #${r.run.id} · ${r.run.status} · software-factory job ${r.run.factory_job_id || '(not submitted)'} · ${r.run.task}`);
+      out('the software factory was removed (D32): there is nothing more to show or do for this run');
       return;
     }
     out(`run #${r.run.id} · ${r.run.status} · ${r.run.mode} · ${r.run.task}`);
@@ -1062,7 +874,7 @@ const commands: Json = {
     const id = Number(args[0]);
     if (!id) return fail('usage: pa drop <run> [--force]');
     const r = await dispatch.drop(id, { force: flagBool(flags, 'force') });
-    out(`run #${id} dropped${r && r.factory ? (r.cancelled ? ` — factory job ${r.jobId} cancelled${r.storiesParked != null ? `, ${r.storiesParked} stor${r.storiesParked === 1 ? 'y' : 'ies'} parked` : ''}` : ' — its factory job had already ended') : ''}`);
+    out(`run #${id} dropped${r && r.factory ? ' (a software-factory run: nothing to cancel, the factory was removed)' : ''}`);
     if (r && r.remote && r.removed) out(`  worktree removed on ${r.machine}: ${r.worktree}`);
     else if (r && r.remote) out(`  its worktree stays on ${r.machine}: ${r.worktree} — \`pa drop ${id} --force\` removes it`);
   },
@@ -1146,7 +958,7 @@ const commands: Json = {
       out(`${r.ok ? 'PASS' : 'FAIL'}  ${r.file}  → ${r.to}${r.kept ? ' (kept)' : ' (dropped)'}  ${r.tables} tables, ${r.seconds} s`);
       out(r.compared ? `  row counts match the ${r.against || 'manifest'}${r.problems.length ? `, except ${r.problems.length}:` : ''}` : '  no manifest in this backup (plain dump): tables restored, row counts not compared');
       for (const p of r.problems.slice(0, 20)) out(`    ${p.table}: expected ${p.expected}, restored ${p.got === null ? 'none' : p.got}`);
-      if (r.state) out(`  factory state: ${r.state.files} files restored, ${r.state.expectedFiles} at backup${r.state.ok ? '' : ' — MISMATCH'}`);
+      if (r.state) out(`  state dir (from an older backup): ${r.state.files} files restored, ${r.state.expectedFiles} at backup${r.state.ok ? '' : ' — MISMATCH'}`);
       if (!r.ok) process.exitCode = 1;
       return;
     }
@@ -1570,30 +1382,6 @@ const commands: Json = {
         mark(false, 'delivery', `PA_DELIVERY_DEFAULT "${raw}" is not one of ${D.DELIVERIES.join(', ')} — using ${D.FALLBACK}`);
       }
     }
-    // The software factory as a dispatch target: configured, its machine
-    // known to termhub, and answering `factory app list`.
-    {
-      const factory = require('../dispatch/factory.ts');
-      if (!factory.enabled()) {
-        mark(false, 'factory', 'off — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE) to dispatch to the software factory');
-      } else {
-        try {
-          const where = factory.machine() || 'this machine';
-          const apps = await factory.apps({ fresh: true });
-          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a: any) => a.repo || a.app).slice(0, 6).join(', ')} · every dispatch · pipeline ${config.factory.pipeline} · runtime ${config.factory.runtime}`);
-        } catch (err: any) {
-          mark(false, 'factory', `${err.message.slice(0, 160)}${/exit 127|ENOENT/.test(err.message) ? ' — set PA_FACTORY_UV to the full path of uv there' : ''}`);
-        }
-        // The /factory page reads the worker's snapshot (sql/031), never the factory.
-        const snap = await factory.snapshot();
-        const age = snap.polledAt ? Math.round((Date.now() - new Date(snap.polledAt).getTime()) / 60_000) : null;
-        const stale = age === null || age > Math.max(10, (config.factory.pollSeconds / 60) * 5);
-        mark(!stale && !snap.error, 'factory page', snap.polledAt
-          ? `${snap.jobs.length} job(s), listed ${age} min ago${snap.error ? ` · last list failed: ${snap.error.slice(0, 120)}` : ''}${stale ? ' — is the worker running?' : ''}`
-          : `no job list stored yet — the worker stores one every ${config.factory.pollSeconds}s${snap.error ? ` (last error: ${snap.error.slice(0, 120)})` : ''}`);
-      }
-    }
-
     // termhub
     const termhub = require('../dispatch/termhub.ts');
     const hub = await termhub.reachable();

@@ -1,10 +1,9 @@
 'use strict';
 
-// Dispatch: a commitment becomes a software-factory job (start; decision D28:
-// every agent session the PA starts is a factory job, so it shows on Build and
-// is metered, on the credit pool or the API keys). Runs from before that are
-// Claude Code sessions in a git worktree, and the land / drop / review /
-// reconcile verbs below still manage them.
+// Dispatch: start() hands a commitment to Build (src/build; decision D30: one Claude
+// Code agent per task). Runs from before that are Claude Code sessions in a git
+// worktree (and, older still, software-factory jobs, removed in D32); the land / drop /
+// review / reconcile verbs below still manage them.
 //
 // The worktree is not an optimisation. The root CLAUDE.md is explicit that a
 // dirty tree breaks termhub's own updater, and a dispatched agent working
@@ -30,32 +29,15 @@ type StartOptions = {
   repoPath?: string | null;
   machine?: string | null;
   again?: boolean;
-  /** gone (D28): every dispatch is a factory job; anything but `factory` is refused */
-  via?: string | null;
-  pipeline?: string | null;
-  models?: string[] | string | Record<string, string> | null;
-  done?: string[] | null;
-  app?: string | null;
   routeReason?: string | null;
   agent?: string | null;
   model?: string | null;
   delivery?: string | null;
   deliverySource?: string | null;
   deliveryPhrase?: string | null;
-  brief?: string | null;
-  briefBy?: string | null;
-  /** an accepted proposal: its values are used exactly as the card showed them */
-  frozen?: boolean;
-  register?: boolean;
   confirmedUnattended?: boolean;
   repoVerified?: boolean;
-  jobKind?: string | null;
-  runtime?: string | null;
-  title?: string | null;
-  branch?: string | null;
-  pr?: number | string | null;
 };
-type DeliveryAsk = { commitmentId?: number | string | null; task?: string | null; mode?: string | null | undefined; delivery?: string | null; repoPath?: string | null };
 
 const fs = require('fs');
 const os = require('os');
@@ -205,11 +187,10 @@ function scopeFacts(facts: Json[] | null | undefined, { personId = null, project
   });
 }
 
-// The BRIEF for a target — the Claude route's BRIEF.md, and the factory
-// route's ask (src/dispatch/factory.ts), from one implementation.
+// The BRIEF for a target: a legacy Claude session's BRIEF.md.
 async function briefFor(
   target: Target,
-  { modeName, run, task = null, factory = null, delivery = null }: { modeName: string; run: Run; task?: string | null; factory?: Json | null; delivery?: string | null }
+  { modeName, run, task = null, delivery = null }: { modeName: string; run: Run; task?: string | null; delivery?: string | null }
 ): Promise<string> {
   return buildBrief({
     delivery,
@@ -221,111 +202,21 @@ async function briefFor(
     run,
     related: await relatedContext(target.item),
     memory: await memoryContext(target, task),
-    factory,
   });
 }
 
 /**
- * Starts a run: always a software-factory job (src/dispatch/factory.ts;
- * decision D28). Nothing here starts a Claude Code session of its own: plan
- * mode is a read-only `plan` job, research and reports are `research`/`report`
- * jobs, and code is a `code` job in the repo's factory app (registered first
- * when the factory does not know the repo yet, unless `register` is false).
- *
- * Whatever the caller does not choose comes from the card's dispatch settings
- * (src/dispatch/settings.ts): its stored overrides, else the defaults —
- * runtime claude_session, mode full, the job kind read from the ask, the end
- * state from the factory app's delivery.default.
- *
- * `frozen` (an accepted proposal, src/proposals): app, done-criteria, brief,
- * delivery, pipeline and models are used exactly as the card showed them —
- * nothing is re-chosen or re-derived at accept time; a card from before job
- * kinds is a code job.
+ * Starts a run: one Claude Code agent in Build (src/build/index.ts; D30). Whatever
+ * the caller names beyond the commitment, task, repo and model (an end state, a
+ * pipeline, a runtime) has no meaning there and is ignored.
  */
 async function start(o: StartOptions): Promise<Json> {
-  // D30: Build is one Claude Code agent per task (src/build). The factory
-  // path below stays, frozen, behind PA_BUILD=factory.
-  if (process.env.PA_BUILD !== 'factory') {
-    const model = o.model && require('../build/index.ts').MODELS.includes(String(o.model)) ? String(o.model) : null;
-    const run: Json = await require('../build/index.ts').start({ commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null });
-    return {
-      id: run.id, route: 'build', routeReason: 'one Claude Code agent (D30)', mode: null, machine: run.machine || null, url: run.url,
-      repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
-    };
-  }
-  const calledAt = Date.now();
-  const {
-    commitmentId = null, task = null, repoPath = null, machine = null, again = false, via = null,
-    pipeline = null, models = null, done = null, routeReason: givenReason = null,
-    deliverySource = null, deliveryPhrase = null, brief = null, briefBy = null, frozen = false, register = true,
-    confirmedUnattended = false, repoVerified = false, title = null, branch: onBranch = null, pr: onPr = null,
-    agent = null, model = null,
-  } = o;
-  const F = require('./factoryCore.ts');
-  const factory = require('./factory.ts');
-  if (via && !['factory', 'auto'].includes(String(via).toLowerCase())) {
-    throw new Error(`there is no route to pick: every dispatch is a software-factory job — drop --via ${via}`);
-  }
-  if (!factory.enabled()) throw new Error('every dispatch is a software-factory job and the factory is not configured — set PA_FACTORY_PATH (see `pa doctor`)');
-  if (machine && !termhub.isLocal(machine)) {
-    throw new Error(`--machine is gone: every run is a factory job and runs on the factory's machine (PA_FACTORY_MACHINE) — drop --machine ${machine}`);
-  }
-  if (agent && agent !== 'claude') throw new Error(`--agent ${agent}: every run is a factory job — its agent is the runtime (claude_session or api)`);
-  const continues = onBranch != null || onPr != null;
-  const given = {
-    jobKind: o.jobKind ? F.jobKind(o.jobKind) : frozen || continues ? 'code' : null,
-    runtime: o.runtime ? F.runtime(o.runtime) : null,
-    mode: o.mode ? resolveMode(o.mode).name : null,
-    delivery: o.delivery ? D.delivery(o.delivery) : null,
-    app: o.app || null,
-    repo: repoPath || null,
+  const model = o.model && require('../build/index.ts').MODELS.includes(String(o.model)) ? String(o.model) : null;
+  const run: Json = await require('../build/index.ts').start({ commitmentId: o.commitmentId || null, task: o.task || null, model, repoPath: o.repoPath || null });
+  return {
+    id: run.id, route: 'build', routeReason: 'one Claude Code agent (D30)', mode: null, machine: run.machine || null, url: run.url,
+    repoPath: run.repo_path || null, branch: run.branch || null, model: run.model, jobId: null, delivery: null, jobKind: null, runtime: 'claude_session', warnings: [],
   };
-  const eff = await require('./settings.ts').effective({ commitmentId, task, given });
-  const s = eff.settings;
-  const kind: string = s.jobKind;
-  // `--repo` must be a known project. A card's repo was checked when the card
-  // was made (offer.ts `repoVerifiedAt`) and is not re-judged at accept. A
-  // research/report/plan job only reads: an owner/name it names need not be a
-  // checkout here (the factory reads its own, or the ask just names it).
-  const repo: string | null = repoPath || eff.overrides.repo || null;
-  const readOnlySlug = kind !== 'code' && require('./routeCore.ts').normSlug(repo);
-  if (repo && !repoVerified && !readOnlySlug) await knownRepo(repo);
-  // One live run per commitment. A second Do while the first is still setting
-  // up started a second agent on the same ask.
-  if (commitmentId && !again) {
-    const live: Run | null = await repository.runs.liveForCommitment(commitmentId);
-    if (live) {
-      const where = termhub.isLocal(live.machine) ? '' : ` on ${live.machine}`;
-      throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
-    }
-  }
-  const target = await resolveTarget({ commitmentId, repoPath: repo });
-  const choice: Json = await require('./route.ts').forced({
-    target, mode: s.mode, done, app: s.app, register, exactDone: frozen, jobKind: kind,
-  });
-  const delivery: string = s.delivery;
-  const source: string = eff.source.delivery === 'given' ? deliverySource || 'explicit' : eff.source.delivery;
-  const extraModels = model && s.runtime === 'claude_session' ? [`claude_session=${String(model).replace(/^(anthropic|cli)\//, '')}`] : null;
-  if (model && !extraModels) throw new Error('a bare --model names the Claude model of a claude_session job — on api, give --model persona=provider/model');
-  return factory.start({
-    target, app: choice.app, slug: choice.slug, task, mode: s.mode, pipeline,
-    models: extraModels ? [...modelList(models), ...extraModels] : models,
-    modelsExact: frozen, done: choice.done,
-    routeReason: givenReason || `${choice.reason} (${kind}: ${eff.why.jobKind})`,
-    delivery, deliverySource: source, deliveryPhrase: source === 'explicit' ? deliveryPhrase : eff.phrase,
-    brief, briefBy, confirmedUnattended, again,
-    jobKind: kind, runtime: s.runtime, title, branch: onBranch, pr: onPr, timings: { route: Date.now() - calledAt },
-    // JOBS-API v1.9: the card's review / caps choices (the defaults are the factory's).
-    ...require('./settings.ts').policyArgs(eff),
-  });
-}
-
-// `persona=model` entries from a list, a comma list, or a {persona: model} object.
-function modelList(m: StartOptions['models']): string[] {
-  if (!m) return [];
-  if (Array.isArray(m)) return m;
-  if (typeof m === 'string') return m.split(',').map((x) => x.trim()).filter(Boolean);
-  return Object.entries(m).map(([k, v]) => `${k}=${v}`);
 }
 
 /**
@@ -336,14 +227,12 @@ function modelList(m: StartOptions['models']): string[] {
  */
 async function startSession({
   commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false,
-  via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
-  agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
-  brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
-  jobKind = null, runtime = null, title = null, branch: onBranch = null, pr: onPr = null,
+  routeReason: givenReason = null, agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
+  confirmedUnattended = false, repoVerified = false,
 }: StartOptions): Promise<Json> {
-  // Not metered: a raw Claude Code session outside the factory. Said loudly
+  // Not metered: a raw Claude Code session outside Build. Said loudly
   // and put on the Meter as a call of unknown cost, never silent.
-  log.warn('a Claude Code session outside the factory (legacy startSession): metered-unknown', { commitmentId, task: task ? String(task).slice(0, 80) : null });
+  log.warn('a Claude Code session outside Build (legacy startSession): metered-unknown', { commitmentId, task: task ? String(task).slice(0, 80) : null });
   await require('../budget.ts').record({ purpose: 'dispatch-session-unmetered', model: model || null, backend: 'claude_session_unmetered', costUsd: null, ok: true }).catch(() => {});
   if (repoPath && !repoVerified) await knownRepo(repoPath);
   if (commitmentId && !again) {
@@ -355,7 +244,6 @@ async function startSession({
   }
   if (delivery) delivery = D.delivery(delivery);
   let routeReason: string | null = givenReason || 'a Claude session (legacy)';
-  if (onBranch != null || onPr != null) throw new Error('continuing an existing branch or PR is a factory job — send it --via factory');
   // The end state, for a Claude session: what the PA does when it ends
   // (src/durable/tasks/runReview.ts), and the session's own mode, enforced in
   // its worktree. Plan mode delivers nothing.
@@ -380,11 +268,6 @@ async function startSession({
   // is created so a bad choice leaves no run row or worktree behind.
   const launch = require('./agent.ts').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
   const m = resolveMode(modeName);
-  // PA_SANDBOX=on (src/dispatch/sandbox.ts): refused up front for a mode it
-  // cannot cover yet, so nothing runs unsandboxed and nothing is left behind.
-  const sandbox = require('./sandbox.ts');
-  const sandboxed = sandbox.enabled();
-  if (sandboxed) sandbox.requireSandboxable(m.name);
   const target = await resolveTarget({ commitmentId, repoPath });
 
   const label = task || target.commitment?.summary;
@@ -422,7 +305,6 @@ async function startSession({
   let briefPath = null;
   let session = null;
   let worktreeMade = false;
-  let sandboxHost = null;
 
   // Everything from here to 'running' is undone on any error: the row is
   // marked failed with the reason, the session killed, the worktree and its
@@ -454,24 +336,8 @@ async function startSession({
       await repository.runs.setWorktree(run.id, worktreePath, branch);
     }
 
-    let briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
-    let command = launch.command;
-    if (sandboxed) {
-      const workdir = worktreePath || path.join(config.worktreesRoot, `run-${run.id}-plan`);
-      fs.mkdirSync(workdir, { recursive: true });
-      const stateDir = path.join(config.worktreesRoot, `run-${run.id}.sbx`);
-      const host = sandboxHost = await sandbox.start({
-        factoryPath: config.factory.path,
-        stateDir,
-        spec: sandbox.hostSpec({
-          runId: run.id, workdir, stateDir, mode: m.name, repoPath: repo, branch,
-          claudeBin: launch.agent === 'claude' ? process.env.PA_SANDBOX_CLAUDE_BIN || null : null,
-          passEnv: process.env.PA_SANDBOX_PASS_ENV || null,
-        }),
-      });
-      command = sandbox.wrapCommand(host.wrap, launch.command, require('../platform').id === 'windows' ? 'windows' : 'posix');
-      briefText = `${briefText.trimEnd()}\n\n${sandbox.BRIEF_NOTE}`;
-    }
+    const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
+    const command = launch.command;
 
     briefPath = worktreePath
       ? path.join(worktreePath, 'BRIEF.md')
@@ -507,9 +373,6 @@ async function startSession({
 
     await repository.runs.markRunning(run.id, session.id, briefPath);
   } catch (err) {
-    if (sandboxHost) {
-      try { process.kill(sandboxHost.pid); } catch { /* already gone */ }
-    }
     await rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err });
     throw err;
   }
@@ -636,22 +499,6 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
 const requireConfirmed = D.requireConfirmed;
 
 /**
- * The end state a start would get, before anything is created — so the CLI
- * and the page can show it, and ask, first. The same resolution as start
- * (src/dispatch/settings.ts): the caller's choice, the card's, else the
- * factory app's default. A research/report/plan job delivers `none`.
- */
-async function previewDelivery({ commitmentId = null, task = null, mode = undefined, delivery = null, repoPath = null, jobKind = null, app = null }: DeliveryAsk & { jobKind?: string | null; app?: string | null }): Promise<Chosen & { jobKind: string }> {
-  const F = require('./factoryCore.ts');
-  const eff = await require('./settings.ts').effective({
-    commitmentId, task,
-    given: { mode: mode ? resolveMode(mode).name : null, delivery: delivery ? D.delivery(delivery) : null, jobKind: jobKind ? F.jobKind(jobKind) : null, app, repo: repoPath },
-  });
-  const source = eff.source.delivery === 'given' ? 'explicit' : eff.source.delivery;
-  return { delivery: eff.settings.delivery, source, phrase: eff.phrase, jobKind: eff.settings.jobKind };
-}
-
-/**
  * A Claude session's delivery and the mode its worktree is held to.
  * Pure rules in deliveryCore; this reads the repo default when it needs it.
  *   - plan mode: read-only, delivers nothing (delivery null)
@@ -675,7 +522,7 @@ async function sessionDelivery({ modeName, delivery, deliverySource, deliveryPhr
     let slugName: string | null = null;
     if (!explicitMode && !D.infer(task)) {
       const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
-      slugName = target ? await require('./route.ts').slugFor(target).catch(() => null) : null;
+      slugName = target ? require('./routeCore.ts').normSlug(target.project?.gitlab_path) || (target.repoPath ? await require('./merge.ts').slugOf(target.repoPath).catch(() => null) : null) : null;
     }
     chosen = await require('./delivery.ts').resolve({ mode: explicitMode, operatorText: task, slug: slugName });
   }
@@ -689,7 +536,7 @@ async function sessionDelivery({ modeName, delivery, deliverySource, deliveryPhr
 // git on a remote run's worktree happens on that machine, not here.
 function localOnly(run: Run, verb: string): void {
   if (run.route === 'factory') {
-    throw new Error(`run #${run.id} is a factory job (${run.factory_job_id || 'not submitted'}): the factory ${verb === 'land' ? 'delivers it itself' : 'has its diff'} — \`pa review ${run.id}\` shows the job, its PRs and why`);
+    throw new Error(`run #${run.id} was a software-factory job (${run.factory_job_id || 'not submitted'}); the factory was removed (D32), so there is nothing to ${verb}`);
   }
   if (!termhub.isLocal(run.machine)) {
     throw new Error(
@@ -718,9 +565,7 @@ async function list({ all = false, limit = 20 }: { all?: boolean; limit?: number
 async function steer(runId: RunId, text: string): Promise<true> {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
-  if (run.route === 'factory') {
-    throw new Error(`run #${runId} is a factory job: its session only follows the job — answer it in the factory (\`pa review ${runId}\` says why it waits)`);
-  }
+  if (run.route === 'factory') throw new Error(`run #${runId} was a software-factory job; the factory was removed (D32)`);
   if (!run.termhub_session_id) throw new Error(`run #${runId} has no session`);
   await termhub.forMachine(run.machine).say(run.termhub_session_id, text);
   return true;
@@ -735,23 +580,7 @@ function readOnly(): boolean {
 async function review(runId: RunId): Promise<Json> {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
-  if (run.route === 'factory') {
-    if (!run.factory_job_id) {
-      // A submit whose answer was lost: ask the factory now rather than wait for the worker.
-      if (['starting', 'waiting'].includes(run.status) && !readOnly()) {
-        const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
-        await require('./factory.ts').settle(run, { ageMs, extra: { by: run.brief_by } });
-        const now = (await get(runId)) as Run;
-        if (now.factory_job_id) return review(runId);
-        return { run: now, factory: null };
-      }
-      return { run, factory: null };
-    }
-    const job = await require('./factory.ts').status(run);
-    if (readOnly()) return { run, factory: job };
-    await require('./factory.ts').apply(run, job);
-    return { run: await get(runId), factory: job };
-  }
+  if (run.route === 'factory') return { run, factory: null };
   localOnly(run, 'review');
   if (!run.worktree_path) return { run, diff: null, stat: null, status: null };
 
@@ -927,38 +756,15 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
   if (!run) throw new Error(`no run #${runId}`);
   require('./remote.ts').removeNoGhDirs(runId);
 
-  // A factory job is cancelled in the factory (it parks or closes its
-  // stories and keeps the evidence); its follow session goes too.
+  // A factory-era run (removed in D32): nothing to cancel any more; end its session and close the row.
   if (run.route === 'factory') {
-    let cancelled = false;
-    let storiesParked = null;
-    // A submit whose answer was lost may have made a job: find it before
-    // dropping, or the job runs on with nobody watching it.
-    if (!run.factory_job_id && ['starting', 'waiting'].includes(run.status)) {
-      const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
-      const settled = await require('./factory.ts').settle(run, { ageMs, extra: { by: run.brief_by } });
-      if (settled.verdict === 'adopt') Object.assign(run, { factory_job_id: settled.job.job_id, status: 'running' });
-      else if (settled.verdict === 'unknown') {
-        // Not asked, or asked too soon to believe "no job": a drop now could orphan one.
-        throw new Error(
-          settled.asked
-            ? `run #${runId}'s submit is still unconfirmed (the factory may yet show its job) — try again in a few minutes`
-            : `run #${runId}'s submit is unconfirmed and the factory cannot be asked now — dropping it could orphan a job; try again when the factory answers`
-        );
-      }
-    }
-    if (run.factory_job_id && ['starting', 'running', 'waiting'].includes(run.status)) {
-      const c = await require('./factory.ts').cancel(run);
-      cancelled = true;
-      storiesParked = Array.isArray(c?.stories_parked) ? c.stories_parked.length : Number.isFinite(c?.stories_parked) ? c.stories_parked : null;
-    }
     if (run.termhub_session_id) await termhub.forMachine(run.machine).killSession(run.termhub_session_id).catch(() => {});
     await repository.runs.markFactoryDropped(runId);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
     await forgetContext(run);
-    return { factory: true, cancelled, storiesParked, jobId: run.factory_job_id };
+    return { factory: true, cancelled: false, storiesParked: null, jobId: run.factory_job_id };
   }
 
   // A remote run's worktree is on that machine, where this cannot see whether
@@ -1090,5 +896,5 @@ async function reconcile(): Promise<{ closed: number; notified: number }> {
 
 module.exports = {
   start, startSession, knownRepo, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
-  worktreeBase, scopeFacts, relatedContext, memoryContext, sessionDelivery, previewDelivery, requireConfirmed, BLOCKED_PUSH_URL,
+  worktreeBase, scopeFacts, relatedContext, memoryContext, sessionDelivery, requireConfirmed, BLOCKED_PUSH_URL,
 };

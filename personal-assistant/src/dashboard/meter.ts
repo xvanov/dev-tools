@@ -4,7 +4,7 @@
 //   GET  /api/meter?days=N   latency per hop (p50/p95), spend per day/model/
 //                            purpose, the Claude credit pool (src/telemetry/meter.js).
 //                            Read by termhub's Meter page through /pa/api/meter.
-//   POST /api/telemetry      what the Python factory measured: {spans: [...],
+//   POST /api/telemetry      what another process measured (the removed factory's, D32): {spans: [...],
 //                            usage: [...]}. X-PA guarded like every POST here.
 //                            A span is {hop, name, traceId, spanId, parentSpanId,
 //                            startedAt, durationMs, ok, attrs}; a usage row is

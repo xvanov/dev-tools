@@ -56,7 +56,7 @@ only:
 PA_NO_SUPERVISOR=1  PA_DB=sqlite  PA_SQLITE_PATH=<scratch>.sqlite  PA_SQLITE_KEY=<its key>
 PA_DATABASE_URL=postgres://pa:pa@127.0.0.1:1/blocked     # any stray Postgres path fails, never reaches the live one
 PA_DATA_DIR=<scratch>/data  PA_BACKUP_DIR=<scratch>/backups  PA_BACKUP_KEY=<a scratch key>
-PA_DISPATCH_PORT=7399  PA_TOASTS=0  PA_NTFY=off  PA_CHAT_NUDGE=0  PA_FACTORY_MACHINE=none
+PA_DISPATCH_PORT=7399  PA_TOASTS=0  PA_NTFY=off  PA_CHAT_NUDGE=0
 PA_M365=0 PA_TEAMS_CACHE=0 PA_SESSIONS=0 PA_GITHUB=0 PA_JIRA=0 PA_AUDIO_ENABLED=0
 PA_AUDIO_MEETING_GATE=0 PA_BRIEFS=0 PA_REPOS=0 PA_PLANNER=0 PA_CARD_CONTEXT=0 PA_FAST_LANE=0
 PA_REPLY_CLOSE=0 PA_DEDUPE=0 PA_BLOCKS=0 PA_RECONCILE=0
@@ -64,9 +64,7 @@ PA_ONLY_PASSES=memory-extract,memory-consolidate,memory-pages,memory-dream,routi
 ```
 
 and run `node src/worker.js`. `PA_ONLY_PASSES` is what makes it safe: several passes have no
-switch of their own, and they shell out to logged-in `claude -p` and `gh`. The factory pacer
-stays off because its poll can submit or cancel jobs on the live factory. The board can be
-refreshed read-only, once, with `refreshBoard()` (`factory job list`).
+switch of their own, and they shell out to logged-in `claude -p` and `gh`.
 
 Result on the work laptop, 2026-11-08, on a fresh export (453 MB, encrypted):
 - Start: migrations, the lease (a row in `lease`), the durable worker, and the dashboard on
@@ -86,7 +84,6 @@ Result on the work laptop, 2026-11-08, on a fresh export (453 MB, encrypted):
   - An insert from another process reached `/api/events` as `g6702` within the poll.
   - `Last-Event-ID: g6690` replayed the 12 events after it.
   - The board, `/factory` and `/architecture` pages load (54-430 ms).
-  - The factory board refreshed read-only from `factory serve`: 10 jobs.
 - What the first tries found, all fixed before this run:
   - The pages pass held the event loop for 69 s; it now takes 324 ms.
   - The hourly snapshot blocked for 6+ s; it now runs on a worker thread.
@@ -111,8 +108,6 @@ file is exactly what Postgres holds.
      down with it.
    - End Claude sessions that have the `pa` MCP server loaded, and don't run `pa` verbs
      until step 7.
-   - The factory may keep running: its calls to the PA fail while the worker is down and are
-     retried.
 3. **A last Postgres backup:** `pa backup` (the nightly kind, run now).
 4. **Export.** Use the path the store will live at; the default is `<PA_DATA_DIR>/pa.sqlite`,
    or set `PA_SQLITE_PATH` first.

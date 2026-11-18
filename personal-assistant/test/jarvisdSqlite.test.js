@@ -74,7 +74,7 @@ async function main() {
     PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:1/blocked_in_tests',
     PA_DATA_DIR: path.join(dir, 'data'), PA_BACKUP_DIR: path.join(dir, 'backups'),
     PA_BACKUP_KEY: crypto.randomBytes(32).toString('base64'),
-    PA_DISPATCH_PORT: String(port), PA_TOASTS: '0', PA_NTFY: 'off', PA_CHAT_NUDGE: '0', PA_FACTORY_MACHINE: 'none',
+    PA_DISPATCH_PORT: String(port), PA_TOASTS: '0', PA_NTFY: 'off', PA_CHAT_NUDGE: '0',
     PA_M365: '0', PA_TEAMS_CACHE: '0', PA_SESSIONS: '0', PA_GITHUB: '0', PA_JIRA: '0', PA_AUDIO_ENABLED: '0',
     PA_AUDIO_MEETING_GATE: '0', PA_BRIEFS: '0', PA_REPOS: '0', PA_PLANNER: '0', PA_CARD_CONTEXT: '0', PA_FAST_LANE: '0',
     PA_REPLY_CLOSE: '0', PA_DEDUPE: '0', PA_BLOCKS: '0', PA_RECONCILE: '0',

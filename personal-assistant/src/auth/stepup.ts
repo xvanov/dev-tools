@@ -47,7 +47,7 @@ const KIND_BY_DELIVERY: Record<string, string> = { auto_merge: 'merge', push_to_
 /**
  * The dashboard's own gate for the two delivery levels that run with no human
  * step after them (auto_merge, push_to_main), used where a card is accepted and
- * a factory job is created. `approvalId` is built by the SERVER from the exact
+ * a run is started. `approvalId` is built by the SERVER from the exact
  * thing being approved (never taken from the request), so a tap made for one
  * card or job cannot be spent on another.
  *

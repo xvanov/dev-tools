@@ -60,11 +60,11 @@ assert.strictEqual(ev({ tool: 'brand_new_tool' }).rule, 'default');
   const tighter = P.merge(base, { rules: [{ id: 'no-recall-from-mcp', tools: ['recall'], channels: ['mcp'], decision: 'deny', reason: 'this stack keeps recall to the chat' }] });
   assert.strictEqual(ev({ tool: 'recall', channel: 'mcp' }, tighter).decision, 'deny');
   assert.strictEqual(ev({ tool: 'recall', channel: 'chat' }, tighter).decision, 'allow', 'other channels keep the default');
-  const looser = P.merge(base, { rules: [{ id: 'trust-start', tools: ['factory_start'], decision: 'allow' }], default: 'deny' });
-  assert.strictEqual(ev({ tool: 'factory_start' }, looser).decision, 'allow');
+  const looser = P.merge(base, { rules: [{ id: 'trust-start', tools: ['session_start'], decision: 'allow' }], default: 'deny' });
+  assert.strictEqual(ev({ tool: 'session_start' }, looser).decision, 'allow');
   assert.strictEqual(ev({ tool: 'unlisted' }, looser).decision, 'deny');
   const tryUnlock = P.merge(base, { locked: [], rules: [{ id: 'let-voice-merge', tools: ['*'], channels: ['voice'], decision: 'allow' }] });
-  const r = ev({ tool: 'factory_start', channel: 'voice', args: { delivery: 'auto_merge' } }, tryUnlock);
+  const r = ev({ tool: 'session_start', channel: 'voice', args: { delivery: 'auto_merge' } }, tryUnlock);
   assert.strictEqual(r.decision, 'deny', 'an override cannot loosen a locked rule');
   assert.strictEqual(r.rule, 'voice-never-approves-sensitive');
 }
@@ -77,9 +77,9 @@ assert.throws(() => P.merge(base, { default: 'yes' }), /default/);
 assert.throws(() => P.merge({ ...base, locked: [{ id: 'l', decision: 'allow' }] }, null), /must deny/);
 
 // ---- classification ----
-assert.deepStrictEqual(P.classify('factory_start', { delivery: 'auto_merge' }), ['merge']);
-assert.deepStrictEqual(P.classify('factory_start', { delivery: 'push_to_main' }), ['push_main']);
-assert.deepStrictEqual(P.classify('factory_start', { delivery: 'pr' }), []);
+assert.deepStrictEqual(P.classify('session_start', { delivery: 'auto_merge' }), ['merge']);
+assert.deepStrictEqual(P.classify('session_start', { delivery: 'push_to_main' }), ['push_main']);
+assert.deepStrictEqual(P.classify('session_start', { delivery: 'pr' }), []);
 assert.deepStrictEqual(P.classify('merge_pr'), ['merge']);
 assert.deepStrictEqual(P.classify('secret_reveal'), ['secret_reveal']);
 assert.deepStrictEqual(P.classify('pa', { command: 'secret', args: ['reveal', 'GH_TOKEN'] }), ['secret_reveal']);
@@ -91,8 +91,8 @@ assert.deepStrictEqual(P.classify('request_secret'), []);
 // ---- voice restrictions: merges, pushes to main, secret reveals, whatever the action ----
 for (const action of ['call', 'approve']) {
   for (const [tool, args] of [
-    ['factory_start', { delivery: 'auto_merge' }],
-    ['factory_start', { delivery: 'push_to_main' }],
+    ['session_start', { delivery: 'auto_merge' }],
+    ['session_start', { delivery: 'push_to_main' }],
     ['merge_pr', {}],
     ['pa', { command: 'secret', args: ['reveal', 'X'] }],
     ['secret_reveal', {}],
@@ -105,8 +105,8 @@ for (const action of ['call', 'approve']) {
 }
 // ...but not everything: voice still approves an ordinary chat action, and the same sensitive call
 // from the dashboard is not denied by the voice lock.
-assert.strictEqual(ev({ tool: 'factory_start', action: 'approve', channel: 'voice' }).decision, 'allow');
-assert.notStrictEqual(ev({ tool: 'factory_start', args: { delivery: 'auto_merge' }, action: 'approve', channel: 'dashboard' }).decision, 'deny');
+assert.strictEqual(ev({ tool: 'session_start', action: 'approve', channel: 'voice' }).decision, 'allow');
+assert.notStrictEqual(ev({ tool: 'session_start', args: { delivery: 'auto_merge' }, action: 'approve', channel: 'dashboard' }).decision, 'deny');
 
 // ---- authorize and enforce write every decision, and enforce refuses a deny ----
 function memoryRepo() {
@@ -133,10 +133,10 @@ function memoryRepo() {
 
   const a = await P.authorize({ tool: 'recall', channel: 'mcp', args: { question: 'secret plans' } }, { repo });
   assert.strictEqual(a.decision, 'allow');
-  const b = await P.authorize({ tool: 'factory_start', channel: 'chat', args: { card: '412', delivery: 'pr' } }, { repo });
+  const b = await P.authorize({ tool: 'session_start', channel: 'chat', args: { card: '412', delivery: 'pr' } }, { repo });
   assert.strictEqual(b.decision, 'ask');
   await assert.rejects(
-    () => P.enforce({ tool: 'factory_start', action: 'approve', channel: 'voice', args: { delivery: 'auto_merge' }, subject: 'tu_1' }, { repo }),
+    () => P.enforce({ tool: 'session_start', action: 'approve', channel: 'voice', args: { delivery: 'auto_merge' }, subject: 'tu_1' }, { repo }),
     (err) => err.code === 'POLICY_DENIED' && /voice-never-approves-sensitive/.test(err.message)
   );
   assert.deepStrictEqual(repo.rows.map((r) => r.decision), ['allow', 'ask', 'deny'], 'every decision is written, denials included');
@@ -184,39 +184,15 @@ function memoryRepo() {
   t[1].at = new Date(Date.now() - 86400000).toISOString(); // a timestamp moved
   assert.strictEqual(verify(t).ok, false);
 
-  // ---- voice approving a factory job is judged by the job's delivery; lookup failure fails closed ----
-  const jobs = { 'app:0001': { delivery: 'auto_merge' }, 'app:0002': { delivery: 'push_to_main' }, 'app:0003': { delivery: 'pr' }, 'app:0004': {} };
-  const lookup = async (id) => jobs[id] || null;
-  const voice = (tool, job, extra = {}) => ({ tool, action: 'approve', channel: 'voice', subject: 'tu_9', args: job === undefined ? {} : { job }, ...extra });
-  for (const tool of P.JOB_TOOLS) {
-    await assert.rejects(async () => P.enforce(await P.withJobDelivery(voice(tool, 'app:0001'), lookup), { repo }), /voice-never-approves-sensitive/, `${tool} on an auto_merge job`);
-    await assert.rejects(async () => P.enforce(await P.withJobDelivery(voice(tool, 'app:0002'), lookup), { repo }), /voice-never-approves-sensitive/, `${tool} on a push_to_main job`);
-    for (const ok of ['app:0003', 'app:0004']) {
-      assert.strictEqual((await P.enforce(await P.withJobDelivery(voice(tool, ok), lookup), { repo })).decision, 'allow', `${tool} on ${ok}`);
-    }
-    // fail closed: job unknown, no job named, lookup throws
-    for (const [label, req, lk] of [['unknown job', voice(tool, 'app:9999'), lookup], ['no job', voice(tool), lookup], ['lookup error', voice(tool, 'app:0003'), async () => { throw new Error('factory down'); }]]) {
-      const r = await P.withJobDelivery(req, lk);
-      assert.strictEqual(P.evaluate(r).decision, 'deny', `${tool} ${label} is denied for voice`);
-      assert.strictEqual(P.evaluate(r).rule, 'voice-never-approves-sensitive');
-    }
+  // ---- voice never approves what merges or pushes to main (the locked rule works on the call's own tags) ----
+  const voice = (tool, args) => ({ tool, action: 'approve', channel: 'voice', subject: 'tu_9', args });
+  for (const delivery of ['auto_merge', 'push_to_main']) {
+    await assert.rejects(async () => P.enforce(voice('session_start', { delivery }), { repo }), /voice-never-approves-sensitive/, delivery);
   }
-  // other channels and tools are not looked up and not blocked by it
-  let looked = 0;
-  const counting = async () => { looked++; return null; };
-  const dash = await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'app:0001' } }, counting);
-  assert.strictEqual(P.evaluate(dash).decision, 'allow', 'the dashboard may approve even when the job is not found');
-  assert.strictEqual(looked, 1, 'the dashboard approval is looked up so it is tagged');
-  const dashMerge = await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'app:0001' } }, lookup);
-  assert.deepStrictEqual(P.evaluate(dashMerge).tags, ['merge']);
-  assert.strictEqual(P.evaluate(dashMerge).decision, 'allow');
-  await P.withJobDelivery({ tool: 'factory_start', action: 'approve', channel: 'voice', args: {} }, counting);
-  await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'cli', args: { job: 'x' } }, counting);
-  assert.strictEqual(looked, 1, 'other tools and channels are not looked up');
-  assert.strictEqual(P.evaluate({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'x', delivery_unknown: true } }).decision, 'allow', 'unverified only bars voice');
-  // a spoofed args.delivery from the request is replaced by the looked-up one
-  const spoof = await P.withJobDelivery(voice('factory_approve', 'app:0001', { args: { job: 'app:0001', delivery: 'pr' } }), lookup);
-  assert.strictEqual(spoof.args.delivery, 'auto_merge');
+  assert.strictEqual((await P.enforce(voice('session_start', { delivery: 'pr' }), { repo })).decision, 'allow', 'a PR is fine by voice');
+  assert.strictEqual((await P.enforce(voice('session_start', {}), { repo })).decision, 'allow');
+  assert.ok(!P.evaluate(voice('session_start', { delivery_unknown: true })).tags.includes('unverified'), 'no job lookup any more: nothing is unverified');
+  assert.strictEqual(P.withJobDelivery, undefined, 'the factory job lookup is gone (D32)');
 
   // ---- passkey step-up (7.1): ask until a grant for this approval id exists; voice stays denied first ----
   {
@@ -230,7 +206,7 @@ function memoryRepo() {
       },
     });
     const on = mk(true);
-    const merge = { tool: 'factory_approve', action: 'approve', channel: 'dashboard', subject: 'app:0001', args: { job: 'app:0001', delivery: 'auto_merge' } };
+    const merge = { tool: 'session_start', action: 'approve', channel: 'dashboard', subject: 'app:0001', args: { job: 'app:0001', delivery: 'auto_merge' } };
     const rows0 = repo.rows.length;
     const r1 = await P.authorize(merge, { repo, stepup: on });
     assert.deepStrictEqual([r1.decision, r1.rule], ['ask', 'stepup-required'], 'no grant: ask');

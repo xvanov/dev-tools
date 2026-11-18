@@ -374,7 +374,7 @@ fi
 # 3b) The rest of the stack, BEFORE the restart for the same reason as 4): one pull
 # updated the whole repo, so the assistant is redeployed to the same commit (deps,
 # a zero-downtime roll of pa-worker through its supervisor - a restart only to
-# bootstrap it - pa-voice if its code changed) and the factory's deps synced.
+# bootstrap it - pa-voice if its code changed).
 # Non-fatal. Open pages reload themselves (nav.js api/version).
 if [ -f "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" ]; then
   bash "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" "$ROLLBACK" 2>&1 || true
