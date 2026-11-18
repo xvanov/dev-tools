@@ -10,13 +10,16 @@
 // read-only surface — a coding session in bypass mode must never see a tool
 // that starts work.
 //
-//   reads    board, card, sessions, build_runs, build_run, card_plan_propose
+//   reads    board, card, sessions, build_runs, build_run, card_plan_propose, profile_list, profile_get,
+//            agent_settings_get
 //            (card_plan_propose only STORES a proposed set of card changes for the user to
-//            approve on the dashboard: it changes no card, so it runs unasked)
+//            approve on the dashboard: it changes no card, so it runs unasked; the profile and
+//            agent-settings reads are the Agents page's reads)
 //            Allowed without a prompt (src/chat/index.js CHAT_READ_TOOLS).
 //            In-process over the same modules the dashboard uses; compact
 //            JSON (ids, short fields) for a model to read, never page markup.
-//   actions  session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply
+//   actions  session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply,
+//            profile_set, profile_delete, profile_reset, agent_settings_set (the Agents page's writes)
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.ts start, src/build),
@@ -41,8 +44,8 @@ type Json = Record<string, any>;
 
 const repository = require('../repo');
 
-const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose'];
-const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_plan_apply'];
+const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose', 'profile_list', 'profile_get', 'agent_settings_get'];
+const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_plan_apply', 'profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set'];
 
 const READ_TOOLS = [
   {
@@ -156,9 +159,96 @@ const READ_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'profile_list',
+    description:
+      "The Build profiles (a saved, named Build agent: model, effort, permission mode, MCP servers, subagents, caps) as short rows: name, what it is for, model, effort, permission_mode, caps, mcp, subagents, whether it ships (seed) and whether it was edited. The same list as the dashboard's Agents page. Call it before profile_set so a name is right; profile_get has one profile in full.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'profile_get',
+    description:
+      "One Build profile in full: every setting (prompt, tools allow/deny, subagents with their prompts, caps, repo) and, for a built-in one, what it ships as (`default`).",
+    inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 40 } }, required: ['name'], additionalProperties: false },
+  },
+  {
+    name: 'agent_settings_get',
+    description:
+      "The PA chat's model and each background pass's model (distill, brief, planner, drafts, the voice fast lane, …), each with where the value comes from: `store` (set on the Agents page or by agent_settings_set), `env` (an environment variable) or `default`, and what it would be without the override. Also the Build profiles in short. Call it for \"what model does X use\".",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
 ];
 
+const PROFILE_PROPS = {
+  description: { type: 'string', maxLength: 300, description: 'What the profile is for (the planner and the card menu show it).' },
+  model: { type: ['string', 'null'], enum: ['haiku', 'sonnet', 'opus', 'fable', null], description: 'null: the default model.' },
+  effort: { type: ['string', 'null'], enum: ['low', 'medium', 'high', 'xhigh', 'max', null], description: 'null: Claude Code\'s own.' },
+  permission_mode: { type: ['string', 'null'], enum: ['bypassPermissions', 'acceptEdits', 'auto', 'dontAsk', 'plan', null], description: 'null: Build\'s default (bypass, in the run\'s worktree). dontAsk is read-only: it can read and run `pa run` verbs.' },
+  prompt: { type: 'string', maxLength: 8000, description: 'Appended to the base Build prompt for this profile; "" clears it.' },
+  tools: {
+    type: 'object',
+    properties: {
+      mcp: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 20, description: 'Registered MCP servers (the build.mcp setting) the run gets.' },
+      allow: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 60, description: 'Claude Code allow rules, e.g. "Bash(git status)".' },
+      deny: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 60, description: 'Claude Code deny rules.' },
+    },
+    additionalProperties: false,
+    description: 'Only the lists you name change.',
+  },
+  subagents: {
+    type: 'array',
+    maxItems: 10,
+    items: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', maxLength: 40 },
+        description: { type: 'string', maxLength: 300 },
+        model: { type: ['string', 'null'], enum: ['haiku', 'sonnet', 'opus', 'fable', 'inherit', null] },
+        prompt: { type: 'string', maxLength: 4000 },
+        tools: { type: 'array', items: { type: 'string', maxLength: 60 }, maxItems: 20 },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    description: 'The whole list: replaces the profile\'s subagents.',
+  },
+  subagent_model: { type: ['string', 'null'], enum: ['haiku', 'sonnet', 'opus', 'fable', 'inherit', null], description: 'Default model of the profile\'s subagents.' },
+  cost_cap_usd: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1000 },
+  wall_cap_min: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1440 },
+  idle_after_s: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 21600 },
+  repo: { type: ['string', 'null'], maxLength: 300, description: 'Default repo (a known checkout path).' },
+};
+
 const ACTION_TOOLS = [
+  {
+    name: 'profile_set',
+    description:
+      "Create or change a Build profile (the user approves each call): only the fields you give change, null clears one back to the default. \"Set chore to fable medium\" is `{name: \"chore\", model: \"fable\", effort: \"medium\"}`. A new name creates a profile. The same as editing it on the dashboard's Agents page. Returns the profile.",
+    inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 40, description: 'Lowercase letters, digits, - or _.' }, ...PROFILE_PROPS }, required: ['name'], additionalProperties: false },
+  },
+  {
+    name: 'profile_delete',
+    description: "Delete a Build profile (the user approves each call). A built-in one comes back with profile_reset.",
+    inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 40 } }, required: ['name'], additionalProperties: false },
+  },
+  {
+    name: 'profile_reset',
+    description: "Put a built-in profile (chore, feature, research, quick) back to what ships, or bring back one that was deleted; the user approves each call and loses their edits to it.",
+    inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 40 } }, required: ['name'], additionalProperties: false },
+  },
+  {
+    name: 'agent_settings_set',
+    description:
+      "Set the PA chat's model and/or a background pass's model (the user approves each call). `chat_model`: a Claude model (haiku, sonnet, opus, fable or a full id), applied when the chat session next starts. `pass_models`: {pass: model}, a pass from agent_settings_get; a model is `provider/model` (azure/pa, local/llama3.2:3b, cli/claude-opus-5) or a bare Claude name; the connector pass must stay on Claude. null clears an override (back to the environment's value). Returns the settings.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chat_model: { type: ['string', 'null'], maxLength: 120 },
+        pass_models: { type: 'object', additionalProperties: { type: ['string', 'null'], maxLength: 120 }, description: '{ "planner": "claude-opus-5-5", "brief": null }' },
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: 'card_plan_apply',
     description:
@@ -545,6 +635,26 @@ async function handle(name: string, args: Json = {}) {
       for (const k of ['title', 'details', 'due', 'project', 'note', 'reason']) if (args[k] !== undefined) edit[k] = args[k];
       const r = await editCard(card.commitment, edit);
       return { card: r.id, changed: r.changed, before: r.before, after: r.after, summary: r.card?.summary ?? null };
+    }
+    // Agent settings (BUILD-ENRICHMENT B): the Agents page's reads and writes, through src/agentSettings.ts.
+    case 'profile_list': {
+      const v = await require('../build/profiles.ts').view();
+      const A = require('../agentSettings.ts');
+      return { profiles: v.profiles.map((p: Json) => A.profileLine(p)), missing_seeds: v.missingSeeds };
+    }
+    case 'profile_get': return require('../agentSettings.ts').getProfile(String(args.name || ''));
+    case 'agent_settings_get': return require('../agentSettings.ts').summary();
+    case 'profile_set': {
+      const { name, ...patch } = args;
+      return require('../agentSettings.ts').setProfile(String(name || ''), patch);
+    }
+    case 'profile_delete': return require('../agentSettings.ts').deleteProfile(String(args.name || ''));
+    case 'profile_reset': return require('../agentSettings.ts').resetProfile(String(args.name || ''));
+    case 'agent_settings_set': {
+      const patch: Json = {};
+      if (args.chat_model !== undefined) patch.chatModel = args.chat_model;
+      if (args.pass_models !== undefined) patch.passModels = args.pass_models;
+      return require('../agentSettings.ts').setAgents(patch);
     }
     case 'build_stop': {
       const r = await require('../build/index.ts').stop(Number(args.run), 'stopped from the chat');

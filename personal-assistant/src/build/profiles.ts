@@ -205,6 +205,58 @@ async function remove(name: string): Promise<boolean> {
   return (await repo().remove(String(name).trim().toLowerCase())) > 0;
 }
 
+// ------------------------------------------------- settings (B) ----
+
+const ALIASES: Record<string, string> = {
+  permission_mode: 'permissionMode', subagent_model: 'subagentModel', cost_cap_usd: 'costCapUsd',
+  wall_cap_min: 'wallCapMin', idle_after_s: 'idleAfterS', repo_path: 'repoPath', repo: 'repoPath',
+};
+/** Pure: a patch with snake_case (and `repo`) keys renamed to the profile's camelCase ones. */
+function canonical(patch: Json): Json {
+  const out: Json = {};
+  for (const [k, v] of Object.entries(patch || {})) out[ALIASES[k] || k] = v;
+  return out;
+}
+
+/** Pure: the shipped default of a seed profile (normalized), or null for a profile the user made. */
+function seedOf(name: string): Profile | null {
+  const s = SEEDS.find((x) => x.name === String(name).trim().toLowerCase());
+  return s ? normalize(s.name, s) : null;
+}
+
+/**
+ * Creates or changes a profile: only the fields in `patch` change (null clears one to "use the next
+ * layer"); a new name starts from nothing. snake_case and camelCase keys both work. Returns the profile.
+ */
+async function update(name: string, patch: Json): Promise<Profile> {
+  const n = String(name || '').trim().toLowerCase();
+  const have = await get(n);
+  const p = canonical(patch);
+  // tools is {mcp, allow, deny}: a patch naming only one list leaves the others as they are.
+  if (have && p.tools && typeof p.tools === 'object' && !Array.isArray(p.tools)) p.tools = { ...have.tools, ...p.tools };
+  return save(n, { ...(have || {}), ...p });
+}
+
+/** Puts a seed profile back to what ships (its edits are lost). A profile the user made has no default: a 400. */
+async function reset(name: string): Promise<Profile> {
+  const s = seedOf(name);
+  if (!s) throw bad(`"${name}" is not a built-in profile (${SEEDS.map((x) => x.name).join(', ')}): delete it instead`);
+  await ensureSeeds();
+  return fromRow(await repo().upsert(s.name, toRow(s)));
+}
+
+/** Pure: a profile with what the settings views add: whether it ships, and whether it differs from what ships. */
+function describe(p: Profile): Profile & { seed: boolean; modified: boolean } {
+  const s = seedOf(p.name);
+  return { ...p, seed: Boolean(s), modified: s ? JSON.stringify(s) !== JSON.stringify(p) : false };
+}
+
+/** The Agents page's profile list: every profile with its seed/modified marks, plus the seeds that were deleted (so they can come back). */
+async function view(): Promise<{ profiles: Array<Profile & { seed: boolean; modified: boolean }>; missingSeeds: string[] }> {
+  const have = await list();
+  return { profiles: have.map(describe), missingSeeds: SEEDS.map((s) => String(s.name)).filter((n) => !have.some((p) => p.name === n)) };
+}
+
 /** Pure: the default profile for a task kind (the planner's kinds, src/agent/plannerCore.ts), or null for "none". */
 function profileForKind(kind: string | null | undefined): string | null {
   switch (kind) {
@@ -300,4 +352,5 @@ function agentFile(s: Profile['subagents'][number]): string {
 module.exports = {
   MODELS, EFFORTS, PERMISSION_MODES, SEEDS,
   normalize, toRow, list, get, need, save, remove, resetSeeds, profileForKind, resolve, launchFlags, withPermissionMode, agentFile,
+  canonical, seedOf, update, reset, describe, view,
 };

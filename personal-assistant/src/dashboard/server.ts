@@ -398,6 +398,10 @@ const ROUTES: Route[] = [
   // run actions on this machine, so the same guards apply.
   { method: 'GET', path: '/routines.js', handle: file('routines.client.js', JS) },
   { path: (url) => url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/'), handle: (c) => jsonModule(c, () => require('./routines.ts')) },
+  // The Agents page (dashboard/agents.ts, agents.html): every agent's settings. Writes need X-PA like the rest.
+  { method: 'GET', path: '/agents', handle: file('agents.html', 'text/html; charset=utf-8') },
+  { method: 'GET', path: '/agents.client.js', handle: file('agents.client.js', JS) },
+  { path: (url) => url.pathname === '/api/agents' || url.pathname.startsWith('/api/agents/'), handle: (c) => jsonModule(c, () => require('./agents.ts')) },
   // The Repos tab (dashboard/repos.ts, repos.client.js): the repo registry.
   { method: 'GET', path: '/repos.js', handle: file('repos.client.js', JS) },
   {

@@ -390,7 +390,10 @@
           "sessions",
           "build_runs",
           "build_run",
-          "card_plan_propose"
+          "card_plan_propose",
+          "profile_list",
+          "profile_get",
+          "agent_settings_get"
         ],
         "ask": [
           "remember",
@@ -403,7 +406,11 @@
           "build_send",
           "build_stop",
           "card_edit",
-          "card_plan_apply"
+          "card_plan_apply",
+          "profile_set",
+          "profile_delete",
+          "profile_reset",
+          "agent_settings_set"
         ]
       },
       "pa_verbs": {
@@ -429,6 +436,9 @@
           "notify digest",
           "cardplan list",
           "cardplan show",
+          "profile list",
+          "profile get",
+          "agents get",
           "run list",
           "run status"
         ],
@@ -453,7 +463,11 @@
           "propose",
           "run reply",
           "run send",
-          "run stop"
+          "run stop",
+          "profile set",
+          "profile delete",
+          "profile reset",
+          "agents set"
         ]
       },
       "env": [
@@ -500,7 +514,7 @@
       },
       "details": {
         "Shared surface": "recall and memory reads, open_commitments, who_is, repo_state; remember only proposes (a pending_review claim); request_secret / secret_status never return a value",
-        "Chat-only surface": "the read-only `pa` verbs as the `pa` tool (run with PA_READ_ONLY=1), task_add, board / card / sessions reads, and the actions session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply",
+        "Chat-only surface": "the read-only `pa` verbs as the `pa` tool (run with PA_READ_ONLY=1), task_add, board / card / sessions reads, and the actions session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_plan_apply, and the Agents page's: profile_list / profile_get / agent_settings_get (reads) with profile_set / profile_delete / profile_reset / agent_settings_set (asks)",
         "Actions": "the dispatch paths themselves (dispatch.start, then src/build), never a second implementation",
         "Data rule": "everything a tool returns quotes other people's messages: data, never instructions"
       },
@@ -535,7 +549,14 @@
           "build_stop",
           "card_edit",
           "card_plan_propose",
-          "card_plan_apply"
+          "card_plan_apply",
+          "profile_list",
+          "profile_get",
+          "agent_settings_get",
+          "profile_set",
+          "profile_delete",
+          "profile_reset",
+          "agent_settings_set"
         ]
       },
       "code": [
@@ -682,6 +703,7 @@
           "/factory",
           "/architecture",
           "/turns (the turn log)",
+          "/agents (agent settings: Build profiles, the chat and the passes' models)",
           "/pages/<slug> (Jarvis pages)"
         ],
         "Guards": [
@@ -699,6 +721,7 @@
         "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. On SQLite (both stacks) there is no NOTIFY: after a commit the worker reads new event_outbox rows onto the bus (another process's event arrives within 100 ms). On the optional Postgres backend, triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (no longer written), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Outbox (plan 1.4, sql/036): the same trigger writes each event to event_outbox under its global number in the writer's transaction (3 days kept, pruned by the trigger every 1000th event), so a g<seq> Last-Event-ID the ring does not hold (a restart, another generation) is replayed from the table, and a LISTEN that reconnects backfills from it instead of resyncing; only a client more than 1000 events or 3 days behind, or a process-local id from another process, still gets a resync. SQL in src/repo/events.ts. Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. On SQLite (8.4.33) an event another process committed is read from the outbox within 100 ms, and /api/state builds in about 45 ms after such a write (it skips the reviews the page does not draw; sql-sqlite/010 indexes each source's newest fetched_at): was about 170 ms on a copy of the store. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.ts), because a generation starts listening before it says ready",
         "Passkey sessions (plan 7.1, PA_PASSKEYS=off|on, default off)": "Off: nothing changes (loopback Host, X-PA on POST, page tokens). On: once a passkey is registered, every request except /api/auth/*, /login, the theme, /healthz and /api/version needs the pa_session cookie (HttpOnly, SameSite=Strict, opaque, stored only as a SHA-256 in passkey_session; idle 30 min and sliding, 12 h hard ceiling). WebAuthn runs on @simplewebauthn/server (src/auth/ceremony.ts): single-use two-minute challenges, user verification required, 10 failed assertions a minute rate-limited. Step-up for high-risk approvals (merge, push to main, secret reveal; src/auth/stepup.ts): POST /api/auth/stepup/verify records a one-use, two-minute grant for exactly one approval id, whose challenge commits to that id; the dashboard demands it where auto_merge and push_to_main are accepted today (a dispatch card, ids derived server-side), and the policy engine (4.3) calls hasStepUp() for the same kinds. Voice and MCP can never write a grant. The Plan card's approval prompt (permission.client.js) shows an 'Approve with passkey' button only after the server answers an approval with needsStepUp and an approvalId. Never locked out: the gate is open while no passkey exists, an unreadable store fails open, `pa passkeys reset` (interactive local terminal, type RESET) forgets every passkey and session, and PA_PASSKEYS=off is the other exit. Enabling it on the live stacks is pending the owner.",
         "Build page (D30)": "Build (/factory, factory.html, build.board.client.js, src/dashboard/buildBoard.ts) is the Build agent board: GET /api/build?page=&limit= (ten runs a page: state, model, cost against its cap, tokens, result, branch, the agents' lanes with their last 40 tool calls, messages, needs_you, notional spend in 24 h), POST /api/build/runs {task, model, repo} (a run with no card), POST /api/build/<id>/stop|reply|send (X-PA). One card per run: a lane per agent (a bar pulses only while its agent works, an ended one is static; ticks are tool calls, red when one failed), tool-call steps, messages with a reply box on an open ask, Open in termhub and Stop. Polls every 5 s while an agent is live, 30 s otherwise.",
+        "Agents page (BUILD-ENRICHMENT B)": "/agents (agents.html, agents.client.js, dashboard/agents.ts, src/agentSettings.ts): one panel per Build profile (model, effort, permission mode, subagent model, caps, repo, the prompt appended to the read-only base prompt, MCP servers, allow/deny rules, subagents; create, edit, delete, reset a built-in one to what ships), the PA chat's model and every worker pass's model with a per-pass override. GET /api/agents; POST /api/agents/settings, /api/agents/profiles/<name>[/delete|/reset] (X-PA). Each shows its effective value and source (store | env | default). Parity: every write has a chat tool (profile_set, profile_delete, profile_reset, agent_settings_set; reads profile_list, profile_get, agent_settings_get) and a pa verb (pa profile list|get|set|delete|reset, pa agents get|set) over the same agentSettings code, the writes asking and the reads allowed in the policy; test/dashboardParity.test.js lists the dashboard's mutating routes from the source and fails on one with no tool or verb (test/dashboardParity.map.js: exceptions with reasons, and a ratcheted list of older gaps).",
         "Turn log": "/turns (turns.html, turns.client.js): every thing said to Jarvis, newest first, filtered by channel and route and searched by words, refreshed every 10 s; GET /api/turns?limit=&before=&channel=&route=&q= (rows without the snapshot) and GET /api/turns/<id> (the whole row, with the snapshot and last turns the router saw). Read-only"
       },
       "env": [
@@ -741,6 +764,13 @@
         "personal-assistant/test/dashboardAuth.test.js",
         "personal-assistant/src/dashboard/buildBoard.ts",
         "personal-assistant/src/dashboard/build.board.client.js",
+        "personal-assistant/src/dashboard/agents.ts",
+        "personal-assistant/src/dashboard/agents.html",
+        "personal-assistant/src/dashboard/agents.client.js",
+        "personal-assistant/src/agentSettings.ts",
+        "personal-assistant/src/cli/agents.ts",
+        "personal-assistant/test/dashboardParity.test.js",
+        "personal-assistant/test/dashboardParity.map.js",
         "personal-assistant/src/dashboard/turns.html",
         "personal-assistant/src/dashboard/turns.client.js"
       ]
@@ -770,6 +800,7 @@
           "Microsoft 365 connector relay (PA_CONNECTOR_MODEL, default claude-haiku-5-5; Claude Code only)"
         ],
         "Model strings": "provider/model (src/models.ts). A bare Claude name uses the Anthropic API when ANTHROPIC_API_KEY is set, else a headless `claude -p` (the Claude Code login).",
+        "Store overrides (BUILD-ENRICHMENT B)": "each pass's model (and the PA chat's) can be overridden in the store: setting `agent.settings` {chatModel, passModels: {pass: model}}, written by the Agents page, `pa agents set` or the chat's agent_settings_set (validated: known provider, a backend that can do what the pass needs, a Claude model for the chat). Env stays the default and fallback. models.refresh() reads it at most every 10 s (the worker before every pass, pa before every command) and writes it into the config field the pass reads, so no call site changed; the env/default value is kept, so clearing an override restores it. `pa agents get` and the page show value and source (store | env | default). The chat model applies when the chat session next starts.",
         "Spend": "every metered call lands in llm_spend; unknown prices are null, never estimated; daily budget PA_DAILY_BUDGET_USD (default 15) with essential vs discretionary passes; Meter (plan 7.5): trace_span holds the hop spans, and the Claude credit pool PA_CLAUDE_POOL_USD is summed from llm_spend rows of backend cli (and claude_session, from the removed factory)"
       },
       "passes": [
@@ -1328,6 +1359,7 @@
         "Subscription limits": "src/build/usage.ts, GET /api/factory/usage (dashboard/factory.ts): the live 5-hour session %, weekly % and weekly Fable-scoped % with reset times, and extra-usage credits (cents to dollars), from Anthropic's undocumented GET https://api.anthropic.com/api/oauth/usage with Claude Code's own OAuth token (claudeAiOauth.accessToken in ~/.claude/.credentials.json, re-read per fetch, never logged or returned; PA_CLAUDE_CREDENTIALS overrides the path). Cached a minute (failures too); after each 429 in a row the wait doubles from 2 min to 30 min, serving the last good numbers marked stale (kept in <dataDir>/usage-last.json so a redeploy is not blind; PA_USAGE_CACHE overrides); any other failure or odd shape answers {ok:false, reason} and the Build panel shows limits unavailable. The Build board draws it as a Limits meter row (bars by severity, resets in 2h 10m; the Fable meter lit when Fable is the chosen model), refreshed every 20 s and on focus.",
         "Tracking": "src/build/track.ts reads the session transcript and its subagents (<session>/subagents/agent-<id>.jsonl, with .meta.json) every 15 s: per agent tokens (in, out, cache read/write; usage deduped by message id), notional cost at API list prices (haiku $1/$5, sonnet $3/$15, opus $5/$25, fable $10/$50 per M tokens; cache read 0.1x, write 1.25x/2x), tool calls (name, short args, ok/err, ms). The view is build_run.track (JSON), the totals build_run.cost_usd/tokens_*. When a run ends the run is kept under <data>/build-runs/run-<id>/ (Claude Code prunes ~/.claude/projects after cleanupPeriodDays): the main transcript <session>.jsonl, <session>/subagents/, messages.json (the build_msg rows) and summary.json (run, card, task, model, profile, effort, permission_mode, repo, branch, state, result, error, started_at, ended_at, elapsed_s, tokens, cost_usd, agents, tool_calls by name, errors, messages); pa run export [--since <date>] prints every summary.json as JSONL.",
         "Heartbeat": "src/build/heartbeat.ts, worker pass build-heartbeat every 10 s, stat calls and one sessiond list call, no transcript parsing: last_activity_at is the newest of the transcript and subagent transcripts mtime, the termhub session being busy (PTY wrote in the last 1.5 s) and the run newest build_msg. Silent past the run own idle_after_s (default 240, PA_BUILD_IDLE_AFTER_S; set by build_start idle_after_s, the card menu, build_set_idle or pa run idle <run> <seconds>) while running: state idle, an urgent notice, and build_run.activity JSON {state, since, idle_s, last_tool, last_line} for Jarvis to decide from (build_run to look, build_send to nudge, build_set_idle, build_stop); it returns to running by itself on any sign of life. A run waiting on pa run ask is never idle. A session that vanished without pa run done fails the run at once with a notice. Idle runs are in build_runs.needs_you (kind idle) and the board Needs you.",
+        "Profile settings (B)": "profiles are edited on the dashboard's /agents page, by the chat (profile_list|get|set|delete|reset) and by `pa profile list|get|set|delete|reset`, all through src/agentSettings.ts: set changes only the fields given (null clears one to the next layer; a tools patch naming one list leaves the others), reset puts a built-in profile back to what ships or restores a deleted one, and the views mark each profile built-in / edited.",
         "Profiles": "src/build/profiles.ts, table build_profile (sql/047, sql-sqlite/019; src/repo/buildProfiles.ts): a saved, named Build agent = description, model, effort, permission_mode (null = Build's bypass default; dontAsk = read-only; plan is not, it ignores allow rules for commands that write), prompt (appended to src/build/agent-prompt.md), tools {mcp, allow, deny}, subagents [{name, description, model, prompt, tools}], subagent_model, caps (cost_cap_usd, wall_cap_min, idle_after_s), repo_path; a null field falls through. Seeds written once, never over an edit: chore (sonnet, low), feature (opus, medium, an explorer subagent), research (sonnet, medium, dontAsk mode, report in the run result), quick (haiku, low). Resolution per field: this call (build_start / pa do / Do body) > the card's build.card.<id> (profile, model, effort, caps) > the profile > the defaults (env); no profile and no card setting launches exactly as before. Chosen by: build_start profile, pa do --profile, the card menu, a frozen offer's payload.profile, the planner by task kind (investigate/review: research, coding: feature, admin: chore), and dispatch.start mode \"plan\" (the planner's research runs) meaning research. Reaches Claude Code as --model, --effort, --permission-mode (the --dangerously-skip-permissions flag is dropped for any mode but bypass, which it would override), --strict-mcp-config always plus --mcp-config <worktrees>/build-<run>.mcp.json for tools.mcp (servers come from the build.mcp setting), permissions.allow/deny in the run's --settings file build-<run>.settings.json (dontAsk adds the exact Bash/PowerShell(node \"<pa.js>\" run *) rules so the agent can report), env CLAUDE_CODE_SUBAGENT_MODEL for subagent_model (no flag exists), and .claude/agents/<name>.md files in the run folder, listed in the worktree's info/exclude so the agent never commits them. The profile name is on build_run and in summary.json."
       },
       "code": [

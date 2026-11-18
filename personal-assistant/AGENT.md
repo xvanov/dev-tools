@@ -594,8 +594,19 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   `permissions.allow/deny`), not as flags: rules hold quotes and spaces that do not survive the pwsh command line. The subagent model has no flag: env
   `CLAUDE_CODE_SUBAGENT_MODEL`. Subagents are `.claude/agents/<name>.md` in the run's folder, listed in the
   worktree's `info/exclude` so the agent never commits them; the repo's own agent of the same name wins. The profile
-  is on `build_run` and in `summary.json`. Settings UI and parity verbs are step B; for now profiles are edited
-  through `src/build/profiles.ts` `save` (and the store).
+  is on `build_run` and in `summary.json`.
+- **Agent settings and parity** (`src/agentSettings.ts`; BUILD-ENRICHMENT.md B): the dashboard's **Agents** page (`/agents`, linked from
+  Build) edits every Build profile (model, effort, permission mode, subagent model, caps, repo, the prompt appended to the read-only
+  base prompt, MCP servers, allow/deny rules, subagents; reset a built-in one to what ships), the PA chat's model and each worker
+  pass's model. Profiles live in `build_profile`; the chat and pass models are overrides in the `agent.settings` setting
+  (`{chatModel, passModels}`), and **env stays the default**: `src/models.ts` `refresh()` reads the setting at most every 10 s (the
+  worker before each pass, `pa` before each command) and writes it into the config field the pass reads, keeping the env/default value
+  so clearing an override restores it. Every value is shown with its source (store | env | default). **Parity rule:** every
+  dashboard write has a chat tool and a `pa` verb doing the same through shared code, reads allowed and writes asking
+  (`profile_list|get|set|delete|reset`, `agent_settings_get|set`; `pa profile list|get|set|delete|reset`, `pa agents get|set`);
+  `test/dashboardParity.test.js` lists the dashboard's mutating routes from the source and fails on one with no tool or verb in
+  `test/dashboardParity.map.js` (an explicit exception with its reason, or a gap; `maxGaps` only goes down). A new dashboard write
+  means a new entry there, with its tool and verb.
 - Agent verbs, run id from `$JARVIS_RUN_ID`: `pa run note "<text>"`, `pa run ask "<question>"` (blocks up to
   30 min, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
 - Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),

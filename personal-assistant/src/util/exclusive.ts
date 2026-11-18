@@ -25,7 +25,9 @@ interface Passes {
   isRunning(name: string): boolean;
 }
 
-function passes({ onError = () => {} }: { onError?: (name: string, err: unknown) => void } = {}): Passes {
+// `before` runs ahead of every pass (the worker refreshes the settings overrides there: src/models.ts);
+// a failure in it never stops the pass.
+function passes({ onError = () => {}, before = null }: { onError?: (name: string, err: unknown) => void; before?: (() => unknown) | null } = {}): Passes {
   const running = new Set<string>();
   const queued = new Map<string, { fn: PassFn; waiters: Array<(ran: boolean) => void> }>();
 
@@ -33,6 +35,9 @@ function passes({ onError = () => {} }: { onError?: (name: string, err: unknown)
     if (running.has(name)) return false;
     running.add(name);
     try {
+      if (before) {
+        try { await before(); } catch { /* the pass still runs */ }
+      }
       await fn();
     } catch (err) {
       onError(name, err);

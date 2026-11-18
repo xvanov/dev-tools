@@ -67,6 +67,8 @@ const log = logger('worker');
 // whether it ran; `soon` runs right after a busy one instead.
 const passes = require('./util/exclusive.ts').passes({
   onError: (name: string, err: unknown) => log.warn('pass failed', { name, message: (err as Error).message }),
+  // Model overrides from the Agents page (src/models.ts): read at most every 10 s, before any pass picks its model.
+  before: () => require('./models.ts').refresh(),
 });
 
 // Run by the zero-downtime supervisor (src/supervisor), which talks over IPC.

@@ -82,6 +82,13 @@ const HELP = `pa — your context layer
     pa land <run>                   push, and open a draft MR if the mode allows
     pa drop <run> [--force]         kill the session and remove the worktree
 
+  Agent settings (the dashboard's Agents page at /agents)
+    pa profile list|get <name>      the Build profiles: model, effort, permission mode, tools, subagents, caps
+    pa profile set <name> [--model m] [--effort e] [--permission-mode m] [--prompt "…"] [--cost-cap usd] …  change one (pa help profile)
+    pa profile delete|reset <name>  delete one; put a built-in one back to what ships
+    pa agents get                   the PA chat's and each worker pass's model, and where it comes from (store, env, default)
+    pa agents set [--chat-model m] [--pass planner=azure/pa]… [--clear-pass planner]…  change them (pa help profile)
+
   Replying
     pa draft <run> [--channel teams|email]   a report on what a run did
     pa reply <commitment>           a reply to the ask itself
@@ -1630,6 +1637,7 @@ Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
 Object.assign(commands, require('./page.ts').make(out, fail));
 Object.assign(commands, require('./turns.ts').make(out, fail));
+Object.assign(commands, require('./agents.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
@@ -1637,6 +1645,7 @@ Object.assign(commands, require('./turns.ts').make(out, fail));
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
   run: './run.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', card: './task.ts', cardplan: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts', page: './page.ts', pages: './page.ts', turns: './turns.ts',
+  profile: './agents.ts', profiles: './agents.ts', agents: './agents.ts',
 };
 
 async function main(argv: string[]) {
@@ -1656,6 +1665,8 @@ async function main(argv: string[]) {
   }
 
   try {
+    // The Agents page's model overrides (src/models.ts), for the commands that make model calls and have a store.
+    if (!['help', 'migrate', 'db', 'backup', 'restore', 'doctor'].includes(name)) await require('../models.ts').refresh();
     await handler(args, flags, lists);
   } catch (err: any) {
     if (err.name === 'NeedsLogin') fail(`${err.message}`);

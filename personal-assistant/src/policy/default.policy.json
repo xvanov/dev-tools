@@ -14,14 +14,14 @@
   "rules": [
     {
       "id": "chat-actions-ask",
-      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_plan_apply"],
+      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_plan_apply", "profile_set", "profile_delete", "profile_reset", "agent_settings_set"],
       "actions": ["call"],
       "decision": "ask",
       "reason": "the chat's action tools prompt the user on every call (Claude Code asks; AGENT.md, The PA chat acts only behind permission prompts)"
     },
     {
       "id": "approve-chat-actions",
-      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_plan_apply"],
+      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_plan_apply", "profile_set", "profile_delete", "profile_reset", "agent_settings_set"],
       "actions": ["approve"],
       "channels": ["dashboard", "voice", "termhub", "cli", "chat", "e2e"],
       "decision": "allow",
@@ -41,7 +41,8 @@
         "recall", "memory_page", "explain_claim", "remember", "request_secret", "secret_status", "brief_me",
         "search_context", "get_thread", "open_commitments", "who_is", "repo_state",
         "pa", "task_add",
-        "board", "card", "sessions", "build_runs", "build_run", "card_plan_propose"
+        "board", "card", "sessions", "build_runs", "build_run", "card_plan_propose",
+        "profile_list", "profile_get", "agent_settings_get"
       ],
       "actions": ["call"],
       "decision": "allow",

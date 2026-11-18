@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis · Agents</title>
+<link rel="stylesheet" href="theme.css">
+<script src="nav.js" data-layer="factory"></script>
+<style>
+  /* Colours and type come from theme.css; only this page's layout lives here.
+     The content is GET /api/agents (src/dashboard/agents.ts), rendered by agents.client.js
+     with textContent only. Every control here has a chat tool and a `pa` verb. */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--ink);
+    font: var(--text-base)/var(--leading) var(--font-sans); }
+  header { padding: var(--jtop) 16px 4px; max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: var(--text-xl); margin: 4px 0 2px; }
+  h2 { font-size: var(--text-md); margin: 22px 0 6px; }
+  .intro { color: var(--ink-2); margin: 0 0 10px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 0 16px 48px; }
+  .muted { color: var(--ink-2); font-size: var(--text-sm); }
+  .mono { font-family: var(--font-mono); }
+  .panel { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-1); padding: 4px 14px; margin-bottom: 10px; }
+  .panel > summary { cursor: pointer; padding: 8px 0; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .panel > summary b { font-size: var(--text-md); }
+  .chip { display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 0 8px; font-size: var(--text-xs); color: var(--ink-2); }
+  .chip.store { color: var(--signal); border-color: var(--signal); }
+  .chip.mod { color: var(--amber); border-color: var(--amber); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; margin: 8px 0; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
+  input, select, textarea { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 8px; min-width: 0; width: 100%; }
+  textarea { min-height: 76px; resize: vertical; font-family: var(--font-mono); font-size: var(--text-sm); }
+  textarea.tall { min-height: 150px; }
+  fieldset { border: 1px solid var(--line); border-radius: var(--radius); margin: 8px 0; padding: 6px 10px 8px; }
+  legend { font-size: var(--text-sm); color: var(--ink-2); padding: 0 6px; }
+  .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .checks label { flex-direction: row; align-items: center; gap: 5px; color: var(--ink); }
+  .checks input { width: auto; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 8px; }
+  button { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 4px 12px; cursor: pointer; }
+  button.primary { background: var(--signal); color: var(--on-signal); border-color: transparent; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  details.base { margin: 6px 0; font-size: var(--text-sm); }
+  details.base pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-xs);
+    background: var(--surface-0); border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-height: 280px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  th, td { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; border-top: 0; }
+  td input { width: 100%; }
+  .err { color: var(--bad); }
+  .ok { color: var(--ok); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--surface-0);
+    padding: 8px 14px; border-radius: var(--radius); font-size: 13px; opacity: 0; transition: opacity .2s var(--ease); pointer-events: none; max-width: 90vw; z-index: 40; }
+  #toast.show { opacity: 1; }
+  @media (max-width: 760px) { th.hide, td.hide { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agents</h1>
+  <p class="intro">What each agent runs with: the Build profiles (a saved, named Build agent), the PA chat and the models of the worker's passes. A value here is stored in Jarvis's database and wins over the environment; clear it to fall back. <span class="muted">Chat: profile_list, profile_set, agent_settings_set … · CLI: pa profile, pa agents</span></p>
+</header>
+<main>
+  <h2>Build profiles</h2>
+  <p class="muted">A run's model, effort, permission mode, caps and the rest are, per field: this call, then the card's own setting, then the profile, then the defaults. Empty here means "use the next layer".</p>
+  <div id="profiles"></div>
+  <details class="panel" id="newprofile">
+    <summary><b>New profile</b></summary>
+    <div class="grid">
+      <label>Name (lowercase letters, digits, - or _)<input id="newname" autocomplete="off" maxlength="40"></label>
+      <label>Description<input id="newdesc" autocomplete="off"></label>
+    </div>
+    <div class="actions"><button class="primary" id="newgo">Create</button><span class="muted" id="newhint"></span></div>
+  </details>
+
+  <h2>PA chat</h2>
+  <div class="panel" id="chat"></div>
+
+  <h2>Worker passes</h2>
+  <p class="muted">The model each background pass uses. A model is <span class="mono">provider/model</span> or a bare Claude name; the connector relay must stay on Claude Code.</p>
+  <div class="panel" id="passes"></div>
+  <datalist id="modelhints"></datalist>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="agents.client.js"></script>
+</body>
+</html>
