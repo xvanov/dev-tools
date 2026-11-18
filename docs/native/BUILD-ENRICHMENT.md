@@ -50,6 +50,9 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
   The chat can change settings within policy limits ("set chore to fable medium").
 - A test enumerates the dashboard's mutating API routes and fails when one has no chat tool or `pa` verb
   (an explicit allowlist for deliberate exceptions).
+- Landed in fd4f7bb as the `/agents` page, `src/agentSettings.ts`, `pa profile` / `pa agents` and
+  `test/dashboardParity.test.js`. Not in it yet: the context thresholds (C adds them, with the tool-summary
+  N and visible lines, to the same page, tool and verb: an `agent_settings` key each).
 
 ## C. Tool summaries and live status
 
@@ -97,7 +100,7 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 
 - [x] Remove software-factory (D32) (d315af1, a6748f3, d90efe8)
 - [x] A. Build profiles (4bb5989)
-- [ ] B. Settings per agent + parity
+- [x] B. Settings per agent + parity (fd4f7bb)
 - [ ] C. Tool summaries + live status
 - [ ] D. Decision queue
 - [ ] E. Scheduled Build runs
