@@ -16,7 +16,9 @@
 //    has to be able to type "--help" at an agent.
 //  - A repeated flag keeps its last value in `flags`, as before; every value it
 //    was given is in `lists[name]`, in order, for the few verbs that take a
-//    flag more than once (`pa do --done a --done b`).
+//    flag more than once (`pa do --done a --done b`). `ordered` is every
+//    flag value as [name, value] in argv order, for flags that group by
+//    position (`pa run ask --q "…" --option a --option b --q "…"`).
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -28,9 +30,13 @@ function parseArgs(argv: string[]) {
   const args = [];
   const flags: Json = {};
   const lists: Json = {};
+  const ordered: Array<[string, string]> = [];
   const set = (name: any, value: any) => {
     flags[name] = value;
-    if (typeof value === 'string') (lists[name] = lists[name] || []).push(value);
+    if (typeof value === 'string') {
+      (lists[name] = lists[name] || []).push(value);
+      ordered.push([name, value]);
+    }
   };
   let command = null;
   let literal = false;
@@ -85,7 +91,7 @@ function parseArgs(argv: string[]) {
     else args.push(token);
   }
 
-  return { command, args, flags, lists };
+  return { command, args, flags, lists, ordered };
 }
 
 // Flags arrive as strings; commands that mean numbers should say so once here

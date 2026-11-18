@@ -9,7 +9,8 @@
 //   GET  /api/build/status              {running, needs_you, spend_usd, pa_spend_usd, at}: the nav's live status, cached 5 s
 //   POST /api/build/runs                {task, model?, repo?, costCapUsd?, wallCapMin?}: a run with no card
 //   POST /api/build/<id>/stop           kill its session
-//   POST /api/build/<id>/reply          {text}: answer its open question
+//   POST /api/build/<id>/reply          {text} or {answers: {<question id>: answer}, text?, ask?}: answer its open
+//                                       question, or all of a questionnaire's at once (needs_you kind `decisions`)
 //   POST /api/build/<id>/send           {text}: type into its session
 //
 // POSTs carry X-PA like every dashboard action. What an agent wrote (task,
@@ -27,6 +28,7 @@ type Json = Record<string, any>;
 const fs = require('fs');
 const path = require('path');
 
+const D = require('../build/decisions.ts');
 const CLIENT = path.join(__dirname, 'build.board.client.js');
 const CALLS_SHOWN = 40;
 
@@ -48,7 +50,12 @@ function view(r: Row, msgs: Row[], url: string | null, lines = 3): Json {
     cost_usd: Number(r.cost_usd || 0), cost_cap_usd: Number(r.cost_cap_usd || 0), wall_cap_min: Number(r.wall_cap_min || 0),
     tokens: { in: Number(r.tokens_in || 0), out: Number(r.tokens_out || 0), cache_read: Number(r.tokens_cache_read || 0), cache_write: Number(r.tokens_cache_write || 0) },
     started_at: r.started_at, ended_at: r.ended_at || null, url, agents, calls_total: Number(track?.totals?.calls || 0),
-    messages: msgs.map((m) => ({ id: Number(m.id), run: Number(m.run_id), from: m.dir, kind: m.kind, text: m.body, answer: m.answer || null, answered: Boolean(m.answered_at), at: m.created_at })),
+    // Time parked on a human, which the wall-clock cap does not count (src/build/track.ts overCap).
+    waited_ms: Number(r.waiting_ms || 0) + (r.state === 'waiting' && r.waiting_since && Number.isFinite(Date.parse(String(r.waiting_since))) ? Math.max(0, Date.now() - Date.parse(String(r.waiting_since))) : 0),
+    messages: msgs.map((m) => {
+      const questions = m.kind === 'ask' ? D.decode(m.body) : null;
+      return { id: Number(m.id), run: Number(m.run_id), from: m.dir, kind: m.kind, text: questions ? D.summary(questions) : m.body, questions, answer: m.answer || null, answered: Boolean(m.answered_at), at: m.created_at };
+    }),
   };
 }
 
@@ -136,7 +143,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
       const r = await B.stop(id);
       send(res, 200, { id: r.id, state: r.state });
     } else if (m[2] === 'reply') {
-      await M.reply(id, body.text);
+      await M.reply(id, body.text, body.ask ?? null, body.answers || null);
       send(res, 200, { id, answered: true });
     } else {
       await M.send(id, body.text);

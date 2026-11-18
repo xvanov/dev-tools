@@ -42,11 +42,26 @@
   function money(n) { return '$' + num(n).toFixed(2); }
   function isLive(run) { return LIVE.indexOf(run.state) >= 0; }
 
-  /** How long a run took, or has taken so far. */
+  /** How long a run took, or has taken so far, without the time it was parked waiting on you (the wall-clock cap ignores it too). */
   function elapsed(run, now) {
     var t0 = Date.parse(run.started_at);
     var t1 = run.ended_at ? Date.parse(run.ended_at) : Date.parse(now) || Date.now();
-    return Number.isFinite(t0) ? Math.max(0, t1 - t0) : 0;
+    return Number.isFinite(t0) ? Math.max(0, t1 - t0 - num(run.waited_ms)) : 0;
+  }
+
+  /**
+   * The decisions form's answers: per question the typed text, else the picked option, from a draft
+   * {<id>: {opt, text}}; unanswered questions are left out. Returns {answers, missing: [ids]}.
+   */
+  function decisionAnswers(questions, draft) {
+    var answers = {}; var missing = [];
+    (questions || []).forEach(function (q) {
+      var d = (draft && draft[q.id]) || {};
+      var text = String(d.text || '').trim();
+      var v = (q.allowFree !== false && text) ? text : (d.opt || '');
+      if (v) answers[q.id] = v; else missing.push(q.id);
+    });
+    return { answers: answers, missing: missing };
   }
 
   /** A result that is a URL becomes a link; a path or a sentence stays text. */
@@ -153,7 +168,7 @@
     return out;
   }
 
-  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
+  var pure = { extraView: extraView, usageSummary: usageSummary, resetsIn: resetsIn, meterView: meterView, dur: dur, money: money, elapsed: elapsed, decisionAnswers: decisionAnswers, resultLink: resultLink, pageCount: pageCount, lanes: lanes, order: order, isLive: isLive, PAGE: PAGE };
   if (typeof document === 'undefined') return pure;
 
   // ---- the browser half ------------------------------------------------------------
@@ -206,7 +221,7 @@
     });
   }
 
-  var state = { data: null, page: 1, timer: null, open: {}, usage: null, usageTimer: null };
+  var state = { data: null, page: 1, timer: null, open: {}, usage: null, usageTimer: null, drafts: {} };
 
   // The subscription limits (api/factory/usage, cached a minute server side; stale numbers say so): bars by severity, the Fable one lit when Fable is the chosen model.
   function drawUsage() {
@@ -284,16 +299,57 @@
     });
   }
 
+  // A questionnaire's stored answer ({"answers":{id: text}, "text"?}) as one line; a plain answer is itself.
+  function answerText(a) {
+    try {
+      var j = JSON.parse(a);
+      if (j && j.answers) return Object.keys(j.answers).map(function (k) { return k + ': ' + j.answers[k]; }).concat(j.text ? [j.text] : []).join(' · ') || '(no answers)';
+    } catch (e) { /* plain text */ }
+    return a;
+  }
+
   function msgRow(m) {
     var who = m.from === 'agent' ? 'agent' : 'Jarvis';
     var kind = m.kind === 'ask' ? (m.answered ? 'asked' : 'asks') : m.kind === 'send' ? 'typed' : m.kind === 'reply' ? 'replied' : m.kind === 'done' ? 'done' : 'note';
     return el('li', { class: 'msg k-' + m.kind },
       el('span', { class: 'meta', text: clock(m.at) + ' · ' + who + ' ' + kind }),
       el('div', { class: 'mt', text: m.text }),
-      m.answer ? el('div', { class: 'mt ans', text: '→ ' + m.answer }) : null);
+      m.answer ? el('div', { class: 'mt ans', text: '→ ' + answerText(m.answer) }) : null);
+  }
+
+  // One queued Decisions card per run with an open questionnaire: each question answered by a click on an option
+  // or typed text, one Submit sends them all in one reply. Drafts survive the board's redraws.
+  function decisionsForm(n) {
+    var draft = state.drafts[n.id] = state.drafts[n.id] || {};
+    var submit = el('button', { type: 'button', class: 'primary', text: 'Submit answers' });
+    var rows = n.questions.map(function (q) {
+      var d = draft[q.id] = draft[q.id] || { opt: '', text: '' };
+      var group = 'q' + n.id + '-' + q.id;
+      var opts = (q.options || []).map(function (o) {
+        var radio = el('input', { type: 'radio', name: group, value: o });
+        radio.checked = d.opt === o;
+        radio.addEventListener('change', function () { d.opt = o; });
+        return el('label', { class: 'opt' }, radio, el('span', { text: ' ' + o }));
+      });
+      var free = q.allowFree !== false ? el('input', { type: 'text', class: 'replyin', placeholder: opts.length ? 'or type your own' : 'Your answer', 'aria-label': q.text, value: d.text || '' }) : null;
+      if (free) {
+        free.addEventListener('input', function () { d.text = free.value; });
+        free.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit.click(); });
+      }
+      return el.apply(null, ['div', { class: 'dq' }, el('div', { class: 'mt', text: q.text })].concat(opts, [free]));
+    });
+    act(submit, function () {
+      var r = decisionAnswers(n.questions, draft);
+      if (!Object.keys(r.answers).length) return Promise.reject(new Error('answer at least one question'));
+      return post('api/build/' + n.run + '/reply', { answers: r.answers, ask: n.id }).then(function (x) { delete state.drafts[n.id]; return x; });
+    }, function () { return 'answers sent to run #' + n.run; });
+    return el.apply(null, ['div', { class: 'job decisions' },
+      el('div', { class: 't', text: '#' + n.run + ' ' + n.task }),
+      el('div', { class: 'why', text: n.questions.length + ' decision' + (n.questions.length === 1 ? '' : 's') + ' · an unanswered question is left to the agent’s safest default' })].concat(rows, [submit]));
   }
 
   function askBox(run, ask) {
+    if (ask.questions) return el('div', { class: 'askbox' }, el('div', { class: 'mt', text: ask.text }), el('div', { class: 'meta', text: 'Answer these under Needs you, at the top of the board.' }));
     var input = el('input', { type: 'text', placeholder: 'Answer ' + 'the agent', 'aria-label': 'Answer to run ' + run.id, class: 'replyin' });
     var btn = el('button', { type: 'button', class: 'primary', text: 'Reply' });
     act(btn, function () { return post('api/build/' + run.id + '/reply', { text: input.value }); }, function () { return 'answered run #' + run.id; });
@@ -413,6 +469,7 @@
     // replaceChildren(null) would write the text "null"; drop the absent sections.
     board.replaceChildren.apply(board, [
       needs.length ? el.apply(null, ['section', { class: 'needs_you' }, el('h2', {}, 'Needs you', el('span', { class: 'n', text: String(needs.length) }))].concat(needs.map(function (n) {
+        if (n.kind === 'decisions' && n.questions) return decisionsForm(n);
         return el('div', { class: 'job' }, el('div', { class: 't', text: '#' + n.run + (n.kind === 'idle' ? ' (idle) ' : ' ') + n.task }), el('div', { class: 'why', text: n.question }),
           el('a', { class: 'btn', href: '#run-' + n.run, text: n.kind === 'idle' ? 'Look at its card' : 'Answer on its card' }));
       }))) : null,

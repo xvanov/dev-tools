@@ -69,6 +69,12 @@ assert.deepStrictEqual(['2026-11-10T14:10:00Z', '2026-11-10T12:20:00Z', '2026-11
   const old = { id: 9, state: 'done', messages: [{ kind: 'ask', answered: true }] };
   assert.deepStrictEqual(B.order([old, live, ask]).map((r) => r.id), [3, 5, 9]);
   assert.strictEqual(B.elapsed({ started_at: '2026-11-10T10:00:00Z', ended_at: '2026-11-10T10:02:00Z' }, 'x'), 120_000);
+  assert.strictEqual(B.elapsed({ started_at: '2026-11-10T10:00:00Z', ended_at: '2026-11-10T10:10:00Z', waited_ms: 300_000 }, 'x'), 300_000, 'time parked on an ask is not the run\'s');
+
+  // The decisions form: typed text beats a picked option, option-only questions ignore typing, unanswered ones are reported.
+  const qs = [{ id: 'db', text: 'DB?', options: ['sqlite', 'pg'], allowFree: false }, { id: 'n', text: 'Name?', options: [], allowFree: true }, { id: 'z', text: 'Z?', options: ['y'], allowFree: true }];
+  assert.deepStrictEqual(B.decisionAnswers(qs, { db: { opt: 'pg', text: 'ignored' }, n: { opt: '', text: ' Ada ' }, z: { opt: 'y', text: '' } }), { answers: { db: 'pg', n: 'Ada', z: 'y' }, missing: [] });
+  assert.deepStrictEqual(B.decisionAnswers(qs, { z: { opt: 'y', text: 'own' } }), { answers: { z: 'own' }, missing: ['db', 'n'] });
 }
 
 // The browser file: parses, no HTML sink (an agent wrote every text it shows), relative URLs.
@@ -149,6 +155,15 @@ async function main() {
     assert.deepStrictEqual(json(await call('POST', `/api/build/${b.id}/reply`, { headers: X, body: { text: 'sqlite' } })), { id: b.id, answered: true });
     assert.strictEqual((await repo.buildRuns.msgById(q.id)).answer, 'sqlite');
     assert.strictEqual((await call('POST', `/api/build/${b.id}/reply`, { headers: X, body: { text: 'again' } })).status, 400, 'no open ask now');
+    // a questionnaire: the card carries the questions, one reply answers them all
+    const dq = await repo.buildRuns.addMsg({ runId: b.id, dir: 'agent', kind: 'ask', body: JSON.stringify({ decisions: 1, questions: [{ id: 'db', text: 'DB?', options: ['sqlite', 'pg'], allowFree: false }, { id: 'n', text: 'Name?', options: [], allowFree: true }] }) });
+    const pd = json(await call('GET', '/api/build?limit=50'));
+    assert.deepStrictEqual(pd.needs_you.map((n) => [n.kind, n.questions.map((x) => x.id)]), [['decisions', ['db', 'n']]]);
+    const dmsg = pd.runs.find((r) => r.id === b.id).messages.find((m) => m.id === dq.id);
+    assert.deepStrictEqual([dmsg.questions.length, dmsg.text], [2, 'db: DB? [sqlite | pg]\nn: Name?']);
+    assert.strictEqual((await call('POST', `/api/build/${b.id}/reply`, { headers: X, body: { answers: { db: 'mysql' } } })).status, 400, 'an option-only question refuses other text');
+    assert.deepStrictEqual(json(await call('POST', `/api/build/${b.id}/reply`, { headers: X, body: { answers: { db: 'pg', n: 'Ada' }, ask: dq.id } })), { id: b.id, answered: true });
+    assert.deepStrictEqual(JSON.parse((await repo.buildRuns.msgById(dq.id)).answer).answers, { db: 'pg', n: 'Ada' });
     assert.deepStrictEqual(json(await call('POST', `/api/build/${b.id}/send`, { headers: X, body: { text: 'go on' } })), { id: b.id, sent: true });
     assert.deepStrictEqual(typed, [[`s-${b.id}`, 'go on']]);
     assert.deepStrictEqual(json(await call('POST', `/api/build/${b.id}/stop`, { headers: X })), { id: b.id, state: 'stopped' });

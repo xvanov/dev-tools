@@ -609,7 +609,22 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   `test/dashboardParity.map.js` (an explicit exception with its reason, or a gap; `maxGaps` only goes down). A new dashboard write
   means a new entry there, with its tool and verb.
 - Agent verbs, run id from `$JARVIS_RUN_ID`: `pa run note "<text>"`, `pa run ask "<question>"` (blocks up to
-  30 min, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
+  `PA_BUILD_ASK_TIMEOUT_MIN`, default 240, prints the answer), `pa run done --result "<PR url | report path | one line>"`.
+- **Decision queue** (BUILD-ENRICHMENT D; `src/build/decisions.ts`, `messages.ts`): a structured ask batches several
+  decisions into one: `pa run ask --q "<question>" [--option a --option b] --q "<next>" …` (each `--option` belongs to the
+  `--q` before it; `parseArgs` now returns `ordered` for that) or `pa run ask --json <file>`
+  (`{"questions":[{"id","text","options":[],"allowFree":true}]}`, at most 12; ids default to q1..). It is still one `build_msg`
+  ask (body `{"decisions":1,"questions":[...]}`, answer `{"answers":{id:text},"text"?}`; no new table), so a plain ask is
+  untouched. It blocks like a plain ask and prints one line per question plus a `JSON:` line; unanswered questions say so. On
+  timeout the ask is closed (it leaves Needs you) and the agent reads "NO ANSWER YET … carry on with the safest default or
+  stop". `needs_you` carries kind `decisions` with `questions`; the Build board shows one Decisions card per run (click an
+  option or type, one Submit, drafts survive redraws). Answer from anywhere through the same `reply`: the board's
+  `POST /api/build/<id>/reply {answers, ask?}`, the chat's `build_reply {run, answers? text?}` (the chat maps what the user
+  said, spoken too, onto the question ids; a lone question takes plain `text`), `pa run reply <id> --answer q1=… --answer q2=…`.
+  Option-only questions (`allowFree: false`) refuse anything else. The push is the usual `notify` (kind info, priority
+  **normal**: it spends the interrupt budget and respects quiet hours; the board and nav pill show it regardless). **Waiting is
+  free:** `build_run.waiting_ms`/`waiting_since` (sql/048, sql-sqlite/020) accumulate the time in `waiting`, and `overCap`
+  in `track.ts` takes it off the wall-clock cap; a `waiting` run is never idle.
 - Jarvis verbs: `pa run list|status|stop <id>`, `pa run reply <id> "<text>"` (answers the open ask),
   `pa run send <id> "<text>"` (typed into the session). Chat tools: `build_runs`, `build_run`, `build_reply`,
   `build_send`, `build_stop`, `build_start` (`profile`, `model`, `effort`), `build_set_idle`. An open ask is a "needs you" notice and a lane on Build (`/factory`).

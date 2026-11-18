@@ -1652,7 +1652,7 @@ const HELP_TOPICS: Record<string, string> = {
 const NO_MODELS = ['help', 'migrate', 'db', 'backup', 'restore', 'doctor', 'run', 'agents', 'profile', 'profiles', 'secret', 'secrets', 'passkeys', 'turns', 'audit', 'spend'];
 
 async function main(argv: string[]) {
-  const { command, args, flags, lists } = parseArgs(argv);
+  const { command, args, flags, lists, ordered } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
@@ -1673,7 +1673,7 @@ async function main(argv: string[]) {
     // (every call of a live Build agent), `pa agents|profile` (they read or merge the store themselves, src/agentSettings.ts)
     // and the ones with no model call at all.
     if (!NO_MODELS.includes(name)) await require('../models.ts').refresh();
-    await handler(args, flags, lists);
+    await handler(args, flags, lists, ordered);
   } catch (err: any) {
     if (err.name === 'NeedsLogin') fail(`${err.message}`);
     else fail(err.message);

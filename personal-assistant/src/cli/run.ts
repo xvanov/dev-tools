@@ -15,14 +15,47 @@ const HELP = `
     pa run idle <id> <seconds>          how long it may be silent before it is flagged idle
     pa run export [--since <date>]      JSONL summary of every ended run (tokens, cost, tool calls, result)
     pa run reply <id> "<answer>" [--ask <n>]   answer the run's open question
+    pa run reply <id> --answer q1=<a> --answer q2=<b>   answer a questionnaire (a free text may stand in for a lone question)
     pa run send <id> "<text>"           type text into its live session
     Inside an agent (the run id is $JARVIS_RUN_ID):
     pa run note "<text>"                progress or an FYI; does not wait
-    pa run ask "<question>"             needs a human: waits up to 30 min and prints the answer
+    pa run ask "<question>"             needs a human: waits (PA_BUILD_ASK_TIMEOUT_MIN, default 4 h; off the wall-clock cap) and prints the answer
+    pa run ask --q "<question>" [--option a --option b] --q "<next>" ...   several decisions in one ask
+    pa run ask --json <file>            the same from {"questions":[{"id","text","options":[],"allowFree":true}]}
     pa run done --result "<PR url | report path | one line>"
 `;
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/** The questionnaire of `pa run ask`: `--json <file>`, or each `--q "…"` with the `--option`s after it; null for a plain ask. */
+function askQuestions(flags: Row, ordered: Array<[string, string]>): unknown {
+  const file = str(flags.json);
+  if (file) {
+    try { return JSON.parse(require('fs').readFileSync(file, 'utf8')); } catch (err) { throw new Error(`cannot read the questions from ${file}: ${(err as Error).message}`); }
+  }
+  const qs: Array<{ text: string; options: string[] }> = [];
+  for (const [name, value] of ordered) {
+    if (name === 'q') qs.push({ text: value, options: [] });
+    else if (name === 'option') {
+      const last = qs[qs.length - 1];
+      if (!last) throw new Error('--option comes after the --q it belongs to');
+      last.options.push(value);
+    }
+  }
+  return qs.length ? { questions: qs } : null;
+}
+
+/** `--answer q1=text` (repeatable) as {q1: text}; null when none were given. */
+function answerFlags(list: unknown): Record<string, string> | null {
+  if (!Array.isArray(list) || !list.length) return null;
+  const out: Record<string, string> = {};
+  for (const item of list) {
+    const eq = String(item).indexOf('=');
+    if (eq < 1) throw new Error(`--answer takes <question id>=<answer>, got "${item}"`);
+    out[String(item).slice(0, eq).trim()] = String(item).slice(eq + 1);
+  }
+  return out;
+}
 
 function make(out: (s: string) => void, fail: (s: string) => void) {
   const B = () => require('../build/index.ts');
@@ -49,7 +82,7 @@ function make(out: (s: string) => void, fail: (s: string) => void) {
   const line = (r: Row) => `#${r.id}  ${String(r.state).padEnd(8)}  ${String(r.model).padEnd(6)}  ${money(r.cost_usd).padStart(6)}  ${String(r.task).slice(0, 70)}${r.result ? `  → ${r.result}` : ''}`;
 
   return {
-    async run(args: string[], flags: Row) {
+    async run(args: string[], flags: Row, lists: Row = {}, ordered: Array<[string, string]> = []) {
       const sub = String(args[0] || '').toLowerCase();
       if (sub === 'list') {
         const rows: Row[] = await B().list({ live: !flags.all, limit: 30 });
@@ -93,13 +126,16 @@ function make(out: (s: string) => void, fail: (s: string) => void) {
       }
       if (sub === 'ask') {
         const w = runId(args, flags);
-        const r = await M().ask(w.id, words(args, w.used));
-        out(r.answered ? r.answer : 'NO ANSWER: nobody answered in time. Make the most reasonable choice yourself, note it with `pa run note`, and carry on.');
+        const questions = askQuestions(flags, ordered);
+        const r = await M().ask(w.id, questions || words(args, w.used));
+        const mins = Math.round(M().askTimeoutMs() / 60_000);
+        out(r.answered ? r.answer : `NO ANSWER YET: nobody answered within ${mins} min. Carry on with the safest default for each open question (note the choice with \`pa run note\`), or stop with \`pa run done\` saying what is blocked.`);
         return;
       }
       if (sub === 'reply') {
         const w = runId(args, flags);
-        const r = await M().reply(w.id, words(args, w.used), flags.ask != null ? Number(flags.ask) : null);
+        const given = answerFlags(lists.answer);
+        const r = await M().reply(w.id, words(args, w.used), flags.ask != null ? Number(flags.ask) : null, given);
         out(`answered #${r.id} on run #${r.run_id}`);
         return;
       }

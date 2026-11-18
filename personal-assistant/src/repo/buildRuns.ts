@@ -15,6 +15,7 @@ const COLUMNS = [
   'commitment_id', 'task', 'model', 'repo_path', 'worktree_path', 'branch', 'cwd', 'machine', 'session_id',
   'claude_session', 'transcript_path', 'state', 'result', 'error', 'cost_cap_usd', 'wall_cap_min', 'cost_usd',
   'tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'track', 'ended_at', 'last_activity_at', 'activity', 'idle_after_s', 'profile', 'effort', 'permission_mode',
+  'waiting_ms', 'waiting_since',
 ];
 /** States where the agent is still working or waiting on Jarvis. */
 const LIVE = ['starting', 'running', 'waiting', 'idle'];

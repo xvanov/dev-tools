@@ -314,7 +314,10 @@ function overCap(run: Row, totals: Json | null, now = Date.now()): string | null
   const cost = n(totals?.cost_usd);
   const cap = n(run.cost_cap_usd);
   if (cap > 0 && cost >= cap) return `cost cap reached: $${cost.toFixed(2)} of $${cap.toFixed(2)}`;
-  const minutes = (now - Date.parse(String(run.started_at))) / 60_000;
+  // Time spent waiting on a human (decision queue) is not the agent's: finished asks plus the one in progress.
+  const since = Date.parse(String(run.waiting_since));
+  const waited = n(run.waiting_ms) + (run.state === 'waiting' && Number.isFinite(since) ? Math.max(0, now - since) : 0);
+  const minutes = (now - Date.parse(String(run.started_at)) - waited) / 60_000;
   const wall = n(run.wall_cap_min);
   if (wall > 0 && minutes >= wall) return `time cap reached: ${Math.round(minutes)} of ${wall} min`;
   return null;

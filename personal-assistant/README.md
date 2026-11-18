@@ -590,6 +590,8 @@ pa dashboard                    serve the web page without the worker
 
 pa do 42 --mode mr              dispatch to a Claude Code session in its own worktree
 pa runs                         what's in flight
+pa run reply 7 --answer q1=sqlite --answer q2=no   answer a Build agent's batched decisions (Build board: one Decisions card;
+                                   the agent asks with `pa run ask --q "…" --option a --option b --q "…"`; waiting is off its time cap)
 pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed

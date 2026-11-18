@@ -306,11 +306,15 @@ const ACTION_TOOLS = [
   {
     name: 'build_reply',
     description:
-      "Answer a Build agent's open question (the user approves each call). The agent is blocked on `pa run ask` and carries on with this answer. `run` from build_runs.needs_you.",
+      "Answer a Build agent's open question (the user approves each call). The agent is blocked on `pa run ask` and carries on with this answer. `run` from build_runs.needs_you. A plain question takes `text`. A needs_you entry of kind `decisions` carries `questions` ({id, text, options, allowFree}): answer them all in ONE call with `answers` ({\"<id>\": \"<answer>\"}, an option must match one of the question's options unless allowFree). Map what the user said onto the question ids yourself; leave a question out if they did not answer it; when they gave one answer for a lone question, `text` is enough.",
     inputSchema: {
       type: 'object',
-      properties: { run: { type: 'integer', minimum: 1 }, text: { type: 'string', maxLength: 4000 } },
-      required: ['run', 'text'],
+      properties: {
+        run: { type: 'integer', minimum: 1 },
+        text: { type: 'string', maxLength: 4000 },
+        answers: { type: 'object', additionalProperties: { type: 'string', maxLength: 2000 } },
+      },
+      required: ['run'],
       additionalProperties: false,
     },
   },
@@ -636,7 +640,7 @@ async function handle(name: string, args: Json = {}) {
     case 'build_runs': return buildRunsTool(args);
     case 'build_run': return buildRunTool(args as { run?: number });
     case 'build_reply': {
-      const r = await require('../build/messages.ts').reply(Number(args.run), args.text);
+      const r = await require('../build/messages.ts').reply(Number(args.run), args.text, null, args.answers || null);
       return { run: Number(args.run), answered: r.id };
     }
     case 'build_send': {
