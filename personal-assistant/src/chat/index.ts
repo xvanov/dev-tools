@@ -158,7 +158,7 @@ ${how}
 |---|---|
 | \`do\` (start an agent run), \`say\`, \`land\` (push / open PR), \`drop\`, \`done\` | \`brief\`, \`inbox\`, \`show\`, \`search\`, \`who\`, \`runs\`, \`review\`, \`drafts\`, \`memory\`, \`meeting\`, \`routine list\` |
 | \`answer\` (accepts a card), \`propose\` (puts work on a card), \`delivery set|clear\` | \`proposals\`, \`delivery list\`, \`backup list\` |
-| \`routine add\` (it shows the routine and asks to confirm), \`remember\`, \`forget\`, \`notify ack\`, \`doctor\` | \`notify list|weights|digest\` |
+| \`routine add\` (it shows the routine and asks to confirm; \`routine add "every weekday at 7" --action build_run --profile <name> --prompt "<task>" [--repo <path>]\` schedules a Build agent run), \`remember\`, \`forget\`, \`notify ack\`, \`doctor\` | \`notify list|weights|digest\` |
 | \`reply\` (writes a draft — the user sends it themselves) | the \`${TASK_TOOL}\` tool, only when the user explicitly asks for a task (below) |
 
 Before a shell action, say in one line what you will run and why, and wait for a yes. For the action

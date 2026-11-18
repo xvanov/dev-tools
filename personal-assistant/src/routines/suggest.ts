@@ -124,6 +124,9 @@ async function gatherEvidence({ days = 30 }: { days?: number } = {}) {
   return { evidence, sessions: items.length };
 }
 
+// Actions that start an agent and spend model usage: never proposed from evidence, only created by you.
+const SELF_ONLY = ['build_run'];
+
 const SYSTEM = `You suggest recurring routines for one engineer's personal assistant, based on evidence of how they work.
 
 Rules:
@@ -153,7 +156,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true }: { as
   const existing = await repo.routines.summaries();
   const prompt = [
     `Now (local): ${now.toString()}`,
-    `Catalog:\n${JSON.stringify(routines.actions.catalog(), null, 2)}`,
+    `Catalog:\n${JSON.stringify(routines.actions.catalog().filter((a: any) => !SELF_ONLY.includes(a.action)), null, 2)}`,
     `Existing routines (do not repeat; "rejected" ones were turned down):\n${JSON.stringify(existing.map((e: any) => ({ title: e.title, schedule: e.schedule, action: e.action, params: e.params, status: e.status })))}`,
     `Evidence:\n${evidence.map((e) => `- [${e.id}] (${e.kind}) ${e.text}`).join('\n')}`,
   ].join('\n\n');
@@ -173,6 +176,10 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true }: { as
     const cites = (Array.isArray(s.evidence) ? s.evidence : []).map(String).filter((id: any) => known.has(id));
     if (!cites.length) {
       log.info('suggestion dropped: cites no known evidence', { title: s.title });
+      continue;
+    }
+    if (SELF_ONLY.includes(String(s.action))) {
+      log.info('suggestion dropped: an action only you create', { title: s.title, action: s.action });
       continue;
     }
     let p;

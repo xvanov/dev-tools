@@ -144,6 +144,25 @@ async function main() {
     assert.strictEqual(await unread(`build-ask:${ask.id}`), false, 'the ask notice is read');
     assert.strictEqual(await unread(`build-idle:${ended.id}:2026-11-10T19:00:00Z`), false, 'the idle notice is read');
     assert.strictEqual(await unread(`build-idle:${ended.id}0:2026-11-10T19:00:00Z`), true, 'another run keeps its notice');
+
+    // A `waiting` run whose agent session vanished (the process that polled its ask died with it) is
+    // failed like a running one: its open ask closes (it leaves the decision queue), an urgent notice goes out.
+    const parked = await mk('parked', 's7', 120);
+    await repo.buildRuns.update(parked.id, { state: 'waiting', waiting_since: new Date().toISOString() });
+    const open = await repo.buildRuns.addMsg({ runId: parked.id, dir: 'agent', kind: 'ask', body: 'which branch?' });
+    await ins(`build-ask:${open.id}`);
+    assert.deepStrictEqual((await require('../src/build/messages.ts').needsYou()).map((n) => n.run).filter((id) => id === parked.id), [parked.id]);
+    sessions = [{ id: 's1', busy: true }, { id: 's3', busy: false }]; // s7 is gone
+    const sent = notices.length;
+    assert.strictEqual((await H.tick()).failed, 1);
+    const gone = await repo.buildRuns.byId(parked.id);
+    assert.deepStrictEqual([gone.state, /without/.test(gone.error)], ['failed', true]);
+    assert.strictEqual((await repo.buildRuns.openAsks()).some((a) => a.id === open.id), false, 'the open ask is closed');
+    assert.match((await repo.buildRuns.msgById(open.id)).answer, /session ended/);
+    assert.strictEqual(await unread(`build-ask:${open.id}`), false, 'its "needs you" notice is read');
+    assert.strictEqual((await require('../src/build/messages.ts').needsYou()).some((n) => n.run === parked.id), false);
+    const fresh = notices.slice(sent);
+    assert.ok(fresh.some((n) => n.priority === 'urgent' && new RegExp(`#${parked.id} failed`).test(n.title)), 'an urgent failure notice');
   } finally {
     await db.close?.().catch?.(() => {});
     fs.rmSync(dir, { recursive: true, force: true });

@@ -111,6 +111,8 @@ const HELP = `pa — your context layer
 
   Routines
     pa routine add "<words>"        a recurring action, e.g. "every weekday at 8 pull main on all repos"
+    pa routine add "<when>" --action build_run --profile <p> --prompt "<task>" [--repo <path>]
+                                    a Build agent run on a schedule (result waits for review)
     pa routine list|run <id> [--dry-run]|pause|resume|delete|history|suggest
     pa help routine                 every routine verb
 

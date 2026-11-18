@@ -427,6 +427,7 @@
       el('div', { class: 't' }, el('span', { class: 'mono', text: '#' + run.id + ' ' }), el('span', { text: run.task })),
       el('div', { class: 'chips' },
         chip(open.length ? 'needs you' : run.state, open.length ? 's-needs_human' : 's-' + run.state),
+        run.origin ? chip(run.origin, '', 'Started by a routine on its schedule; the result waits for your review') : null,
         chip(run.model, 'mono'),
         chip(money(run.cost_usd) + cap + ' notional', 'mono', 'What this would cost at API prices; the subscription is not billed per run'),
         chip(dur(elapsed(run, now)) + (run.wall_cap_min ? ' / ' + dur(run.wall_cap_min * 60000) : ''), 'mono'),

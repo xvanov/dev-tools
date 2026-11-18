@@ -1096,6 +1096,18 @@ dashboard's **Routines** tab does the same, plus Run now / Dry run, Pause, and t
 |---|---|---|
 | `repo_sync` | `git fetch --prune` every repo under `PA_REPOS_ROOT` (and one level into non-repo folders); fast-forwards the default branch where it is safe | yes — fetch, and `git merge --ff-only` |
 | `prompt_report` | answers a standing question from the profile, the brief and a search; result as a notification | no — the model gets no tools |
+| `build_run` | starts a Build agent run (`{prompt, profile, repo?, model?, effort?}`), exactly as **Do** on a card does; the result (a draft PR or a report) waits for your review | yes — a Claude Code agent in a worktree of the repo; nothing is merged |
+
+**Scheduled Build runs.** `pa routine add "every weekday at 7" --action build_run --profile feature
+--repo C:\repos\x --prompt "triage the failing tests"` (or `--schedule "0 7 * * 1-5"` to skip the
+model), the dashboard's *Schedule a Build agent run* form, or the chat (it asks first, like any
+`routine add`). The words give only the schedule; the action and its params are the ones you typed,
+and a profile or repo that does not exist is refused at save. The action starts the run and returns
+(it is not held for the hours the run takes); the run id is in the routine's history, and the Build
+board card reads `scheduled: <routine name>`. A fire is **skipped, with the reason in the history,
+not failed**, when today's budget is spent (`PA_DAILY_BUDGET_USD`, counting model spend plus the
+notional cost of today's Build runs), when the routine's previous run is still going, or when its
+profile has since been deleted (that one also toasts). The suggester never proposes a `build_run`.
 
 `repo_sync` fast-forwards only a repo that is **on** its default branch (`origin/HEAD`, else
 main/master), has no uncommitted change, no merge/rebase/cherry-pick in progress, no untracked file
@@ -1786,7 +1798,7 @@ src/dashboard/       the loopback web page: today, next meeting, replies, runs, 
                      theme.css + nav.js, the design system and layer switcher every layer shares (canonical; termhub copies them)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
-src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
+src/routines/        cron parser, the typed action registry (repo_sync, prompt_report, build_run), runs, suggestions
 src/chat/            the PA chat session's home (index.js, agent.js) and its stream for Ask's voice and text modes (feed.js; transcript.js pure); the voice fast lane (fastLane.js)
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider

@@ -45,6 +45,8 @@ function view(r: Row, msgs: Row[], url: string | null, lines = 3): Json {
   return {
     summaries: split.summaries.map((s: Json) => ({ at: s.at, text: s.text })),
     context: track?.context || null,
+    // "scheduled: <routine name>" for a run a routine started (src/build/origin.ts); null for one somebody started.
+    origin: require('../build/origin.ts').label(r.origin),
     id: Number(r.id), card: r.commitment_id ? Number(r.commitment_id) : null, task: r.task, model: r.model, state: r.state,
     repo: r.repo_path || null, branch: r.branch || null, result: r.result || null, error: r.error || null,
     cost_usd: Number(r.cost_usd || 0), cost_cap_usd: Number(r.cost_cap_usd || 0), wall_cap_min: Number(r.wall_cap_min || 0),

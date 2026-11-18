@@ -89,26 +89,50 @@ Reply with ONLY JSON:
 {"title": "<at most 60 characters>", "schedule": "<cron>", "action": "<catalog name>", "params": { ... }}
 Only include params the request actually specifies; defaults fill the rest.`;
 
-/** Plain words → preview. A model call; nothing is saved. */
-async function parseWords(words: any, { now = new Date() }: { now?: any } = {}) {
+/**
+ * The checks an action needs the store for (does the profile exist, is the repo known): a preview is
+ * only as good as these, so everything that shows a preview or saves a routine runs them.
+ */
+async function check<T extends { action: string; params: any }>(p: T): Promise<T> {
+  const a = actions.get(p.action);
+  if (a.verify) await a.verify(p.params);
+  return p;
+}
+
+/** A preview of a candidate routine, store-checked. */
+async function previewChecked(input: any, opts: any = {}) {
+  return check(preview(input, opts));
+}
+
+const PIN_SYSTEM = `${PARSE_SYSTEM}
+
+The action and its params are ALREADY CHOSEN (given below as "Pinned"). The request only says WHEN it runs:
+reply {"title": "<at most 60 characters, about the task>", "schedule": "<cron>"} and nothing else.`;
+
+/**
+ * Plain words → preview. A model call; nothing is saved. `pin` ({action, params}) fixes what the routine does
+ * (a form chose it); the words then say only when, and the model cannot change the action or its params.
+ */
+async function parseWords(words: any, { now = new Date(), pin = null }: { now?: any; pin?: { action: string; params: any } | null } = {}) {
   const text = String(words || '').trim();
-  if (!text) throw new Error('say what the routine should do and when');
+  if (!text) throw new Error(pin ? 'say when it should run, e.g. "every weekday at 8"' : 'say what the routine should do and when');
   const { complete, extractJson } = require('../llm.ts');
   const prompt = [
     `Now (local): ${now.toString()}`,
-    `Catalog:\n${JSON.stringify(actions.catalog(), null, 2)}`,
+    pin ? `Pinned: ${JSON.stringify({ action: pin.action, params: pin.params })}` : `Catalog:\n${JSON.stringify(actions.catalog(), null, 2)}`,
     `Request:\n${text.slice(0, 1000)}`,
   ].join('\n\n');
-  const reply = await complete({ system: PARSE_SYSTEM, prompt, model: PARSE_MODEL, effort: 'low', timeoutMs: 120_000, purpose: 'routine' });
+  const reply = await complete({ system: pin ? PIN_SYSTEM : PARSE_SYSTEM, prompt, model: PARSE_MODEL, effort: 'low', timeoutMs: 120_000, purpose: 'routine' });
   const parsed = extractJson(reply);
   if (parsed.error) throw new Error(`not a routine I can run: ${parsed.error}`);
-  return preview({ ...parsed, description: text }, { now });
+  const chosen = pin ? { ...parsed, action: pin.action, params: pin.params } : parsed;
+  return check(preview({ ...chosen, description: text }, { now }));
 }
 
 // -------------------------------------------------------------- store ----
 
 async function create(input: any, { origin = 'user', status = 'active', why = null, evidence = [], now = new Date() }: { origin?: string; status?: string; why?: any; evidence?: any; now?: any } = {}) {
-  const p = preview(input, { now });
+  const p = await check(preview(input, { now }));
   const active = status === 'active';
   return repo.routines.insert({
     title: p.title, description: p.description, schedule: p.schedule, action: p.action, params: p.params, enabled: active,
@@ -271,6 +295,7 @@ async function runDue({ now = () => new Date() }: { now?: any } = {}) {
 
 module.exports = {
   preview,
+  previewChecked,
   parseWords,
   plainWords,
   create,

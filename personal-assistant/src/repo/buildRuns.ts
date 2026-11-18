@@ -27,9 +27,9 @@ function create(db: Db) {
     /** A new run, state `starting`: the row. */
     async insert(v: Row): Promise<Row> {
       const r = await db.query(
-        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, idle_after_s, profile, effort, permission_mode, started_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$9,$10,$11,$12,$8,$8) returning *`,
-        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso(), v.idleAfterS ?? 240, v.profile ?? null, v.effort ?? null, v.permissionMode ?? null]
+        `insert into build_run (commitment_id, task, model, repo_path, machine, cost_cap_usd, wall_cap_min, idle_after_s, profile, effort, permission_mode, origin, started_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$9,$10,$11,$12,$13,$8,$8) returning *`,
+        [v.commitmentId ?? null, v.task, v.model, v.repoPath ?? null, v.machine ?? null, v.costCapUsd, v.wallCapMin, iso(), v.idleAfterS ?? 240, v.profile ?? null, v.effort ?? null, v.permissionMode ?? null, v.origin ?? null]
       );
       return r.rows[0] as Row;
     },
@@ -56,6 +56,11 @@ function create(db: Db) {
     /** The live run of a card, or null. */
     async liveForCommitment(commitmentId: number | string): Promise<Row | null> {
       return db.one(`select * from build_run where commitment_id = $1 and state in ('starting','running','waiting','idle') order by id desc limit 1`, [commitmentId]);
+    },
+
+    /** The newest live run whose origin matches the `like` pattern (a routine's runs, src/build/origin.ts), or null. */
+    async liveForOrigin(pattern: string): Promise<Row | null> {
+      return db.one(`select * from build_run where origin like $1 and state in ('starting','running','waiting','idle') order by id desc limit 1`, [pattern]);
     },
 
     /** Sets the named columns (unknown names are refused) and the update time. */

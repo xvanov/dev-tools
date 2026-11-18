@@ -91,7 +91,7 @@ assert.match(cron.describe('nonsense'), /cron "nonsense"/);
 // ---------------------------------------------------------- the registry ----
 
 {
-  assert.deepStrictEqual(actions.names().sort(), ['prompt_report', 'repo_sync']);
+  assert.deepStrictEqual(actions.names().sort(), ['build_run', 'prompt_report', 'repo_sync']);
   assert.throws(() => actions.get('shell'), /unknown action "shell"/);
   // Defaults fill in, unknown keys are dropped, strings coerce where it is safe.
   assert.deepStrictEqual(actions.validateParams('repo_sync', { quietMinutes: '90', rm: '-rf /' }), { nested: true, quietMinutes: 90 });

@@ -32,6 +32,16 @@ module.exports = {
     assert.strictEqual(await repos.buildRuns.liveForCommitment(4243), null);
   },
 
+  'liveForOrigin: a routine\'s live run by prefix (insert keeps origin)': async ({ repos, assert }) => {
+    const r = await repos.buildRuns.insert({ ...mk('scheduled'), origin: 'routine:7731:Nightly triage' });
+    assert.strictEqual((await repos.buildRuns.byId(r.id)).origin, 'routine:7731:Nightly triage');
+    assert.strictEqual((await repos.buildRuns.liveForOrigin('routine:7731:%')).id, r.id);
+    assert.strictEqual(await repos.buildRuns.liveForOrigin('routine:773:%'), null, 'a different routine id');
+    assert.strictEqual((await repos.buildRuns.insert(mk('by hand'))).origin, null);
+    await repos.buildRuns.update(r.id, { state: 'done' });
+    assert.strictEqual(await repos.buildRuns.liveForOrigin('routine:7731:%'), null, 'ended');
+  },
+
   'list: newest first, live filter': async ({ repos, assert }) => {
     const a = await repos.buildRuns.insert(mk('a'));
     const b = await repos.buildRuns.insert(mk('b'));

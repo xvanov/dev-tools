@@ -50,7 +50,10 @@ async function route(method: string, url: URL, body: Row) {
 
   if (method === 'GET' && p === '/api/routines') {
     const [list, history] = await Promise.all([r.list(), r.history({ limit: 40 })]);
+    const profiles = await require('../build/profiles.ts').list().catch(() => []);
     return {
+      // For the scheduled-Build-run form's profile picker.
+      profiles: profiles.map((x: Row) => ({ name: x.name, description: x.description, model: x.model, effort: x.effort })),
       routines: list.map((x: Row) => ({ ...x, plain: r.plainWords(x), changes: safeChanges(r, x.action) })),
       history,
       actions: r.actions.catalog(),
@@ -58,8 +61,16 @@ async function route(method: string, url: URL, body: Row) {
   }
   if (method !== 'POST') return undefined;
 
-  if (p === '/api/routines/parse') return r.parseWords(String(body.words || ''));
-  if (p === '/api/routines/preview') return r.preview(pick(body));
+  if (p === '/api/routines/parse') {
+    // A form (the scheduled Build run) pins the action and its params; the words then say only when.
+    const given = (body.pin && typeof body.pin === 'object' ? body.pin : null) as Row | null;
+    const pin = given
+      ? { action: String(given.action || ''), params: r.actions.validateParams(String(given.action || ''), given.params) }
+      : null;
+    if (pin) await r.actions.get(pin.action).verify?.(pin.params);
+    return r.parseWords(String(body.words || ''), { pin });
+  }
+  if (p === '/api/routines/preview') return r.previewChecked(pick(body));
   if (p === '/api/routines') {
     if (body.confirmed !== true) {
       const err: HttpError = new Error('not confirmed');

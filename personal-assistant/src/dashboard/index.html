@@ -406,6 +406,21 @@
       <input type="text" id="rt-words" placeholder="e.g. every weekday at 8 pull main on all repos" autocomplete="off">
       <button type="submit" id="rt-read" class="primary">Read it</button>
     </form>
+    <details id="rt-build-box"><summary>Or schedule a Build agent run</summary>
+      <form id="rt-build" autocomplete="off">
+        <p class="hint">Starts an agent exactly like <b>Do</b> on a card, on a schedule. The result (a draft PR or a report)
+          waits for your review; nothing is merged. Skipped when today's budget is spent or its last run is still going.</p>
+        <div class="row"><input type="text" id="rt-b-when" placeholder="when, e.g. every weekday at 7"></div>
+        <div class="row"><textarea id="rt-b-prompt" rows="3" placeholder="the task, in your words" style="width:100%"></textarea></div>
+        <div class="row">
+          <select id="rt-b-profile" title="Build profile"></select>
+          <input type="text" id="rt-b-repo" placeholder="repo path (optional, a known project)">
+          <select id="rt-b-model" title="Model (optional)"><option value="">profile's model</option><option>haiku</option><option>sonnet</option><option>opus</option><option>fable</option></select>
+          <select id="rt-b-effort" title="Effort (optional)"><option value="">profile's effort</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select>
+          <button type="submit" id="rt-b-read" class="primary">Read it</button>
+        </div>
+      </form>
+    </details>
     <div class="rt-status" id="rt-add-status"></div>
     <div class="rt-preview" id="rt-preview" hidden></div>
   </section>

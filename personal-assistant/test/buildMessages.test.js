@@ -121,6 +121,30 @@ async function main() {
     await assert.rejects(() => M.reply(r.id, null, plain.id, { a: 'b' }), /plain question/);
     await M.reply(r.id, 'ok', plain.id);
 
+    // Two open asks on one run (a subagent asks too): the run stays waiting, and keeps its wait on the
+    // books, until the LAST one closes — answering the first must not send it back to running.
+    {
+      const nap = (ms) => new Promise((x) => setTimeout(x, ms));
+      const opts = { pollMs: 5, sleep: nap };
+      const first = M.ask(r.id, 'first?', opts);
+      await nap(30);
+      const second = M.ask(r.id, 'second?', opts);
+      await nap(30);
+      const open = (await repo.buildRuns.openAsks()).filter((a) => String(a.run_id) === String(r.id)).sort((a, b) => a.id - b.id);
+      assert.deepStrictEqual(open.map((a) => a.body), ['first?', 'second?']);
+      assert.strictEqual((await repo.buildRuns.byId(r.id)).state, 'waiting');
+      await M.reply(r.id, 'one', open[0].id);
+      assert.strictEqual((await first).answer, 'one');
+      const mid = await repo.buildRuns.byId(r.id);
+      assert.strictEqual(mid.state, 'waiting', 'one ask is still open: still waiting');
+      assert.ok(mid.waiting_since, 'its clock keeps running');
+      assert.deepStrictEqual((await M.needsYou()).map((n) => n.question), ['second?']);
+      await M.reply(r.id, 'two', open[1].id);
+      assert.strictEqual((await second).answer, 'two');
+      const end = await repo.buildRuns.byId(r.id);
+      assert.deepStrictEqual([end.state, end.waiting_since], ['running', null], 'the last answer sends it back to work');
+    }
+
     // Waiting is not the agent's time: the wall-clock cap leaves it out.
     const T = require('../src/build/track.ts');
     const t0 = Date.parse('2026-01-01T00:00:00Z');

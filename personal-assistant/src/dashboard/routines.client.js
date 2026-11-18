@@ -10,6 +10,7 @@
 const ACTION_LABEL = {
   repo_sync: { cls: 'act', text: 'Action — will run git in your repos (fetch, and fast-forward clean default branches)' },
   prompt_report: { cls: 'ro', text: 'Read-only — asks the model and sends you the answer' },
+  build_run: { cls: 'act', text: 'Action — starts a Build agent in a git worktree; the result waits for your review, nothing is merged' },
 };
 
 const rt = { data: null, poll: null, preview: null };
@@ -154,6 +155,7 @@ function renderRoutines() {
   fillList('rt-suggested', proposed, routineCard, '');
   fillList('rt-active', mine, routineCard, 'No routines yet. Describe one above.');
   fillList('rt-history', d.history, runCard, 'No runs yet.');
+  fillProfiles();
   const count = document.getElementById('rtcount');
   if (count) count.textContent = proposed.length ? String(proposed.length) : '';
 }
@@ -213,6 +215,34 @@ function showPreview(p) {
   box.hidden = false;
 }
 
+// The scheduled Build run form: what the agent does is chosen here (pinned), the words only say when.
+function wireBuildBox() {
+  const form = document.getElementById('rt-build');
+  const read = document.getElementById('rt-b-read');
+  const status = document.getElementById('rt-add-status');
+  const val = (id) => document.getElementById(id).value.trim();
+  const go = rtBusy(read, status, 'Reading…', async () => {
+    const params = { prompt: val('rt-b-prompt'), profile: val('rt-b-profile') };
+    for (const [k, id] of [['repo', 'rt-b-repo'], ['model', 'rt-b-model'], ['effort', 'rt-b-effort']]) if (val(id)) params[k] = val(id);
+    if (!params.prompt) throw new Error('Say what the agent should do.');
+    const p = await post('api/routines/parse', { words: val('rt-b-when'), pin: { action: 'build_run', params } });
+    showPreview(p);
+    return 'Check it below, then Save or Cancel.';
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    go();
+  });
+}
+
+function fillProfiles() {
+  const sel = document.getElementById('rt-b-profile');
+  const have = sel.value;
+  const names = (rt.data && rt.data.profiles) || [];
+  sel.replaceChildren(...names.map((p) => el('option', { value: p.name, title: p.description || '' }, `${p.name} — ${p.model || 'default model'}`)));
+  if (have) sel.value = have;
+}
+
 function wireAddBox() {
   const form = document.getElementById('rt-add');
   const input = document.getElementById('rt-words');
@@ -229,6 +259,7 @@ function wireAddBox() {
     e.preventDefault();
     go();
   });
+  wireBuildBox();
   const sug = document.getElementById('rt-suggest');
   const sugStatus = document.getElementById('rt-suggest-status');
   sug.addEventListener('click', rtBusy(sug, sugStatus, 'Looking…', async () => {

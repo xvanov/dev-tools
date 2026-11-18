@@ -16,6 +16,9 @@ const HELP = `
   Routines (actions that change things on this machine, on a schedule)
     pa routine add "<words>" [--yes]   e.g. "every weekday at 8 pull main on all repos";
                                        shows what it understood and asks before saving
+    pa routine add "<when>" --action build_run --profile <name> --prompt "<task>" [--repo <path>]
+                [--model m] [--effort e] [--title t] [--schedule "<cron>"] [--yes]
+                                       a Build agent run on a schedule; the result waits for review
     pa routine list [--all]            active, paused and proposed routines
     pa routine run <id> [--dry-run] [--no-fetch]   run now; --dry-run changes nothing
     pa routine pause|resume <id>
@@ -40,6 +43,15 @@ function when(v: any) {
   if (!v) return '—';
   const d = new Date(v);
   return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+/** `--action <name> --<param> <value>…` as {action, params}, checked against the action's schema. */
+function pinned(routines: any, flags: Json) {
+  const action = String(flags.action);
+  const spec = routines.actions.get(action).params;
+  const params: Json = {};
+  for (const k of Object.keys(spec)) if (typeof flags[k] === 'string') params[k] = flags[k];
+  return { action, params: routines.actions.validateParams(action, params) };
 }
 
 function make(out: any, fail: any) {
@@ -72,9 +84,17 @@ function make(out: any, fail: any) {
 
     if (sub === 'add') {
       const words = args.slice(1).join(' ').trim();
-      if (!words) return fail('usage: pa routine add "every weekday at 8 pull main on all repos"');
+      // `--action build_run --profile … --prompt …`: what it does is typed here (the same params the
+      // dashboard form posts); the words, or --schedule "<cron>", say only when.
+      const pin = typeof flags.action === 'string' ? pinned(routines, flags) : null;
+      if (!words && !(pin && typeof flags.schedule === 'string')) {
+        return fail('usage: pa routine add "every weekday at 8 pull main on all repos"\n       pa routine add "every weekday at 7" --action build_run --profile feature --repo <path> --prompt "…"');
+      }
       out('Reading that…');
-      const p = await routines.parseWords(words);
+      if (pin) await routines.actions.get(pin.action).verify?.(pin.params);
+      const p = pin && typeof flags.schedule === 'string'
+        ? await routines.previewChecked({ title: typeof flags.title === 'string' ? flags.title : words, schedule: flags.schedule, action: pin.action, params: pin.params, description: words })
+        : await routines.parseWords(words, { pin });
       showPreview(p);
       if (!(flagBool(flags, 'yes') || (await ask('Save this routine? [y/N]')))) return out('not saved');
       const row = await routines.create(p);

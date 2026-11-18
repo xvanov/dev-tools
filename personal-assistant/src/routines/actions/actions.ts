@@ -13,6 +13,7 @@
 //     changes: 'what it changes on the machine, or null if read-only',
 //     params: { root: { type: 'string', doc: '…', default: '…' } },
 //     describe: (params) => 'plain words for this instance',
+//     verify: async (params) => {},   // optional: checks that need the store, run when a routine is saved
 //     run: async (params, { dryRun, log }) => ({ ok, summary, lines, notable, detail }),
 //   });
 //
@@ -103,3 +104,4 @@ module.exports = { register, get, names, validateParams, catalog, describe, regi
 // The built-in actions. Required last so they can require this module.
 require('./repoSync.ts');
 require('./promptReport.ts');
+require('./buildRun.ts');

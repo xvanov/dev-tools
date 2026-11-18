@@ -56,6 +56,9 @@ function checkModel(m: unknown): string {
   return v;
 }
 
+/** The answer a dead run's open ask is closed with (reconcile). */
+const SESSION_ENDED = '(the agent session ended before this was answered)';
+
 const KEY = (id: number | string): string => `build.card.${id}`;
 
 /** A card's stored build settings: only what was set. */
@@ -202,7 +205,7 @@ async function writeSubagents(cwd: string, files: Array<{ path: string; text: st
 }
 
 /** Starts a run. What it made is undone when the session does not open. */
-async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; profile?: string | null; effort?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null }): Promise<Row> {
+async function start(o: { commitmentId?: number | string | null; task?: string | null; model?: string | null; profile?: string | null; effort?: string | null; repoPath?: string | null; costCapUsd?: number | null; wallCapMin?: number | null; idleAfterS?: number | null; origin?: string | null }): Promise<Row> {
   const dispatch = require('../dispatch');
   const commitmentId = o.commitmentId || null;
   const card = await stored(commitmentId);
@@ -235,7 +238,7 @@ async function start(o: { commitmentId?: number | string | null; task?: string |
   const timings: Record<string, number> = {};
   const mark = (k: string): void => { timings[k] = Date.now() - t0; };
   mark('resolved_ms');
-  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS, profile: r.profile, effort: r.effort, permissionMode: r.permissionMode });
+  const run = await repo().insert({ commitmentId, task, model, repoPath: isRepo ? wanted : null, machine: os.hostname(), costCapUsd, wallCapMin, idleAfterS, profile: r.profile, effort: r.effort, permissionMode: r.permissionMode, origin: o.origin || null });
   const cwd = path.join(config.worktreesRoot, `build-${run.id}`);
   let branch: string | null = null;
   let sessionId: string | null = null;
@@ -474,6 +477,11 @@ async function reconcile(known: Json[] | null = null): Promise<{ failed: number 
     if (r.state === 'starting' || !r.session_id || ids.has(String(r.session_id))) continue;
     const why = 'the session ended without `pa run done`';
     await finish(r.id as number, 'failed', { error: why });
+    // The agent that asked is gone, and so is whoever would read the answer: a `waiting` run's open ask
+    // would otherwise sit in the decision queue (and the interrupt budget's count) for good.
+    for (const a of (await repo().openAsks()) as Row[]) {
+      if (String(a.run_id) === String(r.id)) await repo().answer(a.id, SESSION_ENDED);
+    }
     await alarm(r, `Build agent #${r.id} failed`, why, `build-fail:${r.id}`);
     failed++;
   }

@@ -543,7 +543,10 @@ nothing but `git fetch --prune` and `git merge --ff-only` on the branch already 
 only when the pure `decide(repoState)` says `ff`; it never checks out, stashes, resets, or moves a
 local branch. Any new safety condition goes into `decide` with a test. Suggested routines are
 stored `proposed` and only a human enables them; a rejected one is kept so it is never proposed
-again. A scheduled slot missed during downtime runs once, never as a backlog.
+again. A scheduled slot missed during downtime runs once, never as a backlog. `build_run` (a
+scheduled Build agent) only *starts* the run through `build.start` and returns — never hold the
+routine lock for a run's hours — and every way it declines to start (budget spent, its previous run
+live, profile gone) is a recorded skip, not a failure; the suggester must never propose it.
 
 **OS decisions live in `src/platform/`, and only there.** One implementation per behaviour per
 OS (`windows.js`, `linux.js`, `darwin.js`, same contract, listed in `index.js`): data dir, venv
