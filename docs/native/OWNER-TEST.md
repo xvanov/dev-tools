@@ -1,9 +1,9 @@
 # Owner test: the last two boxes (Exit E, Exit 8)
 
 About 30 minutes, on the work laptop. Everything runs on the new system: the PA as the compiled
-jarvisd on SQLite, termhub's front on `jarvisd front`, terminals in ptyd, the factory natively.
+jarvisd on SQLite, termhub's front on `jarvisd front`, terminals in ptyd.
 Open termhub at http://127.0.0.1:7000/ (or its tailnet address); the top bar switches between
-**Ask** (talk to Jarvis), **Plan** (the board), **Build** (factory jobs), **Run** (terminals),
+**Ask** (talk to Jarvis), **Plan** (the board), **Build** (one Claude Code agent per task), **Run** (terminals),
 **Meter** and **Map**.
 
 Tick a step when it does what it says. Anything else: note what you saw and the time; the
@@ -25,13 +25,13 @@ On **Ask**, press to talk and say "What's on today?".
 
 ## 2. The golden path by voice (Exit E)
 
-On **Ask**, say: "Start a factory job for dev-tools: add a `pa version` verb that prints the
+On **Ask**, say: "Start an agent on dev-tools: add a `pa version` verb that prints the
 served commit." Approve when Jarvis asks.
 
-- [ ] Jarvis confirms within about a second of your yes, and names the card and the job.
-- [ ] **Plan**: the card appears and moves to dispatched; open it: it links to the job.
-- [ ] **Build**: the job shows its stages as they change (no refresh needed), with cost.
-- [ ] **Run**: the steps' sessions appear; open the running one and watch the agent work.
+- [ ] Jarvis confirms within about a second of your yes, and names the card and the run.
+- [ ] **Plan**: the card appears and moves to dispatched; open it: it links to the run.
+- [ ] **Build**: the run shows its state as it changes (no refresh needed), with cost.
+- [ ] **Run**: the agent's session appears; open the running one and watch the agent work.
 - [ ] From the card, follow card -> job -> step -> session -> PR, and back from the PR.
 - [ ] A draft PR opens on xvanov/dev-tools and its CI goes green (about 8-12 min in all).
 - [ ] Close the PR unmerged (or ask Jarvis to); the card closes.
@@ -45,7 +45,9 @@ On **Ask**, say: "Research how termhub's Windows update handles a dirty working 
   question, and its file:line citations hold when you open two of them.
 - [ ] No PR is opened, and Meter shows $0 billed (it runs on the subscription).
 
-## 4. DeepSeek PR (Exit 8)
+## 4. DeepSeek PR (Exit 8) - obsolete
+
+The API runtime went with the software factory (D32); Build runs Claude Code only, so this step can no longer be run.
 
 On **Ask**, say: "With DeepSeek, start a factory job for dev-tools: <a small change>."
 
