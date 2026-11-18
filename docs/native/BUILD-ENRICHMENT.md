@@ -1,6 +1,6 @@
 # Build enrichment plan (A–G)
 
-Status: active, 2026-11-18. Builds on D30 (Build = one Claude Code agent per task) and D32
+Status: done, 2026-11-18 (A–G shipped). Builds on D30 (Build = one Claude Code agent per task) and D32
 (software-factory removed). Source: IndyDevDan's agentic-engineering videos, mainly the three "Tiny Software
 Factories" lessons (2026-11-02 `1v7ldJiyH-Y`, 2026-11-09 `GRlcm3wmOqs`, 2026-11-16 `hYIymEMB9x4`);
 transcripts and idea notes in `C:\repos\curator\data\transcripts\indydevdan\`.
@@ -96,6 +96,8 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
   writes one report: agreements, disagreements, and what each saw that the other missed.
 - Fuse follows a "respond only when addressed" contract; no free-running agent chat.
 - Coding tasks stay single-agent (D30).
+- Landed in b08bfbc as `src/build/secondOpinion.ts`: card setting `secondOpinion`, two sibling runs linked by `build_run.origin`, the fuse
+  from the worker's 15 s pass on the new `fuse` pass model (`PA_FUSE_MODEL`); see `personal-assistant/AGENT.md`, "Second opinion".
 
 ## Order and status
 
@@ -106,6 +108,6 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 - [x] D. Decision queue (6b73436)
 - [x] E. Scheduled Build runs (4ec0262)
 - [x] F. Profile eval (f10cc34)
-- [ ] G. Second opinion
+- [x] G. Second opinion (b08bfbc)
 
 Later, only if F shows a win: small agent teams with a lead orchestrator (Fable 5.2 as lead).
