@@ -61,11 +61,14 @@ const n = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /**
  * Context window in tokens per model id, first match wins. Claude Code's long-context variants carry
- * `[1m]` (or `-1m`) in the model id; everything else is taken as 200k. Unverified for Fable 5 and the 5.5
- * family: `windowOf` raises a window the transcript has already exceeded, so a wrong row cannot show over 100%.
+ * `[1m]` (or `-1m`) in the model id. The Claude 5 family (Fable, Mythos, Opus, Sonnet, Haiku 5 / 5.x) has a 1M
+ * window per the Anthropic models table (checked 2026-11-18); older ids (Haiku 4.5 and before, 4.x Opus/Sonnet
+ * without the suffix) are taken as 200k. `windowOf` also raises a window the transcript has already exceeded,
+ * so a wrong row cannot show over 100%.
  */
 const WINDOWS: Array<{ match: RegExp; tokens: number }> = [
   { match: /\[1m\]|-1m\b/i, tokens: 1_000_000 },
+  { match: /(fable|mythos|opus|sonnet|haiku)-5(-\d+)?(\b|$)/i, tokens: 1_000_000 },
 ];
 const DEFAULT_WINDOW = 200_000;
 

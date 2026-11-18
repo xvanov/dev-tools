@@ -623,18 +623,20 @@ prompt is one file, `src/build/agent-prompt.md`; edit it there. The software fac
   of life puts it back to `running`. A `waiting` run (open `pa run ask`) is never idle.
 - **Tool summaries** (`src/build/summaries.ts`; BUILD-ENRICHMENT.md C): every N new tool calls of a live run (`summaryEvery`,
   default 5, `PA_SUMMARY_EVERY`) the new calls from the track view go to the `summary` pass's cheap model (`PA_SUMMARY_MODEL`,
-  default `azure/pa`; overridable per pass on `/agents`) and come back as one plain sentence, stored as a `build_msg` row of
+  default `azure/pa`, the same default as blocks and dedupe, so a stack without Azure set up fails it gracefully (shared
+  backoff, one log line per distinct error per hour) and wants `PA_SUMMARY_MODEL` or `/agents` pointed at a model it has;
+  overridable per pass on `/agents`) and come back as one plain sentence, stored as a `build_msg` row of
   kind `summary` (dir `jarvis`, body `{upto, text}`: the cursor travels with the text, so there is no table and a restart
   loses nothing; heartbeat ignores them, board and chat show them apart from the conversation). The card shows the newest
   `summaryLines` (default 3); `build_run` returns them with `context`, so Talk can answer "what is run 42 doing?". Cost guards,
   all in `maybe()`: nothing new or under N calls is no call; a finished run flushes the rest once; at most
   `PA_SUMMARY_MAX_PER_RUN` (40) per run; one call in flight per run; the newest 40 calls per batch; 30 s timeout; exponential
-  backoff after a failure; purpose `build-summary` is in `PA_BUDGET_DISCRETIONARY`, so the daily cap pauses it first;
+  backoff after a failure (shared by all runs: the model is one dependency); purpose `build-summary` is in `PA_BUDGET_DISCRETIONARY`, so the daily cap pauses it first;
   `PA_SUMMARY=0` stops it. `track.tick` never awaits it for a live run and it never throws. Spend lands in `llm_spend`.
   `summaryEvery` and `summaryLines` are edited like the models: `/agents`, `agent_settings_set` (`summary_every`,
   `summary_lines`), `pa agents set --summary-every n --summary-lines n`.
 - **Context meter and live status:** the track view carries `context {tokens, window, pct}` (tokens in context at the newest
-  assistant message; the window from `WINDOWS` in `track.ts`: `[1m]` models 1M, else 200k, raised when the transcript has
+  assistant message; the window from `WINDOWS` in `track.ts`: `[1m]` ids and the Claude 5 family 1M, else 200k, raised when the transcript has
   already passed it, so a wrong row cannot show over 100%). `GET /api/build/status` (cached 5 s) feeds the pill beside the »
   toggle on every page (`nav.js`: the shell polls, frames get it by postMessage): running, need you, Build spend today;
   zero parts hidden. Spend there is notional (runs started today); Jarvis's own model spend today is in its tooltip.

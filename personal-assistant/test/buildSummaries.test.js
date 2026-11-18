@@ -43,9 +43,10 @@ const viewOf = (n, over = {}) => ({ totals: { calls: n }, agents: [{ id: 'main',
 
   // ------------------------------------------------------------------ context meter ----
   {
-    assert.strictEqual(T.windowOf('claude-opus-5-5'), 200_000);
-    assert.strictEqual(T.windowOf('claude-opus-5-5[1m]'), 1_000_000);
-    assert.strictEqual(T.windowOf('claude-sonnet-5-5', 350_000), 1_000_000, 'a context past 200k means a larger window, never over 100%');
+    for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2', 'claude-opus-5', 'claude-opus-4-8[1m]']) assert.strictEqual(T.windowOf(id), 1_000_000, id);
+    assert.strictEqual(T.windowOf('claude-haiku-4-5'), 200_000);
+    assert.strictEqual(T.windowOf('claude-opus-4-8'), 200_000);
+    assert.strictEqual(T.windowOf('claude-haiku-4-5', 350_000), 1_000_000, 'a context past the window means a larger one, never over 100%');
     assert.strictEqual(T.windowOf(null), 200_000);
     const u = (i, cr, cw) => ({ input_tokens: i, output_tokens: 9, cache_read_input_tokens: cr, cache_creation_input_tokens: cw });
     const text = [
@@ -55,7 +56,7 @@ const viewOf = (n, over = {}) => ({ totals: { calls: n }, agents: [{ id: 'main',
     const parsed = T.parseAgent(text, 'opus');
     assert.strictEqual(parsed.context_tokens, 91_020, 'the newest message: input + cache read + cache write');
     const sum = T.summarize([{ id: 'main', kind: 'main', parsed }], { runLive: true });
-    assert.deepStrictEqual(sum.context, { tokens: 91_020, window: 200_000, pct: 46, model: 'claude-opus-5-5' });
+    assert.deepStrictEqual(sum.context, { tokens: 91_020, window: 1_000_000, pct: 9, model: 'claude-opus-5-5' });
   }
 
   // ----------------------------------------------------------------------- settings ----
