@@ -102,7 +102,7 @@ subagents; the run's `summary.json` records the profile; tests cover profile res
 - [x] A. Build profiles (4bb5989)
 - [x] B. Settings per agent + parity (fd4f7bb)
 - [x] C. Tool summaries + live status (7ed8a43)
-- [ ] D. Decision queue
+- [x] D. Decision queue (6b73436)
 - [ ] E. Scheduled Build runs
 - [ ] F. Profile eval
 - [ ] G. Second opinion
