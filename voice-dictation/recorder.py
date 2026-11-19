@@ -14,17 +14,26 @@ Device selection:
 IPC via flag files in the system temp directory:
   vd-cancel.flag  — cancel, discard recording (written by Esc hotkey / overlay)
   vd-stop.flag    — stop early and transcribe (written by 2nd hotkey press)
-  vd-running.flag — presence signals that recorder is active
+  vd-running.flag — holds the recorder's PID while it is active; the hotkey
+                    scripts treat a flag whose PID is dead as stale
+
+Diagnostics (recorder.log next to this file, VD_RECORDER_LOG to move it):
+  every session logs its phases, timings and errors with tracebacks. A
+  watchdog gives each phase a deadline; on expiry it logs every thread's stack,
+  clears the flags and exits, so a hang can never leave the hotkey wedged.
+  VD_WATCHDOG=0 disables it.
 """
 
 import json
 import os
 import platform
+import shutil
 import socket
 import sys
 import tempfile
 import threading
 import time
+import traceback
 
 import numpy as np
 import pyperclip
@@ -51,6 +60,147 @@ PREVIEW_WAV = os.path.join(_TMP, "vd-preview.wav")
 FINAL_WAV = os.path.join(_TMP, "vd-final.wav")
 
 IS_WINDOWS = platform.system() == "Windows"
+
+LOG_PATH = os.environ.get(
+    "VD_RECORDER_LOG",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "recorder.log"),
+)
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOW_DISK_MB = int(os.environ.get("VD_LOW_DISK_MB", "500"))
+WATCHDOG_ON = os.environ.get("VD_WATCHDOG", "1").strip() != "0"
+
+# Per-phase deadlines (seconds). Each covers the phase's own timeouts with room
+# to spare: transcription is a 60 s socket timeout, Claude cleanup 15 s (one
+# retry), Ollama 20 s. "done" is the overlay's done state, where the user may
+# browse history; past it the window is closed regardless.
+PHASE_DEADLINES = {
+    "starting": 30,
+    "recording": MAX_DURATION + 30,
+    "transcribing": 90,
+    "cleanup": 45,
+    "paste": 15,
+    "done": 900,
+    "closing": 15,
+}
+
+
+# ---------------------------------------------------------------------------
+# Logging — the recorder runs under pythonw, where stderr goes nowhere, so an
+# uncaught exception used to vanish and leave the overlay (and running flag)
+# up forever. Everything worth knowing lands in recorder.log instead.
+# ---------------------------------------------------------------------------
+
+_SESSION = f"{os.getpid()}"
+_log_lock = threading.Lock()
+
+
+def log(msg: str) -> None:
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{_SESSION}] {msg}"
+    with _log_lock:
+        try:
+            if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES:
+                os.replace(LOG_PATH, LOG_PATH + ".1")
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass  # a full disk can make logging fail too; never let it crash us
+
+
+def log_exc(msg: str, exc: BaseException) -> None:
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
+    log(f"{msg}: {exc!r} | {_disk_note()}\n{tb}")
+
+
+def _free_mb(path: str = _TMP) -> int:
+    try:
+        return int(shutil.disk_usage(path).free // (1024 * 1024))
+    except OSError:
+        return -1
+
+
+def _disk_note() -> str:
+    return f"temp free={_free_mb()} MB"
+
+
+def _short_error(exc: BaseException) -> str:
+    """What the overlay shows for a pipeline failure."""
+    if isinstance(exc, OSError) and (exc.errno == 28 or getattr(exc, "winerror", None) in (39, 112)):
+        return "disk full — free space and retry"
+    if "No space" in str(exc) or "disk full" in str(exc).lower():
+        return "disk full — free space and retry"
+    s = str(exc) or exc.__class__.__name__
+    return s if len(s) <= 80 else s[:77] + "..."
+
+
+def _thread_excepthook(args) -> None:
+    log_exc(f"uncaught exception in thread {args.thread.name if args.thread else '?'}", args.exc_value)
+
+
+def _stacks() -> str:
+    names = {t.ident: t.name for t in threading.enumerate()}
+    out = []
+    for ident, frame in sys._current_frames().items():
+        out.append(f"--- thread {names.get(ident, ident)}\n" + "".join(traceback.format_stack(frame)).rstrip())
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Watchdog
+# ---------------------------------------------------------------------------
+
+class Watchdog:
+    """Deadline per pipeline phase. On expiry: log the phase and every thread's
+    stack (the root-cause evidence), then call on_expire (default: clear the
+    flags and hard-exit — a wedged tkinter main loop or C call can't be
+    unwound any other way)."""
+
+    def __init__(self, on_expire=None, deadlines=None, clock=time.monotonic):
+        self._deadlines = deadlines or PHASE_DEADLINES
+        self._clock = clock
+        self._on_expire = on_expire or _watchdog_exit
+        self._lock = threading.Lock()
+        self.phase = None
+        self._phase_started = 0.0
+        self._deadline = None
+        self._fired = False
+
+    def arm(self, phase: str) -> None:
+        with self._lock:
+            prev, elapsed = self.phase, self._clock() - self._phase_started
+            if prev == phase:
+                self._deadline = self._clock() + self._deadlines[phase]
+                return
+            self.phase = phase
+            self._phase_started = self._clock()
+            self._deadline = self._phase_started + self._deadlines[phase]
+        if prev:
+            log(f"phase {prev} -> {phase} ({elapsed:.2f}s)")
+        else:
+            log(f"phase {phase}")
+
+    def check(self) -> bool:
+        """True (and fires once) when the current phase is past its deadline."""
+        with self._lock:
+            if self._fired or self._deadline is None or self._clock() < self._deadline:
+                return False
+            self._fired = True
+            phase, limit = self.phase, self._deadlines[self.phase]
+        log(f"WATCHDOG: phase '{phase}' exceeded {limit:.0f}s | {_disk_note()}\n{_stacks()}")
+        self._on_expire(phase)
+        return True
+
+    def start(self) -> None:
+        def _loop():
+            while not self.check():
+                time.sleep(1.0)
+        threading.Thread(target=_loop, name="watchdog", daemon=True).start()
+
+
+def _watchdog_exit(phase: str) -> None:
+    _set_running(False)
+    _clear_flags()
+    log(f"WATCHDOG: exiting (stuck in {phase})")
+    os._exit(3)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +353,8 @@ class AudioRecorder:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._cancelled = False
+        self.stop_reason = ""
+        self._preview_errors: set = set()
 
     # ---- internal threads ------------------------------------------------
 
@@ -222,9 +374,11 @@ class AudioRecorder:
 
             if os.path.exists(CANCEL_FLAG):
                 self._cancelled = True
+                self.stop_reason = "cancel"
                 self._stop_event.set()
                 return
             if os.path.exists(STOP_FLAG):
+                self.stop_reason = "hotkey"
                 self._stop_event.set()
                 return
 
@@ -244,10 +398,12 @@ class AudioRecorder:
             elif speech_detected:
                 silence_chunks += 1
                 if silence_chunks >= silence_needed:
+                    self.stop_reason = "silence"
                     self._stop_event.set()
                     return
 
             if chunk_count >= max_chunks:
+                self.stop_reason = "max-duration"
                 self._stop_event.set()
 
     def _preview_loop(self) -> None:
@@ -261,13 +417,28 @@ class AudioRecorder:
                 snapshot = list(self._frames)
             try:
                 _write_wav(PREVIEW_WAV, snapshot)
-                text, _err = _transcribe(PREVIEW_WAV)
+                text, err = _transcribe(PREVIEW_WAV)
+                if err:
+                    self._note_preview_error(err)
                 if text and text != last_text:
                     last_text = text
                     if self._overlay:
                         self._overlay.update(text, "Recording...")
-            except Exception:
-                pass
+            except Exception as exc:
+                # Previews are best-effort, but a failing one is the early
+                # warning for the final pass (e.g. disk full): log each distinct
+                # error once rather than swallowing it.
+                self._note_preview_error(exc)
+
+    def _note_preview_error(self, err) -> None:
+        key = repr(err) if isinstance(err, BaseException) else str(err)
+        if key in self._preview_errors:
+            return
+        self._preview_errors.add(key)
+        if isinstance(err, BaseException):
+            log_exc("preview failed", err)
+        else:
+            log(f"preview failed: {err}")
 
     # ---- public ----------------------------------------------------------
 
@@ -278,10 +449,15 @@ class AudioRecorder:
         """
         device_id, device_name = _get_device()
 
+        log(f"recording on device {device_id!r} ({device_name})")
         if self._overlay:
             self._overlay.set_device(device_name)
 
+        statuses = []
+
         def _cb(indata, frames, time_info, status):
+            if status and len(statuses) < 20:
+                statuses.append(str(status))
             with self._lock:
                 self._frames.append(indata.copy())
 
@@ -303,6 +479,13 @@ class AudioRecorder:
 
         vad_t.join(timeout=1)
         preview_t.join(timeout=1)
+
+        with self._lock:
+            n = len(self._frames)
+        log(
+            f"stopped: reason={self.stop_reason or '?'} audio={n * CHUNK_SECS:.1f}s"
+            + (f" stream-status={sorted(set(statuses))}" if statuses else "")
+        )
 
         if self._cancelled:
             return True, ""
@@ -337,7 +520,10 @@ def _clear_flags() -> None:
 
 def _set_running(active: bool) -> None:
     if active:
-        open(RUNNING_FLAG, "w").close()
+        # The PID lets the hotkey scripts tell a live recorder from a flag left
+        # behind by one that died (killed, crashed, power loss).
+        with open(RUNNING_FLAG, "w") as f:
+            f.write(str(os.getpid()))
     else:
         try:
             os.remove(RUNNING_FLAG)
@@ -349,38 +535,66 @@ def _set_running(active: bool) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _recording_thread(recorder: AudioRecorder, overlay) -> None:
-    """Background thread: record → transcribe → LLM → clipboard → paste."""
+def _overlay_call(overlay, method: str, *args, **kwargs) -> None:
+    """Call an overlay method, tolerating a window that is already gone."""
+    if not overlay:
+        return
+    try:
+        getattr(overlay, method)(*args, **kwargs)
+    except Exception as exc:
+        log(f"overlay.{method} failed: {exc!r}")
+
+
+def _finish(overlay, wd, status: str, delay_ms: int) -> None:
+    wd.arm("closing")
+    _overlay_call(overlay, "set_status", status)
+    _overlay_call(overlay, "close", delay_ms=delay_ms)
+
+
+def _recording_thread(recorder: AudioRecorder, overlay, wd=None) -> None:
+    """Background thread: record → transcribe → LLM → clipboard → paste.
+
+    Any exception ends the session visibly (error in the overlay, window
+    closed, so the running flag clears) and is logged with its traceback.
+    Before this, an exception here killed the thread silently and left the
+    overlay's main loop — and the running flag — up forever."""
+    wd = wd or Watchdog()  # never started: tracks and logs phases only
+    try:
+        _pipeline(recorder, overlay, wd)
+    except Exception as exc:
+        log_exc(f"pipeline failed in phase {wd.phase}", exc)
+        _finish(overlay, wd, f"Error: {_short_error(exc)}", 5000)
+
+
+def _pipeline(recorder: AudioRecorder, overlay, wd) -> None:
+    wd.arm("recording")
     cancelled, wav_path = recorder.record()
 
     if cancelled or not wav_path:
-        if overlay:
-            overlay.set_status("Cancelled")
-            overlay.close(delay_ms=600)
+        log("cancelled" if cancelled else "no audio captured")
+        _finish(overlay, wd, "Cancelled" if cancelled else "No audio captured", 600 if cancelled else 1500)
         return
 
-    if overlay:
-        overlay.set_status("Transcribing...")
+    wd.arm("transcribing")
+    _overlay_call(overlay, "set_status", "Transcribing...")
 
     t0 = time.time()
     text, err = _transcribe(wav_path)
     t_whisper = time.time() - t0
     recorder.cleanup()
+    log(f"transcribed in {t_whisper:.2f}s: chars={len(text)}" + (f" error={err}" if err else ""))
 
     if err:
         # Audio was captured but transcription itself failed — say so plainly
         # instead of the misleading "No speech detected".
-        if overlay:
-            overlay.set_status(f"Transcription failed: {err}")
-            overlay.close(delay_ms=3500)
+        _finish(overlay, wd, f"Transcription failed: {err}", 3500)
         return
 
     if not text:
-        if overlay:
-            overlay.set_status("No speech detected")
-            overlay.close(delay_ms=1200)
+        _finish(overlay, wd, "No speech detected", 1200)
         return
 
+    wd.arm("cleanup")
     t_cleanup = 0.0
     cleanup_backend = ""
     try:
@@ -388,17 +602,18 @@ def _recording_thread(recorder: AudioRecorder, overlay) -> None:
         t1 = time.time()
         text, cleanup_backend = llm_cleanup(text)
         t_cleanup = time.time() - t1
+        log(f"cleanup {cleanup_backend} in {t_cleanup:.2f}s")
     except ImportError:
         pass
 
+    wd.arm("paste")
     pyperclip.copy(text)
 
     timing = f"Done  {t_whisper:.1f}s whisper"
     if cleanup_backend:
         timing += f"  {t_cleanup:.3f}s {cleanup_backend}"
 
-    if overlay:
-        overlay.show_done(text, timing)
+    _overlay_call(overlay, "show_done", text, timing)
 
     # Paste before overlay closes — user's window still has focus since we
     # never stole it.
@@ -415,61 +630,69 @@ def _recording_thread(recorder: AudioRecorder, overlay) -> None:
             cleanup_backend=cleanup_backend,
             whisper_model=model_info,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_exc("history append failed", exc)
+
+    log("pasted")
+    wd.arm("done")
 
 
 def run() -> None:
     _clear_flags()
     _set_running(True)
+    threading.excepthook = _thread_excepthook
+    sys.excepthook = lambda t, v, tb: log_exc("uncaught exception", v)
+
+    free = _free_mb()
+    log(f"start: python {sys.version.split()[0]}, temp {_TMP}, {_disk_note()}")
+    low_disk = 0 <= free < LOW_DISK_MB
+    if low_disk:
+        log(f"WARNING: low disk space ({free} MB free) — recording may fail")
+
+    wd = Watchdog()  # only enforces deadlines once started
+    wd.arm("starting")
+    if WATCHDOG_ON:
+        wd.start()
 
     try:
         from overlay import Overlay
         overlay = Overlay(silence_threshold=SILENCE_THRESHOLD)
-    except Exception:
+    except Exception as exc:
+        log_exc("overlay unavailable, running headless", exc)
         overlay = None
 
-    # Show Whisper model + cleanup backend in overlay
-    if overlay:
-        model_info = _read_server_info()
-        if model_info:
-            overlay.set_model(model_info)
-        try:
-            from llm_cleanup import get_active_backend
-            overlay.set_backend(get_active_backend())
-        except ImportError:
-            pass
-
-    recorder = AudioRecorder(overlay=overlay)
-
     try:
+        # Show Whisper model + cleanup backend in overlay
         if overlay:
-            overlay.set_status("Recording...")
+            model_info = _read_server_info()
+            if model_info:
+                overlay.set_model(model_info)
+            try:
+                from llm_cleanup import get_active_backend
+                overlay.set_backend(get_active_backend())
+            except ImportError:
+                pass
+
+        recorder = AudioRecorder(overlay=overlay)
+
+        if overlay:
+            overlay.set_status(f"Recording... LOW DISK: {free} MB free" if low_disk else "Recording...")
             t = threading.Thread(
-                target=_recording_thread, args=(recorder, overlay), daemon=True
+                target=_recording_thread, args=(recorder, overlay, wd), name="pipeline", daemon=True
             )
             t.start()
             overlay.mainloop()  # blocks on main thread (tkinter requirement)
+            wd.arm("closing")
             t.join(timeout=3)
         else:
-            # Fallback: no overlay, blocking path
-            cancelled, wav_path = recorder.record()
-            if cancelled or not wav_path:
-                return
-            text, err = _transcribe(wav_path)
-            recorder.cleanup()
-            if err or not text:
-                return
-            try:
-                from llm_cleanup import cleanup as llm_cleanup
-                text = llm_cleanup(text)
-            except ImportError:
-                pass
-            pyperclip.copy(text)
-            _auto_paste()
+            # Fallback: no overlay, same pipeline on this thread
+            _recording_thread(recorder, None, wd)
+    except Exception as exc:
+        log_exc("recorder failed", exc)
     finally:
         _set_running(False)
         _clear_flags()
+        log("exit")
 
 
 if __name__ == "__main__":

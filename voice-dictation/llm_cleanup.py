@@ -68,7 +68,9 @@ def _get_session():
 def _claude_cleanup(text: str) -> tuple:
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
+        # The SDK's default timeout is 10 minutes; a stalled request would
+        # keep the recorder (and its running flag) alive that long.
+        client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=15.0, max_retries=1)
         msg = client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=300,

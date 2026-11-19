@@ -81,6 +81,9 @@ Set `OLLAMA_MODEL` to use a different model.
 | `TRANSCRIBE_PORT` | `47821` | Loopback TCP port |
 | `CUDA_RETRY_SEC` | `600` | After a GPU error the server runs on CPU this long, then retries CUDA |
 | `VD_SERVER_LOG` | `server.log` beside the script | Server log; the only record of a CPU fallback |
+| `VD_RECORDER_LOG` | `recorder.log` beside the script | Per-session phases, timings, errors with tracebacks, watchdog stack dumps |
+| `VD_WATCHDOG` | `1` | `0` disables the recorder's per-phase watchdog |
+| `VD_LOW_DISK_MB` | `500` | Below this much free temp space the overlay warns before recording |
 
 On Linux, vars go in the systemd unit (`~/.config/systemd/user/voice-dictation.service`).
 On Windows, they're baked into `start-server.bat` by the installer.
@@ -169,5 +172,13 @@ into the install folder and restart the server) after updating.
   retries CUDA after `CUDA_RETRY_SEC`; `server.log` records the original error.
   Restarting the server also clears it. CPU transcription is several times
   slower, so a stuck `/cpu` is the first thing to check when dictation crawls.
+- **Hotkey does nothing / dictation "frozen"** — a recorder session got stuck.
+  Each phase (recording, transcribing, cleanup, paste, done overlay) has a
+  deadline; past it the watchdog logs every thread's stack to `recorder.log`
+  and exits, clearing the flags. The running flag holds the recorder's PID, so
+  the hotkey also ignores a flag left behind by a recorder that died. To see
+  why: search `recorder.log` for `WATCHDOG` or `pipeline failed`. A full disk
+  shows up as `disk full` in the overlay and `temp free=` in the log line
+  (the WAVs are written to the temp folder).
 - **Hotkey conflict** — edit `voice-toggle.ahk` (Windows) or rebind the GNOME
   shortcut (Linux) to a different key combination.

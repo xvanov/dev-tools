@@ -18,7 +18,22 @@ StopFlag    := TmpDir "\vd-stop.flag"
 RunningFlag := TmpDir "\vd-running.flag"
 BackendFile := TmpDir "\vd-cleanup-backend.txt"
 
-IsRecording() => FileExist(RunningFlag) != ""
+; The running flag holds the recorder's PID. A flag whose process is gone was
+; left by a recorder that died (killed, crashed) — without this check it would
+; wedge the hotkey: every press would only write a stop flag nobody reads.
+IsRecording() {
+    global RunningFlag
+    if !FileExist(RunningFlag)
+        return false
+    try
+        pid := Integer(Trim(FileRead(RunningFlag)))
+    catch
+        pid := 0
+    if (pid && ProcessExist(pid))
+        return true
+    try FileDelete(RunningFlag)
+    return false
+}
 
 ; ---------------------------------------------------------------------------
 ; Tray icon + cleanup backend submenu

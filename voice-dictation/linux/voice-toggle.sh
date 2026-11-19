@@ -29,6 +29,15 @@ if [ "${1:-}" = "--history" ]; then
     exec "$PYTHON" "$OVERLAY" --history
 fi
 
+# The flag holds the recorder's PID; one whose process is gone is stale (the
+# recorder died) and must not turn this press into a stop nobody reads.
+if [ -f "$RUNNING_FLAG" ]; then
+    pid="$(cat "$RUNNING_FLAG" 2>/dev/null)"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$RUNNING_FLAG"
+    fi
+fi
+
 if [ -f "$RUNNING_FLAG" ]; then
     # 2nd press: request stop → transcribe
     touch "$STOP_FLAG"
