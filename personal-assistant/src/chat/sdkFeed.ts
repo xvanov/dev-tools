@@ -508,16 +508,18 @@ function createSdkFeed({
       log.warn('policy unavailable for a chat tool call; Claude Code\'s settings decide', { message: err.message, tool: name });
     }
     // A policy allow for a built-in read holds inside the read roots, off secret paths (rules cannot match paths).
-    const cwd = home || stateDir();
-    let ctx: { roots: string[]; cwd: string; dataDir: string | null } = { roots: [cwd], cwd, dataDir: null };
+    // Paths resolve against the session's current directory (a shell `cd` moves it), the roots start at pa-home.
+    const base = home || stateDir();
+    const cwd = typeof hookInput?.cwd === 'string' && hookInput.cwd ? hookInput.cwd : base;
+    let ctx: { roots: string[]; cwd: string; dataDir: string | null } = { roots: [base], cwd, dataDir: null };
     try {
-      ctx = { roots: readRoots(cwd), cwd, dataDir: dataDir() };
+      ctx = { roots: readRoots(base), cwd, dataDir: dataDir() };
     } catch (err: any) {
       log.warn('read roots unavailable; reads stay inside pa-home', { message: err.message });
     }
     const d = G.gate(name, hookInput?.tool_input || {}, res, ctx);
     if (!d) return { continue: true };
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } };
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason, ...(d.updatedInput ? { updatedInput: d.updatedInput } : {}) } };
   }
 
   /**

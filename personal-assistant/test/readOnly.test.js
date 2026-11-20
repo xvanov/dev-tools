@@ -51,8 +51,15 @@ test('readOnlyBash: reading commands, alone or chained, run unasked', () => {
     'cat README.md; wc -l src/a.ts',
     'head -20 log.txt',
     'tail -n 50 logs/worker.log',
-    'grep -rn "needle" src',
-    'grep -rn token src',
+    'grep -n "needle" src/a.ts',
+    'grep -n token src/a.ts',
+    'git log -1 | grep -i fix',
+    'rg -n -g "*.{ts,tsx}" needle src',
+    'rg -n -g "!*.md" needle',
+    'rg -l -t ts -A 2 needle src',
+    'git branch --contains HEAD',
+    'git branch --sort=-committerdate -v',
+    'git log --oneline main~3..HEAD',
     'rg -n "token" src',
     'rg -e foo -g "*.ts" src',
     'find . -name "*.json" -maxdepth 2',
@@ -143,6 +150,94 @@ test('readOnlyBash: anything that writes, expands, redirects or is unknown asks'
   ]) assert.strictEqual(RO.readOnlyBash(c).ok, false, `${JSON.stringify(c)} must ask`);
 });
 
+test('readOnlyBash: shell tricks that would write, run or reach a secret ask (review of D33)', () => {
+  for (const c of [
+    // The shell expands these into names it picks: `.e*` is .env, `{--output=x,}` a flag.
+    'cat .e*',
+    'cat .en?',
+    'cat .[e]nv',
+    'cat .{e,}nv',
+    'cat ~/.ss*/config',
+    'git log {--output=x,}',
+    'find . {-delete,}',
+    'ls *.md',
+    // A backslash-newline joins `-` and `-output=x` in the shell.
+    'git log -\\\n-output=x',
+    'find . -\\\ndelete',
+    "grep 'a\nb' x",
+    // `~-` is $OLDPWD, `~+` $PWD; `cd -` goes back somewhere unknown.
+    'cat ~-/config',
+    'cat ~+/config',
+    'cd - && cat config',
+    // Windows drops trailing dots and stream names; short names stand for any long name.
+    'cat ~/.ssh./config',
+    'cat ~/.kube./config',
+    'cat ~/.docker./config.json',
+    'cat .env::$DATA',
+    'cat ~/SSH~1/config',
+    'cat ~/GIT-CR~1',
+    'cd ~/DOCKER~1 && cat config.json',
+    'git -C ~/SSH~1 log',
+    'git diff --no-index a b',
+    'git blame --contents x y',
+    // More credential files.
+    'cat ~/_netrc',
+    'cat ~/.claude.json',
+    'cat ~/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt',
+    'cat ~/.bash_history',
+    'cat C:/Users/me/AppData/Local/personal-assistant/backups/pa-20261115.pabak',
+    'cat backups/pa-20261108.dump',
+    // git branch: any unique prefix of a long option works, and new writers appear.
+    'git branch --delete-merged=x',
+    'git branch --mov',
+    'git branch --edit-description',
+    'git branch -u origin/main',
+    // grep: a pattern file is read; -e anywhere makes every positional a file; -r reads dot files.
+    'grep -f ~/.ssh/id_rsa x',
+    'grep -f~/.ssh/id_rsa x',
+    'grep ~/.aws/credentials -e key',
+    'grep -r token .',
+    'grep -rn token src',
+    'grep -R token .',
+    'grep --recursive token .',
+    'grep -d recurse token .',
+    // rg: a glob or type overrides the hidden and ignore rules; these run commands or read hidden/binary files.
+    'rg -g .env KEY',
+    'rg -g "*" KEY',
+    'rg -g ".e*" KEY',
+    'rg --glob=*.env KEY',
+    'rg --iglob .ENV KEY',
+    'rg -g "**/.ssh/**" KEY ~',
+    'rg --type-add "e:*.env" -te KEY',
+    'rg --hidden KEY',
+    'rg -uu KEY',
+    'rg -. KEY',
+    'rg --no-ignore KEY',
+    'rg -L KEY',
+    'rg -a KEY',
+    'rg -z KEY',
+    'rg --search-zip KEY',
+    'rg --hostname-bin=calc KEY',
+    'rg --pre-glob "*" KEY',
+    'rg -f ~/.ssh/id_rsa src',
+    'rg --ignore-file .env KEY',
+  ]) assert.strictEqual(RO.readOnlyBash(c).ok, false, `${JSON.stringify(c)} must ask`);
+});
+
+test('readOnlyBash: rg reports the trees it searches, after the line\'s cds', () => {
+  assert.deepStrictEqual(RO.readOnlyBash('rg x').searches, ['.']);
+  assert.deepStrictEqual(RO.readOnlyBash('rg -n x src lib').searches, ['src', 'lib']);
+  assert.deepStrictEqual(RO.readOnlyBash('cd C:/w/run-1 && rg -e x src').searches, ['C:/w/run-1/src']);
+  assert.deepStrictEqual(RO.readOnlyBash('cd ~ && rg x').searches, ['~']);
+  assert.deepStrictEqual(RO.readOnlyBash('git log | rg x').searches, ['.']);
+  assert.deepStrictEqual(RO.readOnlyBash('ls src').searches, []);
+});
+
+test('globMaySelectSecret: a glob that may pick a credential out; exclusions and code globs do not', () => {
+  for (const g of ['.env', '*', '**', '**/*', '.e*', '*.env', '*.{env,txt}', '**/.ssh/**', 'id_*', '*.pem', '../x/*.ts', '*secret*']) assert.ok(RO.globMaySelectSecret(g), g);
+  for (const g of ['', '*.ts', '*.{ts,tsx}', 'src/**/*.js', '!.env', '!**/*', '*.md !*.env']) assert.ok(!RO.globMaySelectSecret(g), g);
+});
+
 test('readOnlyBash: every refusal says why', () => {
   assert.match(RO.readOnlyBash('ls > x').reason, /redirection/);
   assert.match(RO.readOnlyBash('rm x').reason, /not on the read-only list/);
@@ -211,6 +306,61 @@ test('gate: routine actions run on the policy\'s allow; destructive and sensitiv
   assert.strictEqual(G.gate('Bash', { command: 'ls' }, { decision: 'allow', rule: 'chat-readonly-bash-allow', tags: ['read_only'] }, ctx).decision, 'allow');
   assert.strictEqual(G.gate('Bash', { command: 'rm x' }, { decision: 'ask', rule: 'default', tags: [] }, ctx), null);
   assert.strictEqual(G.gate('ToolSearch', { query: 'select:Artifact' }, { decision: 'allow', rule: 'chat-tool-search-allow', tags: [] }, ctx).decision, 'allow');
+});
+
+test('gate: holes found in review of D33 stay shut', () => {
+  const home = path.resolve('/data/pa-home');
+  const data = path.resolve('/data');
+  const repos = path.resolve('/repos');
+  const sshDir = path.resolve('/Users/me/.ssh');
+  const links = { [path.join(repos, 'keys')]: sshDir, [path.join(repos, 'keys', 'config')]: path.join(sshDir, 'config'), [path.join(repos, 'up')]: path.resolve('/Users/me') };
+  const realpath = (p) => {
+    const hit = Object.keys(links).find((k) => k.toLowerCase() === path.resolve(p).toLowerCase());
+    return hit ? links[hit] : null;
+  };
+  const ctx = { roots: [home, data, repos], cwd: home, dataDir: data, realpath, homedir: path.resolve('/Users/me') };
+  const allowRead = { decision: 'allow', rule: 'chat-builtin-reads-allow', tags: [] };
+  const d = (name, input, c = ctx) => G.gate(name, input, allowRead, c);
+  // A link or junction inside a root leads to a secret or out of the roots.
+  assert.strictEqual(d('Read', { file_path: path.join(repos, 'keys', 'config') }), null, 'a junction to ~/.ssh');
+  assert.strictEqual(d('Grep', { pattern: 'x', path: path.join(repos, 'up') }), null, 'a junction out of the roots');
+  // Grep's glob overrides rg's hidden and ignore rules.
+  assert.strictEqual(d('Grep', { pattern: 'KEY', glob: '*', path: repos }), null);
+  assert.strictEqual(d('Grep', { pattern: 'KEY', glob: '.e*', path: repos }), null);
+  // An allowed Grep runs with the credential exclusions (it searches dot files).
+  const g = d('Grep', { pattern: 'x', glob: '*.ts', path: path.join(repos, 'dev-tools') });
+  assert.strictEqual(g.decision, 'allow');
+  assert.match(g.updatedInput.glob, /^\*\.ts !\*\*\/\.\[eE\]\[nN\]\[vV\]\*/);
+  assert.strictEqual(g.updatedInput.pattern, 'x');
+  assert.ok(G.GREP_EXCLUDE_GLOB.split(' ').every((x) => x.startsWith('!**/')), 'exclusions only');
+  // Glob stays under its path.
+  assert.strictEqual(d('Glob', { pattern: '../../**/*', path: repos }), null);
+  assert.strictEqual(d('Glob', { pattern: 'C:/Users/**/*', path: repos }), null);
+  // Bash: rg searches stay inside the read roots, never the data dir's top; the shell is not in a secret dir.
+  const bash = (command, c = ctx) => G.gate('Bash', { command }, { decision: 'allow', rule: 'chat-readonly-bash-allow', tags: ['read_only'] }, c);
+  assert.strictEqual(bash(`rg -n x ${path.join(repos, 'dev-tools').replace(/\\/g, '/')}`).decision, 'allow');
+  assert.strictEqual(bash('rg -n x').decision, 'allow', 'the shell in pa-home');
+  assert.strictEqual(bash(`rg TOKEN ${data.replace(/\\/g, '/')}`), null, 'the data dir top: env backups, the store');
+  assert.strictEqual(bash(`cd ${data.replace(/\\/g, '/')} && rg TOKEN`), null);
+  assert.strictEqual(bash('rg TOKEN ~'), null, 'home is not a read root');
+  assert.strictEqual(bash('rg TOKEN', { ...ctx, cwd: data }), null, 'a shell left in the data dir');
+  assert.strictEqual(bash('cat config', { ...ctx, cwd: sshDir }), null, 'a shell left in ~/.ssh');
+  assert.strictEqual(bash('rm x'), null, 'the gate re-checks the command');
+  // A sensitive call asks even when an override rule allows its tool.
+  assert.strictEqual(G.gate('mcp__pa-chat__pa', { command: 'secret', args: ['reveal', 'x'] }, { decision: 'allow', rule: 'my-override', tags: ['secret_reveal'] }, ctx).decision, 'ask');
+});
+
+test('policy: an override cannot make profile_delete/reset or a sensitive call run unasked from the chat', () => {
+  const P = require('../src/policy/policy.ts');
+  const base = require('../src/policy/default.policy.json');
+  const pol = P.merge(base, { rules: [{ id: 'loose', tools: ['*'], decision: 'allow' }] });
+  for (const t of ['profile_delete', 'profile_reset']) {
+    const res = P.evaluate({ tool: t, channel: 'chat', args: {} }, pol);
+    assert.strictEqual(res.decision, 'allow', 'the override does match');
+    assert.strictEqual(G.gate(`mcp__pa-chat__${t}`, {}, res, { roots: [], cwd: '/' }).decision, 'ask', t);
+  }
+  const res = P.evaluate({ tool: 'pa', channel: 'chat', args: { command: 'secret', args: ['reveal', 'x'] } }, pol);
+  assert.strictEqual(G.gate('mcp__pa-chat__pa', {}, res, { roots: [], cwd: '/' }).decision, 'ask');
 });
 
 test('readRoots: pa-home, the data dir, worktrees, the repos root and local PA_MACHINES roots only', () => {

@@ -13,9 +13,14 @@
 // fixed set of reading commands (cd, pwd, ls, cat, head, tail, wc, grep, rg,
 // find, git's reading sub-commands, gh's view/list sub-commands). Anything it
 // cannot read with certainty — output redirection, `$`, backticks, `<`,
-// subshells, an env-var prefix, an unknown command, a secret-looking path —
-// is not read-only, and the chat asks as before. `2>/dev/null` and `2>&1` are
-// accepted: they write nothing.
+// subshells, an env-var prefix, a line break, an unquoted glob or brace (the
+// shell picks the names: `.e*` is .env, `{--output=x,}` a flag), `~-`/`~+`,
+// an unknown command, a secret-looking path or an 8.3 short name — is not
+// read-only, and the chat asks as before. `2>/dev/null` and `2>&1` are
+// accepted: they write nothing. Flags are allow-listed where a tool accepts
+// abbreviations (git branch); grep -r and rg's hidden/ignore/glob overrides
+// ask, since they would read .env and keys inside a tree. The trees an rg
+// searches are returned for the hook to keep inside the read roots.
 //
 // The `pa` CLI is not on it: the chat reads through the `pa` MCP tool (argv,
 // no shell, PA_READ_ONLY for `runs`), and a `pa` shell command keeps asking.
@@ -27,18 +32,33 @@ const nodePath: typeof import('node:path') = require('path');
 interface Verdict {
   ok: boolean;
   reason: string;
+  // The trees an `rg` searches (posix-joined after the line's `cd`s; '.' is the shell's cwd): the chat's hook
+  // keeps them inside the read roots, as for the Grep tool (src/chat/toolGate.ts).
+  searches?: string[];
 }
+interface ShellState { cwd: string; searches: string[] }
 
 const SECRET_DIRS = ['.ssh', '.aws', '.azure', '.gnupg', '.docker', '.kube'];
-const SECRET_NAMES = ['.npmrc', '.git-credentials', '.netrc', '.pgpass', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'];
-// .env / .env.local / .envrc / a `.env*` glob / prod.env; the PA's own env backups (env.before-*); its store (the vault's rows live there).
-const SECRET_NAME_RE = /^\.env|\.env$|^env\.before-|credential|secret|token|\.(pem|key|pfx|p12|kdbx)$|\.sqlite(-wal|-shm|-journal)?$/i;
+const SECRET_NAMES = ['.npmrc', '.git-credentials', '.netrc', '_netrc', '.pgpass', '.pypirc', '.claude.json', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'];
+// .env / .env.local / .envrc / a `.env*` glob / prod.env; the PA's own env backups (env.before-*); its store (the vault's rows
+// live there) and the store's backups (.dump/.pabak/.sealed); shell histories (tokens typed on a command line); key stores.
+const SECRET_NAME_RE = /^\.env|\.env$|^env\.before-|credential|secret|token|_history|\.(pem|key|pfx|p12|kdbx|ppk|jks|keystore|tfstate|dump|pabak|sealed)$|\.sqlite(-wal|-shm|-journal)?$/i;
+
+/**
+ * One path segment as Windows opens it: an NTFS stream suffix (`x::$DATA`,
+ * `x:stream`) and trailing dots and spaces (`.ssh.`) are dropped, so they
+ * cannot hide a name.
+ */
+function winSegment(seg: string, i: number): string {
+  const s = i === 0 && /^[a-z]:$/.test(seg) ? seg : seg.replace(/:.*$/, '');
+  return s.replace(/[. ]+$/, '') || s;
+}
 
 /** Pure. Whether a path (any form: relative, `~`, backslashes, a glob) looks like a credential. */
 function isSecretPath(p: unknown): boolean {
   const s = String(p ?? '').replace(/\\/g, '/').toLowerCase();
   if (!s) return false;
-  const parts = s.split('/').filter((x) => x && x !== '.');
+  const parts = s.split('/').filter((x) => x && x !== '.').map(winSegment);
   for (let i = 0; i < parts.length; i++) {
     const seg = parts[i] as string;
     if (SECRET_DIRS.includes(seg)) return true;
@@ -46,6 +66,49 @@ function isSecretPath(p: unknown): boolean {
   }
   const base = parts[parts.length - 1] ?? '';
   return SECRET_NAMES.includes(base) || SECRET_NAME_RE.test(base);
+}
+
+// Names a file-selecting glob is tried on: a glob that picks any of them out may pick a credential.
+const SECRET_SAMPLES = ['.env', '.env.local', '.envrc', 'prod.env', 'env.before-x', 'id_rsa', 'id_ed25519', '.npmrc', '.netrc', '_netrc', '.git-credentials',
+  'credentials', 'credentials.json', 'secrets.json', 'token.txt', 'x.pem', 'x.key', 'x.pfx', 'x.p12', 'pa.sqlite', 'x.pabak', 'x.dump', '.bash_history', '.claude.json'];
+
+/**
+ * Pure. Whether a file-selecting glob (rg/Grep `glob`, Glob's `pattern`) may
+ * pick a secret out: its last part, as a glob, matches a credential's name, or
+ * the glob names a secret directory or steps up with `..`. An exclusion (`!…`)
+ * never does. rg's globs override its hidden and ignore rules, so `*` alone
+ * would reach `.env`.
+ */
+function globMaySelectSecret(g: unknown): boolean {
+  const s = String(g ?? '').trim();
+  if (!s) return false;
+  return s.split(/\s+/).filter(Boolean).some((one) => {
+    if (one.startsWith('!')) return false;
+    if (isSecretPath(one) || /(^|[\\/])\.\.([\\/]|$)/.test(one)) return true;
+    const last = one.replace(/\\/g, '/').split('/').pop() || '';
+    let re = '';
+    for (let i = 0; i < last.length; i++) {
+      const c = last[i] as string;
+      if (c === '*') re += '.*';
+      else if (c === '?') re += '.';
+      else if (c === '[') {
+        const j = last.indexOf(']', i + 1);
+        if (j < 0) return true;
+        re += `[${last.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+        i = j;
+      } else if (c === '{') re += '(';
+      else if (c === '}') re += ')';
+      else if (c === ',') re += '|';
+      else re += c.replace(/[.+^$()|\\]/g, '\\$&');
+    }
+    let rx: RegExp;
+    try {
+      rx = new RegExp(`^(?:${re})$`, 'i');
+    } catch {
+      return true;
+    }
+    return SECRET_SAMPLES.some((n) => rx.test(n));
+  });
 }
 
 const norm = (p: string): string => nodePath.resolve(p).toLowerCase();
@@ -106,6 +169,11 @@ function tokenize(command: string): { tokens: Token[] } | { error: string } {
       if (i + 1 >= s.length) return { error: 'a trailing backslash' };
       word = (word ?? '') + s[i + 1];
       i++;
+    } else if ('*?[]{}'.includes(c)) {
+      // The shell expands these into names it picks (`.e*`, `.{e,}nv`, `{--output=x,}`): unknowable here.
+      return { error: `an unquoted \`${c}\` (a glob or brace expansion)` };
+    } else if (c === '~' && word === null && !/^~(?=$|[/\s;&|])/.test(s.slice(i))) {
+      return { error: 'a `~+`, `~-` or `~user` expansion' };
     } else if (c === ' ' || c === '\t') {
       end();
     } else if (c === '\n' || c === '\r') {
@@ -157,9 +225,14 @@ const isFlag = (a: string): boolean => a.startsWith('-') && a !== '-';
 // Where a relative path would land after the segment's `cd`s (posix join, `~` kept literal).
 const join = (cwd: string, p: string): string => (/^([a-z]:)?[\\/]|^~/i.test(p) || !cwd ? p : `${cwd.replace(/[\\/]+$/, '')}/${p}`);
 
-function secretArg(cwd: string, a: string): boolean {
+// An 8.3 short name (SSH~1, GIT-CR~1) can stand for any long name, so a path with one cannot be judged by name.
+// Not for git, whose `HEAD~1` is a revision (git's file operands that leave the repo, --no-index, are refused).
+const shortName = (p: string): boolean => /(^|[\\/])[^\\/~]+~\d/.test(p);
+
+function secretArg(cwd: string, a: string, git = false): boolean {
   const value = isFlag(a) && a.includes('=') ? a.slice(a.indexOf('=') + 1) : a;
   if (isFlag(value)) return false;
+  if (!git && shortName(value)) return true;
   // git's <rev>:<path> reads a file out of history.
   const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1) : '';
   return isSecretPath(join(cwd, value)) || isSecretPath(value) || (tail !== '' && isSecretPath(tail));
@@ -169,9 +242,14 @@ const ok = (reason: string): Verdict => ({ ok: true, reason });
 const no = (reason: string): Verdict => ({ ok: false, reason });
 
 const GIT_READS = ['status', 'log', 'diff', 'show', 'branch', 'rev-parse', 'rev-list', 'ls-files', 'blame', 'remote', 'worktree', 'stash', 'cherry'];
-// A branch flag that changes something: delete, move, copy, force, upstream, description.
-const BRANCH_WRITE_LONG = ['--delete', '--move', '--copy', '--force', '--set-upstream-to', '--unset-upstream', '--edit-description', '--track', '--no-track', '--create-reflog'];
-const BRANCH_LIST_FLAGS = ['--list', '--contains', '--no-contains', '--merged', '--no-merged', '--points-at'];
+// git branch's listing flags, the only ones allowed: git accepts any unique prefix of a long option (`--mov`
+// for --move) and grows new writers (--delete-merged), so a deny list cannot keep up. Short: -a -r -v -q -l -i.
+const BRANCH_LIST_LONG = ['--list', '--all', '--remotes', '--verbose', '--quiet', '--show-current', '--ignore-case', '--omit-empty',
+  '--color', '--no-color', '--column', '--no-column', '--abbrev', '--no-abbrev', '--format', '--sort', '--contains', '--no-contains',
+  '--merged', '--no-merged', '--points-at', '--forked'];
+// Those that take a value as the next word (`--contains HEAD`).
+const BRANCH_VALUE_LONG = ['--format', '--sort', '--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--forked'];
+const BRANCH_LIST_FLAGS = ['--list', '--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--forked'];
 const GH_READS: Record<string, string[]> = { pr: ['view', 'list', 'checks', 'diff'], run: ['list', 'view', 'watch'], issue: ['view', 'list'], repo: ['view'] };
 const FIND_ACTS = ['-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprint', '-fprint0', '-fprintf', '-fls'];
 
@@ -180,7 +258,11 @@ function gitSegment(args: string[]): Verdict {
   // Global options that only point somewhere or page nothing; `-c` (config) can run commands.
   while (i < args.length && isFlag(args[i] as string)) {
     const a = args[i] as string;
-    if (a === '-C') i += 2;
+    if (a === '-C') {
+      if (shortName(args[i + 1] ?? '')) return no(`git -C ${args[i + 1]} (a short name)`);
+      i += 2;
+    }
+    else if (/^--(git-dir|work-tree)=/.test(a) && shortName(a.slice(a.indexOf('=') + 1))) return no(`git ${a} (a short name)`);
     else if (a === '--no-pager' || a === '-P' || a.startsWith('--git-dir=') || a.startsWith('--work-tree=') || a === '--no-optional-locks') i += 1;
     else return no(`git ${a} before the sub-command`);
   }
@@ -188,14 +270,24 @@ function gitSegment(args: string[]): Verdict {
   const rest = args.slice(i + 1);
   if (!sub || !GIT_READS.includes(sub)) return no(`git ${sub ?? ''} is not a reading sub-command`.trim());
   if (rest.some((a) => /^--output(=|$)|^--ext-diff$/.test(a))) return no(`git ${sub} writing a file or running a diff tool`);
+  // Files outside the repository, named any way: --no-index compares two, blame --contents reads one.
+  const outside = rest.find((a) => /^--(no-index|contents)(=|$)/.test(a));
+  if (outside) return no(`git ${sub} ${outside} reads files outside the repository`);
   switch (sub) {
     case 'branch': {
-      for (const a of rest) {
-        if (BRANCH_WRITE_LONG.some((f) => a === f || a.startsWith(`${f}=`))) return no(`git branch ${a}`);
-        if (/^-[^-]/.test(a) && /[dDmMcCfut]/.test(a.slice(1))) return no(`git branch ${a}`);
+      const names: string[] = [];
+      for (let k = 0; k < rest.length; k++) {
+        const a = rest[k] as string;
+        if (a.startsWith('--')) {
+          const flag = a.split('=')[0] as string;
+          if (!BRANCH_LIST_LONG.includes(flag)) return no(`git branch ${a}`);
+          if (BRANCH_VALUE_LONG.includes(flag) && !a.includes('=')) k++;
+        } else if (isFlag(a)) {
+          if (!/^-[arvqli]+$/.test(a)) return no(`git branch ${a}`);
+        } else names.push(a);
       }
-      const listing = rest.some((a) => BRANCH_LIST_FLAGS.some((f) => a === f || a.startsWith(`${f}=`)) || /^-[^-]*l/.test(a));
-      if (!listing && rest.some((a) => !isFlag(a))) return no('git branch with a name creates a branch');
+      const listing = rest.some((a) => BRANCH_LIST_FLAGS.includes(a.split('=')[0] as string) || /^-[^-]*l/.test(a));
+      if (!listing && names.length) return no('git branch with a name creates a branch');
       return ok('git branch (list)');
     }
     case 'remote':
@@ -209,16 +301,18 @@ function gitSegment(args: string[]): Verdict {
   }
 }
 
-function segmentVerdict(words: string[], state: { cwd: string }): Verdict {
+function segmentVerdict(words: string[], state: ShellState): Verdict {
   const [cmd, ...args] = words as [string, ...string[]];
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) return no('an environment-variable prefix');
-  const secret = args.find((a) => secretArg(state.cwd, a));
+  const secret = args.find((a) => secretArg(state.cwd, a, cmd === 'git'));
   switch (cmd) {
     case 'cd': {
       if (args.length > 1) return no('cd with more than one argument');
       const to = args[0] ?? '~';
       if (secret) return no(`cd into ${secret}`);
-      state.cwd = to === '-' ? '' : join(state.cwd, to);
+      // `cd -` goes wherever the shell was before: unknown here.
+      if (to === '-' || isFlag(to)) return no(`cd ${to}`);
+      state.cwd = join(state.cwd, to);
       return ok('cd');
     }
     case 'pwd':
@@ -233,18 +327,47 @@ function segmentVerdict(words: string[], state: { cwd: string }): Verdict {
       return secret ? no(`tail ${secret} (a secret-looking path)`) : ok('tail');
     case 'grep':
     case 'rg': {
-      if (args.some((a) => a.startsWith('--pre'))) return no(`${cmd} --pre runs a command`);
-      // The pattern is not a path: the first positional, unless -e/--regexp gave it.
+      const searched: string[] = [];
+      if (args.some((a) => /^--(pre|hostname-bin)/.test(a))) return no(`${cmd} ${args.find((a) => /^--(pre|hostname-bin)/.test(a))} runs a command`);
+      if (cmd === 'grep') {
+        // grep -r reads every file under a directory, dot files and ignored ones included (.env): rg skips those.
+        const rec = args.find((a) => /^--(recursive|dereference-recursive|directories)/.test(a) || (/^-[^-]/.test(a) && !/^-[ef]/.test(a) && /[rRd]/.test(a.slice(1))));
+        if (rec) return no(`grep ${rec} searches a whole tree (use rg)`);
+      } else {
+        // rg skips dot files and git-ignored ones (.env, keys) and binary files: only while these stay off.
+        const loose = args.find((a) => /^--(hidden|no-ignore|unrestricted|follow|text|binary|search-zip|type-add)/.test(a) || (/^-[^-]/.test(a) && !/^-[efgtTrE]/.test(a) && /[u.Laz]/.test(a.slice(1))));
+        if (loose) return no(`rg ${loose} searches hidden, ignored or binary files`);
+      }
+      // The pattern is not a path: the first positional, unless -e/--regexp or -f/--file gave it (anywhere on the line).
+      const patternFlag = args.some((a) => /^-[ef]|^--(regexp|file)(=|$)/.test(a));
+      const valueFlag = cmd === 'rg' ? /^(-[ABCmMjdEtTr]|--(max-count|max-columns|max-depth|threads|encoding|type|type-not|replace|sort|sortr|colors|context|after-context|before-context|max-filesize|path-separator|ignore-file|context-separator|field-match-separator|field-context-separator))$/ : /^(-[ABCmD]|--(max-count|context|after-context|before-context|label|color|colour|binary-files|devices|exclude|include|exclude-dir|exclude-from))$/;
       const paths: string[] = [];
-      let patternGiven = false;
+      let patternGiven = patternFlag;
       for (let i = 0; i < args.length; i++) {
         const a = args[i] as string;
-        if (a === '-e' || a === '--regexp') { patternGiven = true; i++; continue; }
-        if (a.startsWith('--regexp=') || /^-e./.test(a)) { patternGiven = true; continue; }
+        if (a === '-e' || a === '--regexp') { i++; continue; }
+        if (a === '-f' || a === '--file' || a === '--ignore-file') { paths.push(args[i + 1] ?? ''); i++; continue; }
+        if (/^-f./.test(a)) { paths.push(a.slice(2)); continue; }
+        // A glob overrides rg's hidden and ignore rules: `-g .env`, even `-g *`, reaches the secrets.
+        if (cmd === 'rg' && /^(-g|--i?glob)$/.test(a)) {
+          if (globMaySelectSecret(args[i + 1])) return no(`rg ${a} ${args[i + 1] ?? ''} may pick a secret file`);
+          i++;
+          continue;
+        }
+        if (cmd === 'rg' && (/^-g./.test(a) || /^--i?glob=/.test(a))) {
+          const g = a.startsWith('-g') ? a.slice(2) : a.slice(a.indexOf('=') + 1);
+          if (globMaySelectSecret(g)) return no(`rg ${a} may pick a secret file`);
+          continue;
+        }
+        if (a.startsWith('--regexp=') || /^-e./.test(a)) continue;
+        if (valueFlag.test(a)) { i++; continue; }
         if (isFlag(a)) { if (a.includes('=')) paths.push(a); continue; }
         if (!patternGiven) { patternGiven = true; continue; }
         paths.push(a);
+        if (cmd === 'rg') searched.push(join(state.cwd, a));
       }
+      if (cmd === 'rg' && !searched.length) searched.push(state.cwd || '.');
+      state.searches.push(...searched);
       const bad = paths.find((a) => secretArg(state.cwd, a));
       return bad ? no(`${cmd} in ${bad} (a secret-looking path)`) : ok(cmd);
     }
@@ -274,16 +397,18 @@ function segmentVerdict(words: string[], state: { cwd: string }): Verdict {
  */
 function readOnlyBash(command: unknown): Verdict {
   if (typeof command !== 'string' || !command.trim()) return no('no command');
+  // Any line break, quoted or after a backslash (a continuation that joins `-\<newline>-output`), is more than one line.
+  if (/[\r\n]/.test(command.trim())) return no('more than one line');
   const t = tokenize(command.trim());
   if ('error' in t) return no(t.error);
   const segs = segments(t.tokens);
   if (!segs) return no('an operator with nothing on one side');
-  const state = { cwd: '' };
+  const state: ShellState = { cwd: '', searches: [] };
   for (const words of segs) {
     const v = segmentVerdict(words, state);
     if (!v.ok) return v;
   }
-  return ok(segs.length === 1 ? 'a read-only command' : `${segs.length} read-only commands`);
+  return { ...ok(segs.length === 1 ? 'a read-only command' : `${segs.length} read-only commands`), searches: state.searches };
 }
 
-module.exports = { isSecretPath, insideRoots, readOnlyBash, tokenize };
+module.exports = { isSecretPath, insideRoots, readOnlyBash, tokenize, globMaySelectSecret };

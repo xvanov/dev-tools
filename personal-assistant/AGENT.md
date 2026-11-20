@@ -134,13 +134,21 @@ the whole server. A call tagged merge / push_main / secret_reveal asks whatever 
 Also unasked (D33): ToolSearch; Read/Grep/Glob inside the read roots (pa-home, the PA's data dir —
 worktrees, build-runs, build-reports, logs —, the repos root and local `PA_MACHINES` repos roots) and
 never on a secret-looking path (`.env*`, `.ssh`, `.aws`, `.azure`, `.config/gh`, `.npmrc`,
-`.git-credentials`, keys, `*credential*`/`*secret*`/`*token*`, the PA's env backups and store; Grep
-never across the data dir's top); and a Bash command `src/policy/readOnly.ts` proves only reads (every
-`&&`/`||`/`;`/`|` segment one of cd, pwd, ls, cat, head, tail, wc, grep, rg, find without -exec/-delete,
-git status|log|diff|show|branch (list)|rev-parse|rev-list|ls-files|blame|remote -v|worktree list|stash
-list|cherry, gh pr view|list|checks|diff, gh run list|view|watch, gh issue view|list, gh repo view; no
-`>`/`>>` but `2>/dev/null`/`2>&1`, no `$`, backticks, `<`, subshells or env-var prefixes; tag
-`read_only`, rule `chat-readonly-bash-allow`). The path and shell checks are `src/chat/toolGate.ts`,
+`.git-credentials`, `_netrc`, `.claude.json`, keys, `*credential*`/`*secret*`/`*token*`, shell
+histories, the PA's env backups, store and store backups; judged on the real path behind a link or
+junction, which must stay inside the roots too; Grep never across the data dir's top, never with a glob
+that could pick a credential out (rg's globs override its hidden/ignore rules), and always with
+credential exclusions appended to its glob, since it searches dot files); and a Bash command
+`src/policy/readOnly.ts` proves only reads (every `&&`/`||`/`;`/`|` segment one of cd (not `cd -`),
+pwd, ls, cat, head, tail, wc, grep without -r or a secret `-f` file, rg without --hidden/-u/--no-ignore/
+-L/-a/-z/--pre/--hostname-bin/--type-add or a secret-picking `-g`, find without -exec/-delete/-fprint,
+git status|log|diff|show|branch (listing flags only)|rev-parse|rev-list|ls-files|blame|remote -v|
+worktree list|stash list|cherry without --output/--ext-diff/--no-index/--contents, gh pr view|list|
+checks|diff, gh run list|view|watch, gh issue view|list, gh repo view; one line; no `>`/`>>` but
+`2>/dev/null`/`2>&1`, no `$`, backticks, `<`, subshells, env-var prefixes, unquoted globs or braces,
+`~+`/`~-`, or 8.3 short names; tag `read_only`, rule `chat-readonly-bash-allow`), from a shell not in a
+secret directory, each tree an `rg` searches inside the read roots and off the data dir's top. The
+path and shell checks are `src/chat/toolGate.ts`,
 shared by both engines: the SDK hook calls it in-process, the terminal chat through a PreToolUse command
 hook in its settings.json (`src/chat/toolHook.js`, which exits at once under the SDK). Everything else
 asks as before. The actions are the dispatch paths themselves (`dispatch.start`, then `src/build`),

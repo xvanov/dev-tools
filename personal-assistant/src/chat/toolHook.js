@@ -38,8 +38,10 @@ async function main() {
   const home = require('./index.ts').homeDir();
   let res = null;
   try {
-    // Audited like the SDK hook's built-in calls; a slow store must not hold the call.
+    // Audited like the SDK hook's built-in calls; a slow store must not hold the call (the row is still
+    // written before the process exits: see pendingAudit).
     const authorize = require('../policy').authorize({ tool: name, action: 'call', channel: 'chat', actor: 'pa-chat', args });
+    pendingAudit = authorize.catch(() => {});
     res = await Promise.race([authorize, new Promise((r) => setTimeout(() => r(require('../policy').evaluate({ tool: name, action: 'call', channel: 'chat', args })), 4000))]);
   } catch {
     return null;
@@ -47,8 +49,12 @@ async function main() {
   const cwd = input.cwd || home;
   const d = G.gate(name, args, res, { roots: G.readRoots(home), cwd, dataDir: require('../config.ts').config.dataDir });
   if (!d) return null;
-  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } };
+  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason, ...(d.updatedInput ? { updatedInput: d.updatedInput } : {}) } };
 }
+
+// The audit write main() started; the process waits for it (up to the hook's budget) before it exits.
+let pendingAudit = Promise.resolve();
+const AUDIT_GRACE_MS = 4000;
 
 module.exports = { main, SDK_APP };
 
@@ -58,5 +64,6 @@ if (require.main === module) {
       if (out) process.stdout.write(JSON.stringify(out));
     })
     .catch(() => {})
+    .then(() => Promise.race([pendingAudit, new Promise((r) => setTimeout(r, AUDIT_GRACE_MS).unref())]))
     .finally(() => process.exit(0));
 }

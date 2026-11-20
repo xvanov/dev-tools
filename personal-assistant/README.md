@@ -973,9 +973,10 @@ reveal a secret. They are `pa do` in-process.
 "What are my tasks today?" → `board`; "start on that one" → `build_start {card}` → it starts.
 Reading needs no yes either: ToolSearch, Read/Grep/Glob in pa-home, the PA's data directory (agent
 worktrees, build runs and reports, logs) and the repos roots, and shell commands that only read (`ls`,
-`cat`, `git log|status|diff|show`, `gh pr view|checks`, …; `src/policy/readOnly.ts`). Secret-looking files
-(`.env*`, `.ssh`, `.aws`, `.azure`, `.config/gh`, `.npmrc`, keys, `*credential*`/`*secret*`/`*token*`)
-and anything else still ask. `pa audit check Bash --channel chat --command "git log -3"` shows a decision.
+`cat`, `git log|status|diff|show`, `gh pr view|checks`, `rg` inside the read roots, …;
+`src/policy/readOnly.ts`). Secret-looking files (`.env*`, `.ssh`, `.aws`, `.azure`, `.config/gh`,
+`.npmrc`, keys, `*credential*`/`*secret*`/`*token*`, shell histories, store backups), `grep -r`, unquoted
+globs and anything else still ask. `pa audit check Bash --channel chat --command "git log -3"` shows a decision.
 
 **Which route works** was measured: every older run records its route, the reason, the ask's kind, and its
 outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs (history now) add pipeline, delivery, models,

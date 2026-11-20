@@ -14,6 +14,13 @@
 //     (pa-home, the PA's data dir — worktrees, build runs and reports, logs —
 //     and the repos roots) and never on a secret-looking path (readOnly.ts);
 //     Grep never searches the data dir's top (env backups, the store);
+//     the real path behind a link or junction is judged too; Grep never takes
+//     a glob that could pick a credential (rg's globs override its hidden and
+//     ignore rules) and runs with credential exclusions added (updatedInput:
+//     it searches dot files);
+//   - a read-only Bash command (policy rule chat-readonly-bash-allow) holds
+//     only from a shell outside secret dirs, with every tree its `rg` searches
+//     inside the read roots and off the data dir's top;
 //   - the Artifact tool's list/read run unasked; its writes ask;
 //   - anything else: an explicit rule's allow/ask stands, no rule defers to
 //     Claude Code's own settings (null).
@@ -26,12 +33,20 @@ const RO = require('../policy/readOnly.ts');
 const PERM = require('./permission.ts');
 const { CHAT_ASK_TOOL_NAMES } = require('../mcp/chatTools.ts');
 
-type Gate = { decision: 'allow' | 'deny' | 'ask'; reason: string };
+type Gate = { decision: 'allow' | 'deny' | 'ask'; reason: string; updatedInput?: Record<string, unknown> };
 interface PolicyRes { decision?: string; rule?: string; reason?: string; tags?: string[] }
-interface ReadCtx { roots: string[]; cwd: string; dataDir?: string | null | undefined }
+interface ReadCtx {
+  roots: string[];
+  cwd: string;
+  dataDir?: string | null | undefined;
+  // The real path behind a link or junction (null: none, or it does not exist); defaults to the file system.
+  realpath?: ((p: string) => string | null) | undefined;
+  homedir?: string | undefined;
+}
 
 const READ_TOOLS = ['Read', 'Grep', 'Glob'];
 const SENSITIVE = ['merge', 'push_main', 'secret_reveal'];
+const READONLY_BASH_RULE = 'chat-readonly-bash-allow';
 
 /**
  * Pure. The hook's answer from the policy's (see the header). null: no opinion,
@@ -39,14 +54,67 @@ const SENSITIVE = ['merge', 'push_main', 'secret_reveal'];
  */
 function hookDecision(toolName: unknown, res: PolicyRes | null | undefined): Gate | null {
   if (res && res.decision === 'deny') return { decision: 'deny', reason: `denied by policy (${res.rule})${res.reason ? `: ${res.reason}` : ''}` };
+  const sensitive = !!res && (res.tags || []).some((t) => SENSITIVE.includes(t));
   const action: string | null = PERM.chatAction(String(toolName || ''));
   if (action) {
     const explicitAllow = !!res && res.decision === 'allow' && !!res.rule && res.rule !== 'default';
-    if (explicitAllow && !CHAT_ASK_TOOL_NAMES.includes(action) && !(res.tags || []).some((t) => SENSITIVE.includes(t))) return { decision: 'allow', reason: `policy rule ${res.rule}` };
+    if (explicitAllow && !CHAT_ASK_TOOL_NAMES.includes(action) && !sensitive) return { decision: 'allow', reason: `policy rule ${res.rule}` };
     return { decision: 'ask', reason: CHAT_ASK_TOOL_NAMES.includes(action) ? 'this action cannot be undone: it asks the user' : 'this action asks the user' };
   }
+  // A merge, a push to main or a secret reveal asks whatever tool makes it, even when an override rule allows the tool.
+  if (sensitive && res && res.decision === 'allow') return { decision: 'ask', reason: `a ${(res.tags || []).filter((t) => SENSITIVE.includes(t)).join('/')} call asks the user` };
   if (res && res.rule && res.rule !== 'default' && (res.decision === 'allow' || res.decision === 'ask')) return { decision: res.decision, reason: `policy rule ${res.rule}` };
   return null;
+}
+
+function fsRealpath(p: string): string | null {
+  try {
+    return gfs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an absolute path, and the real path behind it (a link or junction), stays inside the roots and off secrets. */
+function placeAllowed(abs: string, { roots, realpath = fsRealpath }: ReadCtx): boolean {
+  if (!RO.insideRoots(roots, abs, abs)) return false;
+  const real = realpath(abs);
+  if (!real) return !RO.isSecretPath(abs);
+  // The real path names what is opened (a short name like GIT-CR~1 comes back long); a root may itself be a junction.
+  const realRoots = [...roots, ...roots.map((r) => realpath(r)).filter((r): r is string => !!r)];
+  return RO.insideRoots(realRoots, real, real) && !RO.isSecretPath(real);
+}
+
+// What a Grep over a directory leaves out (Claude Code's Grep searches dot files; only .gitignore keeps
+// .env out, and only in a git repo). Credential-shaped names only: a broad `*token*` would hide code silently.
+const GREP_EXCLUDE = ['.env*', '*.env', 'env.before-*', '.envrc', '*.pem', '*.key', '*.pfx', '*.p12', '*.ppk', '*.jks', '*.keystore', '*.kdbx', '*.tfstate',
+  '*.sqlite*', '*.dump', '*.pabak', '*.sealed', '*_history', 'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.npmrc', '.netrc', '_netrc', '.pgpass', '.pypirc',
+  '.git-credentials', '.claude.json', '*credential*', '*client_secret*', 'secrets.*', '*.secret*', '.ssh', '.aws', '.azure', '.gnupg', '.docker', '.kube'];
+// rg globs are case-sensitive; Windows names are not.
+const ci = (g: string): string => g.replace(/[a-z]/gi, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+const GREP_EXCLUDE_GLOB = GREP_EXCLUDE.map((g) => `!**/${ci(g)}`).join(' ');
+
+/** Pure. Grep's input with the credential exclusions appended to its glob (an exclusion given last wins in rg). */
+function grepExcluding(input: Record<string, unknown>): Record<string, unknown> {
+  const g = String(input.glob || '').trim();
+  return { ...input, glob: g ? `${g} ${GREP_EXCLUDE_GLOB}` : GREP_EXCLUDE_GLOB };
+}
+
+/**
+ * Whether a read-only Bash command (readOnly.ts) may run unasked from this
+ * shell: the shell is not in a secret directory, and each tree an `rg`
+ * searches stays inside the read roots and never takes in the data dir's top
+ * (env backups, the store), as for the Grep tool.
+ */
+function bashAllowed(input: Record<string, unknown> | null | undefined, ctx: ReadCtx): boolean {
+  const v = RO.readOnlyBash(input && input.command);
+  if (!v.ok) return false;
+  if (RO.isSecretPath(ctx.cwd)) return false;
+  const home = ctx.homedir || require('os').homedir();
+  return (v.searches || []).every((s: string) => {
+    const abs = gpath.resolve(ctx.cwd, s.replace(/^~(?=\/|$)/, home));
+    return placeAllowed(abs, ctx) && !(ctx.dataDir && RO.insideRoots([abs], abs, ctx.dataDir));
+  });
 }
 
 /**
@@ -61,14 +129,19 @@ function artifactRead(toolName: unknown, input: Record<string, unknown> | null |
 }
 
 /** Pure. Whether a Read/Grep/Glob call may run on the policy's allow: inside a read root, off secret paths. */
-function readAllowed(name: string, input: Record<string, unknown> | null | undefined, { roots, cwd, dataDir = null }: ReadCtx): boolean {
+function readAllowed(name: string, input: Record<string, unknown> | null | undefined, ctx: ReadCtx): boolean {
+  const { roots, cwd, dataDir = null } = ctx;
   const i = input && typeof input === 'object' ? input : {};
   const target = String(i.file_path || i.path || '');
   if (!RO.insideRoots(roots, cwd, target)) return false;
   const abs = gpath.resolve(cwd, target || '.');
-  if (RO.isSecretPath(abs) || (target && RO.isSecretPath(target))) return false;
-  // A glob that picks secret files out (Grep's `glob`, Glob's `pattern`).
-  if ((i.glob && RO.isSecretPath(i.glob)) || (name === 'Glob' && i.pattern && RO.isSecretPath(i.pattern))) return false;
+  if (target && RO.isSecretPath(target)) return false;
+  // Off secrets, and a link or junction inside a root must not lead out of the roots or onto a secret.
+  if (!placeAllowed(abs, ctx)) return false;
+  // A glob that picks secret files out: Grep's `glob` overrides rg's hidden/ignore rules, so `*` alone reaches .env.
+  if (i.glob && RO.globMaySelectSecret(i.glob)) return false;
+  // Glob's pattern only lists names, but stays under its path: no secret directory, no `..`, no absolute pattern.
+  if (name === 'Glob' && i.pattern && (RO.isSecretPath(i.pattern) || /(^|[\\/])\.\.([\\/]|$)/.test(String(i.pattern)) || /^([a-z]:)?[\\/]|^~/i.test(String(i.pattern)))) return false;
   // Grep reads contents: never across the data dir's top, which holds env backups and the store.
   if (name === 'Grep' && dataDir && RO.insideRoots([abs], abs, dataDir)) return false;
   return true;
@@ -90,7 +163,10 @@ function gate(name: string, input: Record<string, unknown> | null | undefined, r
   let d = hookDecision(name, res);
   if (!d && artifactRead(name, input)) d = { decision: 'allow', reason: 'reading or listing shared artifacts changes nothing' };
   if (d && d.decision === 'allow' && READ_TOOLS.includes(name) && !readAllowed(name, input, ctx)) d = null;
+  if (d && d.decision === 'allow' && name === 'Bash' && res && res.rule === READONLY_BASH_RULE && !bashAllowed(input, ctx)) d = null;
+  // An allowed Grep runs with the credential exclusions added (it searches dot files).
+  if (d && d.decision === 'allow' && name === 'Grep') d = { ...d, updatedInput: grepExcluding(input || {}) };
   return d;
 }
 
-module.exports = { hookDecision, artifactRead, readAllowed, readRoots, gate, READ_TOOLS, SENSITIVE };
+module.exports = { hookDecision, artifactRead, readAllowed, bashAllowed, grepExcluding, readRoots, gate, READ_TOOLS, SENSITIVE, GREP_EXCLUDE_GLOB };
