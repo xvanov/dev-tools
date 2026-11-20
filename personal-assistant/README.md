@@ -1666,7 +1666,10 @@ opening the mic in one takes it from the other, which says so.
 
 Ask (`/talk`) has two modes, switched at the top of its » panel and remembered per browser
 (`jarvis.talk.mode`): **Voice** (the face, the default, no buttons) and **Text**, the same
-conversation as a transcript with a box to type in (`chat.client.js`). In Text mode a pending
+conversation as a transcript with a box to type in (`chat.client.js`). The modes are exclusive:
+Voice speaks every answer and shows none; Text shows every answer, speaks none and keeps the mic
+off (also for messages typed elsewhere, and a wake-word autostart waits until Voice is picked).
+In Text mode a pending
 action prompt shows its **Approve** / **Deny** card (`permission.client.js`, the same card as on
 Plan). Both modes talk to **the same live session**, not to a new `claude -p` per message, so
 typing, speaking, and typing in termhub are one conversation. Enter sends, Shift+Enter is a new

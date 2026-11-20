@@ -240,6 +240,8 @@
     $('textmode').hidden = !text;
     for (const b of document.querySelectorAll('[data-talk-mode-pick]')) b.setAttribute('aria-pressed', String(b.dataset.talkModePick === (text ? 'text' : 'voice')));
     if (remember) { try { localStorage.setItem(MODE_KEY, text ? 'text' : 'voice'); } catch { /* storage off */ } }
+    // talk.page.js follows the mode at once: Text stops the mic and the voice, Voice starts them.
+    try { window.dispatchEvent(new CustomEvent('jarvis:view')); } catch { /* old browser */ }
     if (text) {
       start();
       const log = $('chat-log');

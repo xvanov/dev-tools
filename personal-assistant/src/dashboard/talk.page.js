@@ -26,7 +26,6 @@
       v: PREFS_VERSION,
       handsFree: !TOUCH, // phones: hold to talk
       deafWhileTalking: false,
-      muted: false,
       threshold: C.VAD_DEFAULTS.minThreshold,
       endMs: C.VAD_DEFAULTS.endMs,
       voiceMode: 'auto',
@@ -297,6 +296,15 @@
     }
     return true;
   }
+  // Voice or Text (chat.client.js, the » panel): one or the other. Text is written
+  // only: the mic stays off and nothing is spoken, whoever typed the message.
+  function textMode() {
+    return document.documentElement.getAttribute('data-talk-mode') === 'text';
+  }
+  // Jarvis listens and speaks only in Voice mode, with Ask in front.
+  function voiceOn() {
+    return !textMode() && askInFront();
+  }
 
   const speaker = {
     queue: [],
@@ -308,8 +316,8 @@
     },
     say(sentences) {
       for (const s of sentences) {
-        // Muted, or Ask is not the view in front (askInFront): written, never spoken.
-        if (prefs.muted || !askInFront()) caption(s);
+        // Text mode, or Ask is not the view in front: written, never spoken.
+        if (!voiceOn()) caption(s);
         else this.queue.push(s);
       }
       this.next();
@@ -971,7 +979,7 @@
 
   // ---- Push-to-talk: hold Space or the button. Always available. ----------------------
   function pttDown() {
-    if (mic.ptt) return;
+    if (mic.ptt || textMode()) return;
     if (!mic.on) {
       enable();
       return;
@@ -1067,7 +1075,7 @@
   // the mic up again when Ask comes back. (It kept answering chat turns aloud
   // from behind the Run view, 2026-11-14.)
   function followFront() {
-    if (!askInFront()) {
+    if (!voiceOn()) {
       speaker.cancel();
       if (mic.on) {
         stopMic();
@@ -1077,6 +1085,10 @@
       mic.away = false;
       if (TOUCH) showTapPrompt('Tap to resume');
       else startMic();
+    } else if (mic.deferred) {
+      // Opened in Text mode: the mic it would have started waits for Voice.
+      mic.deferred = false;
+      enable();
     }
   }
   window.addEventListener('jarvis:view', followFront);
@@ -1102,7 +1114,7 @@
           stopMic();
           mic.away = true;
         }
-      } else if (mic.away && askInFront()) {
+      } else if (mic.away && voiceOn()) {
         mic.away = false;
         startMic();
       }
@@ -1116,7 +1128,8 @@
       }
     } else if (mic.resume) {
       mic.resume = false;
-      showTapPrompt('Tap to resume');
+      if (voiceOn()) showTapPrompt('Tap to resume');
+      else mic.away = true;
     }
   });
 
@@ -1270,7 +1283,7 @@
       } else if (verdict === 'hold') {
         held.clear();
         held.set(ev.id, sentences);
-      } else if (prefs.muted) caption(sentences.join(' '));
+      }
     }
   }
 
@@ -1369,14 +1382,11 @@
     speaker.cancel();
     speaker.say(['This is how I sound.']);
   };
-  document.body.classList.toggle('voice-off', !!prefs.muted);
-  for (const key of ['handsFree', 'deafWhileTalking', 'muted', 'wake', 'smartTurn']) {
+  for (const key of ['handsFree', 'deafWhileTalking', 'wake', 'smartTurn']) {
     $(key).checked = !!prefs[key];
     $(key).onchange = (e) => {
       prefs[key] = e.target.checked;
       savePrefs();
-      if (key === 'muted') document.body.classList.toggle('voice-off', prefs.muted);
-      if (key === 'muted' && prefs.muted) speaker.cancel();
       if (key === 'wake') {
         conv.wake = prefs.wake;
         if (prefs.wake && mic.on) loadEngines();
@@ -1421,7 +1431,10 @@
   voiceInfo.check().then(() => {
     // Desktop with the wake word on (or ?autostart=1): start listening now if
     // the browser allows it, else one tap prompt. Phones wait for a tap.
-    if ((prefs.wake && !TOUCH) || /[?&]autostart=1\b/.test(location.search)) enable();
+    if ((prefs.wake && !TOUCH) || /[?&]autostart=1\b/.test(location.search)) {
+      if (textMode()) mic.deferred = true;
+      else enable();
+    }
     else notice(TOUCH ? 'Tap the face to start; hold the button to talk.' : 'Tap the face (or press Space) to start listening.', 0);
   });
   setInterval(() => voiceInfo.check(), 60000);
