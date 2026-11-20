@@ -135,13 +135,17 @@ async function safely<T = any>(fn: () => T | Promise<T>): Promise<Safe<T>> {
 // ------------------------------------------------------------- approvals ----
 const E2E_ACTOR = 'pa-e2e';
 
-/** Dry: the policy prompts for `tool` and takes the e2e channel's answer (evaluated, not audited). */
+/**
+ * Dry: the chat may run action `tool` — the policy allows its call as a routine
+ * action (D33, rule chat-actions-allow), or prompts and takes the e2e channel's
+ * answer (evaluated, not audited).
+ */
 function policyDry(tool: string): Check {
   const P = require('../policy');
   const call = P.evaluate({ tool, action: 'call', channel: 'chat', actor: E2E_ACTOR, args: {} });
   const answer = P.evaluate({ tool, action: 'approve', channel: 'e2e', actor: E2E_ACTOR, args: {} });
-  const ok = call.decision === 'ask' && answer.decision === 'allow';
-  return { view: 'policy', check: `${tool} prompts and takes the e2e approval`, ok, detail: `call ${call.decision} (${call.rule}); e2e answer ${answer.decision} (${answer.rule})` };
+  const ok = (call.decision === 'allow' && call.rule === 'chat-actions-allow') || (call.decision === 'ask' && answer.decision === 'allow');
+  return { view: 'policy', check: `${tool} runs as a chat action (unasked, or on the e2e approval)`, ok, detail: `call ${call.decision} (${call.rule}); e2e answer ${answer.decision} (${answer.rule})` };
 }
 
 // ---------------------------------------------------------------- remote ----

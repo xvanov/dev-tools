@@ -136,7 +136,8 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
   const jarvis = byId.jarvis;
   same(jarvis.tools.allowed, listed.filter((n) => allow.includes(n)), 'jarvis.tools.allowed (the pa-chat tools on the allow list)');
   same(jarvis.tools.ask, listed.filter((n) => !allow.includes(n)), 'jarvis.tools.ask (pa-chat tools that prompt)');
-  for (const t of chat.CHAT_ACTION_TOOLS) assert.ok(jarvis.tools.ask.includes(t), `action tool ${t} must be listed as asking`);
+  for (const t of chat.CHAT_ASK_TOOLS) assert.ok(jarvis.tools.ask.includes(t), `action tool ${t} must be listed as asking`);
+  for (const t of chat.CHAT_AUTO_TOOLS) assert.ok(jarvis.tools.allowed.includes(t), `routine action ${t} must be listed as allowed (D33)`);
   same(jarvis.pa_verbs.read, chat.ALLOW_COMMANDS, 'jarvis.pa_verbs.read (ALLOW_COMMANDS)');
   same(jarvis.pa_verbs.ask, [...chat.ASK_COMMANDS, ...chat.CARD_COMMANDS], 'jarvis.pa_verbs.ask (ASK_COMMANDS + CARD_COMMANDS)');
   const shared = server.TOOLS.map((t) => t.name);

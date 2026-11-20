@@ -110,7 +110,8 @@ forgets every passkey and session; `PA_PASSKEYS=off` plus a restart is the last 
 not a chat verb and no HTTP route does it. Like the rest of this section the boundary against a
 dispatched agent is the OS user, not this cookie.
 
-**The PA chat acts only behind permission prompts.** By default (`PA_CHAT_ENGINE=sdk`) it is a
+**The PA chat acts on routine things unasked, and behind a permission prompt for the rest** (D33:
+prompts for routine actions blocked work — "it should not ask me for this"). By default (`PA_CHAT_ENGINE=sdk`) it is a
 Claude Agent SDK session inside the worker (below, "On the Agent SDK engine"); with
 `PA_CHAT_ENGINE=terminal`, `pa chat` starts one Claude Code session in
 termhub. Either way it is homed in `<dataDir>/pa-home` (`src/chat/`), and reads other people's messages all day. The rest of this paragraph is the terminal engine's start-up; the settings and lists apply to both.
@@ -118,16 +119,32 @@ It is started *without* `--dangerously-skip-permissions` and *with* `--permissio
 `settings.json` sets `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` (a user-level
 `auto` or `acceptEdits` cannot apply), and `verifyClaudeHome` reads the settings back — including a
 `settings.local.json` that would outrank them — before the session starts, refusing it otherwise. It
-reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs as the MCP tool `pa`
+reads through MCP tools (plus the built-in reads and read-only shell commands below): the read MCP tools, and the read-only `pa` verbs as the MCP tool `pa`
 (server `pa-chat`, `--mcp-config pa-home/pa-chat.mcp.json`, `PA_MCP_CHAT_TOOLS=1`). No `pa` shell
 command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
-`pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
-(a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
-chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, sessions,
-build_runs, build_run, card_plan_propose) are allowed (`card_plan_propose` only stores a proposal and changes no card); the actions (`CHAT_ACTION_TOOLS`: session_start, build_*, card_edit, card_build_settings, card_plan_apply) are on no allow list, so every call asks,
-and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
-the dispatch paths themselves (`dispatch.start`, then `src/build`), never a second
-implementation. Its CLAUDE.md is rewritten from code on every start — change it in
+`pa propose` included, asks. The chat-only MCP tool `task_add` (a task the user explicitly asked for;
+reversible) runs unasked. Its structured tools (`src/mcp/chatTools.js`, chat-only like `pa`): the reads
+(`CHAT_READ_TOOLS`: board, card, sessions, build_runs, build_run, card_plan_propose, …) are allowed
+(`card_plan_propose` only stores a proposal and changes no card); the routine actions
+(`CHAT_AUTO_TOOLS`: session_start, build_start, build_set_idle, build_reply, build_send, build_stop,
+card_edit, card_build_settings, card_plan_apply, profile_set, agent_settings_set) are allowed too and
+audited (policy rule `chat-actions-allow`, D33); `CHAT_ASK_TOOLS` (profile_delete, profile_reset) are on
+no allow list, so every call asks, and `verifyClaudeHome` refuses a home whose allow list names one or
+the whole server. A call tagged merge / push_main / secret_reveal asks whatever the tool (`chat-sensitive-ask`).
+Also unasked (D33): ToolSearch; Read/Grep/Glob inside the read roots (pa-home, the PA's data dir —
+worktrees, build-runs, build-reports, logs —, the repos root and local `PA_MACHINES` repos roots) and
+never on a secret-looking path (`.env*`, `.ssh`, `.aws`, `.azure`, `.config/gh`, `.npmrc`,
+`.git-credentials`, keys, `*credential*`/`*secret*`/`*token*`, the PA's env backups and store; Grep
+never across the data dir's top); and a Bash command `src/policy/readOnly.ts` proves only reads (every
+`&&`/`||`/`;`/`|` segment one of cd, pwd, ls, cat, head, tail, wc, grep, rg, find without -exec/-delete,
+git status|log|diff|show|branch (list)|rev-parse|rev-list|ls-files|blame|remote -v|worktree list|stash
+list|cherry, gh pr view|list|checks|diff, gh run list|view|watch, gh issue view|list, gh repo view; no
+`>`/`>>` but `2>/dev/null`/`2>&1`, no `$`, backticks, `<`, subshells or env-var prefixes; tag
+`read_only`, rule `chat-readonly-bash-allow`). The path and shell checks are `src/chat/toolGate.ts`,
+shared by both engines: the SDK hook calls it in-process, the terminal chat through a PreToolUse command
+hook in its settings.json (`src/chat/toolHook.js`, which exits at once under the SDK). Everything else
+asks as before. The actions are the dispatch paths themselves (`dispatch.start`, then `src/build`),
+never a second implementation. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
 differently because opencode parses a command line its own way and every bash allow-pattern was a
@@ -229,8 +246,10 @@ again", which would make every later call of the tool unasked; Deny is Esc. Anyt
 **On the Agent SDK engine the prompt is a callback, under the same rules** (`PA_CHAT_ENGINE=sdk`,
 `src/chat/sdkFeed.js`, plan 4.2; the default since 4.2, `terminal` still selectable). The chat is one
 streaming `query()` inside the worker, in the same pa-home with the same settings and MCP server, started
-with `permissionMode: 'default'`. A PreToolUse hook puts every call through `src/policy` (a deny refuses;
-the six action tools always ask, whatever a rule or settings file says). `canUseTool` then waits for the
+with `permissionMode: 'default'`. A PreToolUse hook puts every call through `src/policy`, then
+`src/chat/toolGate.ts` (a deny refuses; a routine action runs only on an explicit policy allow;
+profile_delete, profile_reset and a call tagged merge/push_main/secret_reveal ask, whatever a rule or
+settings file says; no policy: actions ask). For a call that asks, `canUseTool` then waits for the
 same two surfaces through the same endpoint: an answer must name the pending call's `tool_use` id, goes
 through `policy.enforce` with its channel (a `STEPUP_REQUIRED` is a 403 carrying `needsStepUp` and
 `approvalId`, and the prompt keeps waiting; after enforce passes, `policy.consumeStepUp` spends the
@@ -240,7 +259,8 @@ never "don't ask again"). No answer within `PA_CHAT_APPROVAL_TIMEOUT_MS` is a de
 once" card on the same surfaces, showing the call's whole input (`genericDetail`: the exact command or
 diff, never the model's description; a cut says how much is left out). Voice may answer one only when
 that input can be heard whole and the policy does not bar voice (never an edit); otherwise a spoken yes
-is a 403. A policy allow for Read/Grep/Glob holds inside pa-home only (`insideHome`). The SDK's environment drops
+is a 403. A call that runs unasked never reaches `canUseTool`, so Talk never asks a spoken yes for it.
+A policy allow for Read/Grep/Glob holds inside the read roots and off secret paths only (`toolGate.readAllowed`). The SDK's environment drops
 `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so it runs on the machine's Claude login, never the API.
 Tests use a mocked SDK (`test/chatSdk.test.js`); never a real model call in a test.
 The SDK chat lives in the worker, so a Z1 roll moves it: on `drain` (`feed.drainChat`) the old
@@ -255,8 +275,8 @@ characters from what it prints (the text is the model's and other people's).
 **Every tool call goes through one policy function** (`src/policy`, plan 4.3): `evaluate` answers
 allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-stack override
 (`PA_POLICY_FILE`, default `<data dir>/policy.json`; its rules are tried first, its `locked` ignored).
-The defaults are the allow/ask split above, unchanged (`test/policy.test.js` pins them to
-`CHAT_READ_TOOLS` / `CHAT_ACTION_TOOLS`): `ask` means the host owns the prompt (Claude Code), the MCP
+The defaults are the allow/ask split above (`test/policy.test.js` pins them to `CHAT_READ_TOOLS`,
+`CHAT_AUTO_TOOLS` and `CHAT_ASK_TOOLS`; `test/readOnly.test.js` the shell and path rules): `ask` means the host owns the prompt (Claude Code), the MCP
 server still runs the call. It is applied in the MCP server's `handle` (every tool), in `answerPermission`
 (a chat approval, with the channel it came from: dashboard or voice) . A locked
 rule denies the voice channel anything tagged `merge`, `push_main` or `secret_reveal` and no override

@@ -326,7 +326,7 @@
       "id": "jarvis",
       "layer": "talk",
       "name": "Jarvis: the PA chat (System 2)",
-      "role": "The PA chat. The default engine is the Claude Agent SDK inside the worker; a read-only termhub session is its Run view. It reads through MCP tools and acts only behind permission prompts.",
+      "role": "The PA chat. The default engine is the Claude Agent SDK inside the worker; a read-only termhub session is its Run view. It reads through MCP tools, runs routine actions and read-only commands without a prompt (D33, every call audited), and asks before anything destructive, sensitive or unrecognised.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -351,7 +351,7 @@
           "the Microsoft 365 connector's read-only tools (mail, calendar and chat search, Teams lists, people, SharePoint; M365_READ_TOOLS in src/chat/index.ts) are allowed by name; any other M365 tool asks",
           "shared Claude pages: the Claude Docs read tools (guide, read, query; DOCS_READ_TOOLS) are allowed by name,; any Docs write asks. Claude Code leaves its Artifact tool off under the SDK, so subscriptionEnv sets CLAUDE_CODE_ARTIFACT=1; the chat lists what was shared (Artifact list, scope shared) and reads it, since the share notice itself is hidden from mail search by the M365 connector, and never asks a voice user for a link; the PreToolUse hook allows only the Artifact tool's list and read unasked (artifactRead in src/chat/sdkFeed.ts)",
           "the caveman plugin is off for this session only",
-          "its action-tool prompts can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.ts checks the screen first"
+          "the prompts that remain (profile_delete/profile_reset, a sensitive call, anything unclassified; D33) can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.ts checks the screen first"
         ],
         "How you reach it": [
           "typing in its termhub tab (terminal engine)",
@@ -362,7 +362,7 @@
         "Engine": [
           "PA_CHAT_ENGINE=terminal: a termhub session in pa-home (the engine before 4.2); its prompts are answered by reading the screen (src/chat/permission.ts)",
           "PA_CHAT_ENGINE=sdk (the default since plan 4.2): the Claude Agent SDK (@anthropic-ai/claude-agent-sdk) inside the PA worker, src/chat/sdkFeed.ts. Same home, CLAUDE.md, settings, SessionStart hook and pa-chat MCP server; one streaming query() resumed by its session id (pa-home/.pa-chat-sdk-session.json); answers stream into /api/chat/stream as partial events",
-          "SDK approvals are typed callbacks: a PreToolUse hook puts every call through src/policy (deny refuses; the six action tools always ask), canUseTool waits for the dashboard card or a spoken yes (POST /api/chat/permission, then policy.enforce), and no answer within PA_CHAT_APPROVAL_TIMEOUT_MS (5 min) is a deny audited on channel timeout. Any other prompt (a `pa` shell verb, an edit, remember) gets a generic allow-once card showing the call's whole input, answerable by voice only when that input is short enough to hear whole and the policy allows voice (never an edit); a policy allow for Read/Grep/Glob holds inside pa-home only",
+          "SDK approvals are typed callbacks: a PreToolUse hook puts every call through src/policy, then src/chat/toolGate.ts (deny refuses; the routine action tools run unasked on the policy's chat-actions-allow, D33; profile_delete, profile_reset and any call tagged merge/push_main/secret_reveal always ask), canUseTool waits for the dashboard card or a spoken yes (POST /api/chat/permission, then policy.enforce), and no answer within PA_CHAT_APPROVAL_TIMEOUT_MS (5 min) is a deny audited on channel timeout. Any other prompt (a `pa` shell verb, an edit, remember) gets a generic allow-once card showing the call's whole input, answerable by voice only when that input is short enough to hear whole and the policy allows voice (never an edit); a policy allow for Read/Grep/Glob holds inside the read roots (pa-home, the data dir, the repos roots) and off secret-looking paths; a Bash command src/policy/readOnly.ts proves read-only (tag read_only) and ToolSearch run unasked. The terminal engine gets the same gate through a PreToolUse command hook (src/chat/toolHook.js) in pa-home/.claude/settings.json",
           "SDK billing: the bundled Claude Code signs in with the machine's Claude login (measured: apiKeySource none, a Team subscription); ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are removed from its environment so it never bills the API. Headless use draws on the subscription's separate credit pool (since 15 Jun 2026)",
           "SDK doorbell: the worker's fixed INBOX line reaches it as a user turn through POST /api/chat/doorbell (the id only), under the terminal doorbell's conditions: a running session, idle long enough, nothing waiting on a yes",
           "SDK on a Z1 roll: drain denies the prompts still waiting (with a reason the model repeats), gives the turn in flight up to 20 s, closes the query; the new generation resumes the session by its id on its first message; undrain (rollback) restarts it here the same way",
@@ -394,12 +394,7 @@
           "profile_list",
           "profile_get",
           "agent_settings_get",
-          "eval_build_report"
-        ],
-        "ask": [
-          "remember",
-          "request_secret",
-          "secret_status",
+          "eval_build_report",
           "session_start",
           "build_start",
           "build_set_idle",
@@ -410,9 +405,14 @@
           "card_build_settings",
           "card_plan_apply",
           "profile_set",
-          "profile_delete",
-          "profile_reset",
           "agent_settings_set"
+        ],
+        "ask": [
+          "remember",
+          "request_secret",
+          "secret_status",
+          "profile_delete",
+          "profile_reset"
         ]
       },
       "pa_verbs": {
@@ -1158,7 +1158,7 @@
         "personal": "the same command, run on the personal machine"
       },
       "details": {
-        "Path": "the Build workflows start one Build agent through the chat's build_start tool, headless, on the user's approval path: the policy is asked about the call as the chat's hook asks it (it must answer ask), the prompt is answered on the policy channel e2e (actor pa-e2e, audited as an approve), then the call is audited on channel chat as the chat's MCP server audits it; the run checks both audit_log rows (view policy) and fails without them",
+        "Path": "the Build workflows start one Build agent through the chat's build_start tool, headless: the policy is asked about the call as the chat's hook asks it (a routine action since D33: it must answer allow, rule chat-actions-allow; an action that asks would be answered on the policy channel e2e, actor pa-e2e, audited as an approve), then the call is audited on channel chat as the chat's MCP server audits it; the run checks both audit_log rows (view policy) and fails without them",
         "Checks": "Plan GET /api/state and /api/commitments/:id, Build GET /api/build (run, state, messages), Run termhub GET /api/sessions (links, alive or scrollback), the MCP card and build_run tools, GitHub `gh pr view` (head = the run's branch, draft) as the repo owner via GH_TOKEN from `gh auth token --user`",
         "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link",
         "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (a TTS'd question replayed as the talk page does it: /api/talk/warm, the utterance's length, the 96 ms VAD wait, /api/talk/endpoint with /api/talk/transcribe, /api/talk/turn, /api/talk/tts at the first piece while the turn streams; end of speech to the first audio byte. Not measured headless: the VAD frame and the browser starting playback), research, build-pr and build-continue-pr (src/e2e/buildRunners.ts: one Build agent through the chat's build_start tool, D30), teams-ask (`--test-chat <id>`, a chat the store holds where only you wrote and only you are in it, your self chat by default; checked by the dry run too. It sends nothing: it prints a dated ask of yourself with a 46-character marker for you to type there, then follows that message: Teams' arrival stamp to raw.storedAt, the owed_by_me card's extracted_at, the card in GET /api/state after its board event, the new_ask notification's toasted_at; checks person, due and link; drops the card. `--timeout teams=600 ask=600`). `--on <machine>` runs any workflow there and brings its summary back (`--report`)",
@@ -2082,7 +2082,7 @@
         },
         {
           "c": "mcp",
-          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent on card 412 in dev-tools (haiku). Shall I?\") and you say yes (or press Approve on the dashboard)."
+          "t": "build_start is a routine action (D33): the policy allows it (rule chat-actions-allow, audited) and it runs without a prompt; the chat says what it started."
         },
         {
           "c": "dispatcher",
@@ -2140,9 +2140,7 @@
         "views": [
           "build"
         ],
-        "approvals": [
-          "build_start"
-        ],
+        "approvals": [],
         "rubric": [
           {
             "id": "pr",
@@ -2187,7 +2185,7 @@
         },
         {
           "c": "mcp",
-          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent to address the review comment on PR 89 (haiku). Shall I?\") and you say yes (or press Approve on the dashboard)."
+          "t": "build_start is a routine action (D33): the policy allows it (rule chat-actions-allow, audited) and it runs without a prompt; the chat says what it started."
         },
         {
           "c": "dispatcher",
@@ -2237,9 +2235,7 @@
         "views": [
           "build"
         ],
-        "approvals": [
-          "build_start"
-        ],
+        "approvals": [],
         "rubric": [
           {
             "id": "updated",
@@ -2367,7 +2363,7 @@
         },
         {
           "c": "mcp",
-          "t": "build_start is on no allow list: Claude Code shows a permission prompt (\"Start a Build agent for the research (sonnet). Shall I?\") and you say yes (or press Approve on the dashboard)."
+          "t": "build_start is a routine action (D33): the policy allows it (rule chat-actions-allow, audited) and it runs without a prompt; the chat says what it started."
         },
         {
           "c": "dispatcher",
@@ -2412,9 +2408,7 @@
         "views": [
           "build"
         ],
-        "approvals": [
-          "build_start"
-        ],
+        "approvals": [],
         "rubric": [
           {
             "id": "cited",

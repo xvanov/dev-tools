@@ -13,8 +13,9 @@
 //         text so far, under the id the final event will carry), tool calls as
 //         the same activity lines the transcript gave (transcript.js).
 //   ask   a typed callback instead of a screen read. Every tool call passes the
-//         policy engine first (PreToolUse hook, src/policy); a call that must
-//         ask reaches canUseTool, which waits for Approve/Deny from the card or
+//         policy engine first (PreToolUse hook, src/policy, then toolGate.ts:
+//         routine actions, read-only shell commands and reads inside the read
+//         roots run unasked, D33); a call that must ask reaches canUseTool, which waits for Approve/Deny from the card or
 //         a spoken yes on Talk (POST /api/chat/permission), or times out to a
 //         deny. Only the chat's own action tools (permission.js chatAction) can
 //         be approved from a page, as before; any other prompt is refused at
@@ -108,43 +109,17 @@ function splitTool(name: any) {
   return m ? { server: m[1], tool: m[2] } : { server: null, tool: String(name || '') };
 }
 
-/**
- * Pure. The PreToolUse hook's answer from the policy's: a deny refuses; the
- * chat's action tools always ask (no rule or settings file can make one run
- * unasked); an explicit rule's allow/ask stands; no rule (or no policy) leaves
- * it to Claude Code's own permission settings.
- * @returns {{decision: 'allow'|'deny'|'ask', reason: string} | null}  null: no opinion
- */
-function hookDecision(toolName: any, res: any) {
-  if (res && res.decision === 'deny') return { decision: 'deny', reason: `denied by policy (${res.rule})${res.reason ? `: ${res.reason}` : ''}` };
-  if (P.chatAction(toolName)) return { decision: 'ask', reason: 'the chat\'s actions always ask the user' };
-  if (res && res.rule && res.rule !== 'default' && (res.decision === 'allow' || res.decision === 'ask')) return { decision: res.decision, reason: `policy rule ${res.rule}` };
-  return null;
-}
-
-const READ_TOOLS = ['Read', 'Grep', 'Glob'];
-
-/**
- * Pure. The Artifact tool's look-ups (list what was shared, read a page) change
- * nothing; its publish/delete/pin share one tool name, so a settings rule cannot
- * split them: the hook allows list and read and leaves the rest to ask.
- */
-function artifactRead(toolName: any, input: any) {
-  if (toolName !== 'Artifact') return false;
-  const a = String((input && input.action) || 'publish');
-  return (a === 'list' || a === 'read') && !(input && (input.file_path || input.file_paths || input.edits || input.files));
-}
+// The hook's decision after the policy's (D33): shared with the terminal
+// engine's command hook (src/chat/toolHook.js).
+const G = require('./toolGate.ts');
+const { hookDecision, artifactRead } = G;
 const DETAIL_MAX = 2000;
 const VOICE_MAX = 160;
 
 /** Pure. Whether a Read/Grep/Glob call stays inside `home` (no path: its cwd, home). */
 function insideHome(home: any, input: any = {}) {
   const i = input && typeof input === 'object' ? input : {};
-  const target = i.file_path || i.path || '';
-  if (!target) return true;
-  const abs = path.resolve(home, String(target)).toLowerCase();
-  const root = path.resolve(home).toLowerCase();
-  return abs === root || abs.startsWith(root + path.sep);
+  return require('../policy/readOnly.ts').insideRoots([home], home, i.file_path || i.path || '');
 }
 
 const clip = (s: any, n: any) => {
@@ -256,6 +231,8 @@ function createSdkFeed({
   executable = () => claudeExecutable(),
   hub = () => require('../dispatch/termhub.ts'),
   turnLog = () => require('./turnLog.ts'),
+  readRoots = (home: string): string[] => G.readRoots(home),
+  dataDir = (): string | null => require('../config.ts').config.dataDir,
   viewCommand = (file: any) => {
     const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
     return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;
@@ -530,10 +507,15 @@ function createSdkFeed({
     } catch (err: any) {
       log.warn('policy unavailable for a chat tool call; Claude Code\'s settings decide', { message: err.message, tool: name });
     }
-    let d = hookDecision(name, res);
-    if (!d && artifactRead(name, hookInput?.tool_input)) d = { decision: 'allow', reason: 'reading or listing shared artifacts changes nothing' };
-    // A policy allow for a built-in read holds inside pa-home only (rules cannot match paths).
-    if (d && d.decision === 'allow' && READ_TOOLS.includes(name) && !insideHome(home || stateDir(), hookInput?.tool_input)) d = null;
+    // A policy allow for a built-in read holds inside the read roots, off secret paths (rules cannot match paths).
+    const cwd = home || stateDir();
+    let ctx: { roots: string[]; cwd: string; dataDir: string | null } = { roots: [cwd], cwd, dataDir: null };
+    try {
+      ctx = { roots: readRoots(cwd), cwd, dataDir: dataDir() };
+    } catch (err: any) {
+      log.warn('read roots unavailable; reads stay inside pa-home', { message: err.message });
+    }
+    const d = G.gate(name, hookInput?.tool_input || {}, res, ctx);
     if (!d) return { continue: true };
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } };
   }

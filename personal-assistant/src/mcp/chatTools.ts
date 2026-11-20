@@ -20,8 +20,9 @@
 //            JSON (ids, short fields) for a model to read, never page markup.
 //   actions  session_start, build_start, build_set_idle, build_reply, build_send, build_stop, card_edit, card_build_settings, card_plan_apply,
 //            profile_set, profile_delete, profile_reset, agent_settings_set (the Agents page's writes)
-//            NOT on any allow list: Claude Code asks the user on every call
-//            (AGENT.md, "The PA chat acts only behind permission prompts").
+//            Run without a prompt and audited (D33, CHAT_AUTO_TOOL_NAMES), except
+//            profile_delete and profile_reset (CHAT_ASK_TOOL_NAMES), which ask on
+//            every call (AGENT.md, "The PA chat acts on routine things unasked").
 //            Each is the existing dispatch path (src/dispatch/index.ts start, src/build),
 //            the same as `pa do` behind a shell prompt.
 //
@@ -46,6 +47,10 @@ const repository = require('../repo');
 
 const CHAT_READ_TOOL_NAMES = ['board', 'card', 'sessions', 'build_runs', 'build_run', 'card_plan_propose', 'profile_list', 'profile_get', 'agent_settings_get', 'eval_build_report'];
 const CHAT_ACTION_TOOL_NAMES = ['session_start', 'build_start', 'build_set_idle', 'build_reply', 'build_send', 'build_stop', 'card_edit', 'card_build_settings', 'card_plan_apply', 'profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set'];
+// The actions that still prompt on every call (D33): they cannot be undone from the chat.
+const CHAT_ASK_TOOL_NAMES = ['profile_delete', 'profile_reset'];
+// The routine actions: they run without a prompt and are audited (D33).
+const CHAT_AUTO_TOOL_NAMES = CHAT_ACTION_TOOL_NAMES.filter((t) => !CHAT_ASK_TOOL_NAMES.includes(t));
 
 const READ_TOOLS = [
   {
@@ -717,6 +722,6 @@ async function handle(name: string, args: Json = {}) {
 }
 
 module.exports = {
-  READ_TOOLS, ACTION_TOOLS, ALL, CHAT_READ_TOOL_NAMES, CHAT_ACTION_TOOL_NAMES,
+  READ_TOOLS, ACTION_TOOLS, ALL, CHAT_READ_TOOL_NAMES, CHAT_ACTION_TOOL_NAMES, CHAT_ASK_TOOL_NAMES, CHAT_AUTO_TOOL_NAMES,
   handle, dueLabel, parseCardId, compactCard, boardView, sessionRow, startedView,
 };

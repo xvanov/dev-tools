@@ -29,7 +29,7 @@ const { available } = require('../src/db/sqlite.ts');
   assert.ok(chat.ASK_COMMANDS.includes('card edit'), "`pa card edit` asks in the chat's shell");
   assert.ok(chat.launchers()['pa-card-edit'], 'with its own launcher');
   const s = chat.settingsJson();
-  assert.ok(!s.permissions.allow.some((r) => r.endsWith('__card_edit')), 'card_edit is not on the allow list');
+  assert.ok(s.permissions.allow.includes('mcp__pa-chat__card_edit'), 'card_edit runs unasked (D33)');
   const { askTool, describeTool } = require('../src/chat/transcript.ts');
   assert.strictEqual(askTool('mcp__pa-chat__card_edit', { card: '412', title: 'Send the Q3 numbers', due: 'friday' }), 'Change card 412: title to "Send the Q3 numbers", due friday. Shall I?');
   assert.match(describeTool('mcp__pa-chat__card_edit', { card: '412' }), /editing card 412/);

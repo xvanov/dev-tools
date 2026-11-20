@@ -13,11 +13,43 @@
   ],
   "rules": [
     {
-      "id": "chat-actions-ask",
-      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_build_settings", "card_plan_apply", "profile_set", "profile_delete", "profile_reset", "agent_settings_set"],
+      "id": "chat-sensitive-ask",
+      "tags": ["merge", "push_main", "secret_reveal"],
       "actions": ["call"],
       "decision": "ask",
-      "reason": "the chat's action tools prompt the user on every call (Claude Code asks; AGENT.md, The PA chat acts only behind permission prompts)"
+      "reason": "a call that would merge, push to main or reveal a secret always prompts the user, whatever tool makes it"
+    },
+    {
+      "id": "chat-destructive-ask",
+      "tools": ["profile_delete", "profile_reset"],
+      "actions": ["call"],
+      "decision": "ask",
+      "reason": "deleting or resetting a Build profile cannot be undone from the chat: it prompts the user (D33)"
+    },
+    {
+      "id": "chat-actions-allow",
+      "tools": ["session_start", "build_start", "build_set_idle", "build_reply", "build_send", "build_stop", "card_edit", "card_build_settings", "card_plan_apply", "profile_set", "agent_settings_set"],
+      "actions": ["call"],
+      "channels": ["chat"],
+      "decision": "allow",
+      "reason": "the chat's routine actions run without a prompt (D33: prompts for routine actions blocked work); each call is audited"
+    },
+    {
+      "id": "chat-tool-search-allow",
+      "tools": ["ToolSearch"],
+      "actions": ["call"],
+      "channels": ["chat"],
+      "decision": "allow",
+      "reason": "ToolSearch only loads tool schemas"
+    },
+    {
+      "id": "chat-readonly-bash-allow",
+      "tools": ["Bash"],
+      "actions": ["call"],
+      "channels": ["chat"],
+      "tags": ["read_only"],
+      "decision": "allow",
+      "reason": "a shell command src/policy/readOnly.ts proves only reads (ls, cat, git log, gh pr view …; no redirection, expansion or secret path)"
     },
     {
       "id": "approve-chat-actions",
@@ -33,7 +65,7 @@
       "actions": ["call"],
       "channels": ["chat"],
       "decision": "allow",
-      "reason": "the chat's built-in read tools; rules cannot match paths, so the caller (the SDK chat's hook) must keep them inside the chat's home"
+      "reason": "the chat's built-in read tools; rules cannot match paths, so the caller (the chat's PreToolUse hook, src/chat/toolGate.ts) keeps them inside the read roots (pa-home, the PA's data dir, the repos roots) and off secret-looking paths"
     },
     {
       "id": "read-surface-allow",

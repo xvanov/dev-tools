@@ -126,8 +126,10 @@ function opencodeRules() {
   rules[`personal-assistant_${PA_TOOL}`] = 'allow';
   // A task the user explicitly asked for: reversible, and the tool says when (src/mcp/server.js).
   rules[`personal-assistant_${chat.TASK_TOOL}`] = 'allow';
-  // The structured reads (src/mcp/chatTools.js). Its actions stay on "*": ask.
+  // The structured reads and the routine actions (src/mcp/chatTools.js, D33).
+  // profile_delete / profile_reset stay on "*": ask.
   for (const t of chat.CHAT_READ_TOOLS) rules[`personal-assistant_${t}`] = 'allow';
+  for (const t of chat.CHAT_AUTO_TOOLS) rules[`personal-assistant_${t}`] = 'allow';
   return rules;
 }
 
@@ -197,10 +199,12 @@ function probes(pa: any = require('./index.ts').paCommand()) {
     ['personal-assistant_remember', '*', 'ask'],
     ['personal-assistant_recall', '*', 'allow'],
     [`personal-assistant_${PA_TOOL}`, '*', 'allow'],
-    // The structured tools: reads allowed, every action asks.
+    // The structured tools: reads and routine actions allowed (D33), the destructive ones ask.
     ['personal-assistant_board', '*', 'allow'],
-    ['personal-assistant_build_start', '*', 'ask'],
-    ['personal-assistant_session_start', '*', 'ask'],
+    ['personal-assistant_build_start', '*', 'allow'],
+    ['personal-assistant_session_start', '*', 'allow'],
+    ['personal-assistant_profile_delete', '*', 'ask'],
+    ['personal-assistant_profile_reset', '*', 'ask'],
   ];
 }
 

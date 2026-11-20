@@ -166,9 +166,15 @@ const sdkMsg = {
   assert.deepStrictEqual(S.splitTool('mcp__personal-assistant__recall'), { server: 'personal-assistant', tool: 'recall' });
   assert.deepStrictEqual(S.splitTool('Read'), { server: null, tool: 'Read' });
 
-  // The hook: deny wins; the chat's actions always ask; an explicit rule stands; no rule defers.
+  // The hook: deny wins; a routine action runs on an explicit policy allow (D33), the destructive and
+  // sensitive ones always ask; an explicit rule stands; no rule defers.
   assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'deny', rule: 'voice-no-merge' }).decision, 'deny');
-  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'allow', rule: 'oops' }).decision, 'ask', 'no rule makes an action run unasked');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'allow', rule: 'chat-actions-allow', tags: [] }).decision, 'allow', 'the policy decides a routine action');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__card_build_settings', { decision: 'allow', rule: 'chat-actions-allow', tags: [] }).decision, 'allow');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'allow', rule: 'x', tags: ['merge'] }).decision, 'ask', 'a merge asks');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__profile_delete', { decision: 'allow', rule: 'oops' }).decision, 'ask', 'no rule makes a destructive action run unasked');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__profile_reset', { decision: 'allow', rule: 'oops' }).decision, 'ask');
+  assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', { decision: 'ask', rule: 'default' }).decision, 'ask', 'no rule: an action asks');
   assert.strictEqual(S.hookDecision('mcp__pa-chat__session_start', null).decision, 'ask', 'without a policy an action still asks');
   // Shared Claude pages: listing and reading run unasked; publishing, deleting, pinning still ask.
   assert.strictEqual(S.artifactRead('Artifact', { action: 'list', scope: 'shared' }), true);
@@ -312,7 +318,7 @@ const sdkMsg = {
     // ---------------------------------------- approval round trip (dashboard) --
     {
       const sdk = fakeSdk();
-      const policy = fakePolicy({ board: { decision: 'allow', rule: 'chat-reads' }, Read: { decision: 'allow', rule: 'chat-builtin-reads-allow' } });
+      const policy = fakePolicy({ board: { decision: 'allow', rule: 'chat-reads' }, Read: { decision: 'allow', rule: 'chat-builtin-reads-allow' }, card_edit: { decision: 'allow', rule: 'chat-actions-allow', tags: [] } });
       const feed = makeFeed({ dir: fs.mkdtempSync(path.join(dir, 'a-')), sdk, policy });
       const got = [];
       feed.subscribe((e) => got.push(e));
@@ -329,11 +335,15 @@ const sdkMsg = {
       assert.deepStrictEqual([last.req.tool, last.req.channel, last.req.action, last.opts.audit], ['session_start', 'chat', 'call', false]);
       const r = await hook({ tool_name: 'mcp__pa-chat__board', tool_input: {}, tool_use_id: 'tu0' });
       assert.strictEqual(r.hookSpecificOutput.permissionDecision, 'allow');
+      const ce = await hook({ tool_name: 'mcp__pa-chat__card_edit', tool_input: { card: '412', title: 'x' }, tool_use_id: 'tuE' });
+      assert.strictEqual(ce.hookSpecificOutput.permissionDecision, 'allow', 'a routine action the policy allows runs unasked (D33)');
       const rd = await hook({ tool_name: 'Read', tool_input: { file_path: 'INBOX.md' }, tool_use_id: 'tuR' });
       assert.strictEqual(rd.hookSpecificOutput.permissionDecision, 'allow', 'a read in pa-home: the policy\'s allow');
       assert.strictEqual(policy.calls.authorize.at(-1).opts.audit, true, 'a built-in tool call is audited here');
       const ro = await hook({ tool_name: 'Read', tool_input: { file_path: path.join(os.homedir(), '.ssh', 'id_rsa') }, tool_use_id: 'tuR2' });
-      assert.deepStrictEqual(ro, { continue: true }, 'a read outside pa-home is not the policy\'s allow: Claude Code asks');
+      assert.deepStrictEqual(ro, { continue: true }, 'a secret path is not the policy\'s allow: Claude Code asks');
+      const rx = await hook({ tool_name: 'Read', tool_input: { file_path: path.resolve('/somewhere-else/notes.txt') }, tool_use_id: 'tuR3' });
+      assert.deepStrictEqual(rx, { continue: true }, 'a read outside the read roots: Claude Code asks');
       const bh = await hook({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'tuB' });
       assert.deepStrictEqual(bh, { continue: true }, 'no rule: Claude Code\'s own settings decide');
 

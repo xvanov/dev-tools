@@ -27,7 +27,8 @@
 // a missing key matches anything. `args` ({delivery: ['pr']}) matches arg values.
 //
 // Tags are what a call would do, from classify(): merge, push_main,
-// secret_reveal. The voice lock is expressed on them.
+// secret_reveal. The voice lock is expressed on them. One more says what a
+// call does not do: read_only, a Bash command readOnly.ts proves only reads.
 //
 // What `ask` means here: the call is not refused, and the host that owns the
 // prompt asks (Claude Code for the chat's action tools). The audit row records
@@ -171,6 +172,8 @@ function classify(tool: unknown, args: Args | null | undefined = {}): string[] {
   if (/(^|[_.\-:])merge([_.\-:]|$)/i.test(name)) tags.add('merge');
   if (/push[_\-]?(to[_\-]?)?(main|master)/i.test(name)) tags.add('push_main');
   if (/secret.*(reveal|value|get|show|read)|(reveal|show).*secret/i.test(name)) tags.add('secret_reveal');
+  // A shell command that only reads (src/policy/readOnly.ts): the chat may run it unasked (D33).
+  if (name === 'Bash' && require('./readOnly.ts').readOnlyBash(a.command).ok) tags.add('read_only');
   if (name === 'pa' || name === 'secret') {
     const cmd = String(name === 'pa' ? a.command : 'secret').toLowerCase();
     const rest = Array.isArray(a.args) ? a.args.map((x) => String(x).toLowerCase()) : [];

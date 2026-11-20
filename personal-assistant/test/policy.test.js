@@ -17,20 +17,31 @@ const base = JSON.parse(fs.readFileSync(P.DEFAULT_FILE, 'utf8'));
 const policy = P.merge(base, null);
 const ev = (req, pol = policy) => P.evaluate({ action: 'call', channel: 'chat', ...req }, pol);
 
-// ---- the default policy is the chat's existing allow/ask split ----
+// ---- the default policy is the chat's allow/ask split (D33: routine actions unasked) ----
 {
   const server = require('../src/mcp/server.ts');
   const chat = require('../src/chat');
   const listed = server.listedTools({ PA_MCP_CHAT_TOOLS: '1' }).map((t) => t.name);
   const allow = chat.settingsJson().permissions.allow.filter((r) => r.startsWith('mcp__pa-chat__')).map((r) => r.slice('mcp__pa-chat__'.length));
+  assert.deepStrictEqual([...chat.CHAT_ASK_TOOLS].sort(), ['profile_delete', 'profile_reset']);
+  assert.deepStrictEqual([...chat.CHAT_AUTO_TOOLS, ...chat.CHAT_ASK_TOOLS].sort(), [...chat.CHAT_ACTION_TOOLS].sort());
   for (const t of listed) {
-    const want = chat.CHAT_ACTION_TOOLS.includes(t) ? 'ask' : 'allow';
+    if (['remember', 'request_secret', 'secret_status'].includes(t)) continue; // shared tools that are not the chat's (their own rules)
+    const want = chat.CHAT_ASK_TOOLS.includes(t) ? 'ask' : 'allow';
     assert.strictEqual(ev({ tool: t }).decision, want, `${t} must be ${want} by default`);
+    assert.strictEqual(allow.includes(t), want === 'allow', `${t}: the terminal settings agree (${want})`);
   }
   for (const t of chat.CHAT_READ_TOOLS) assert.ok(allow.includes(t) && ev({ tool: t }).decision === 'allow', `${t}: read tool allowed by both`);
+  for (const t of chat.CHAT_AUTO_TOOLS) {
+    assert.deepStrictEqual([ev({ tool: t }).decision, ev({ tool: t }).rule], ['allow', 'chat-actions-allow'], `${t} runs unasked from the chat`);
+    assert.strictEqual(ev({ tool: t, channel: 'mcp' }).decision, 'ask', `${t}: only the chat's channel`);
+  }
+  // A routine action that would merge, push to main or reveal a secret still asks.
+  for (const delivery of ['auto_merge', 'push_to_main']) assert.deepStrictEqual([ev({ tool: 'build_start', args: { delivery } }).decision, ev({ tool: 'build_start', args: { delivery } }).rule], ['ask', 'chat-sensitive-ask']);
+  assert.strictEqual(ev({ tool: 'build_start', args: { delivery: 'pr' } }).decision, 'allow');
+  for (const t of chat.CHAT_ASK_TOOLS) assert.deepStrictEqual([ev({ tool: t }).decision, ev({ tool: t }).rule], ['ask', 'chat-destructive-ask']);
   for (const t of chat.CHAT_ACTION_TOOLS) {
-    assert.ok(!allow.includes(t));
-    assert.strictEqual(ev({ tool: t }).decision, 'ask');
+    assert.strictEqual(allow.includes(t), !chat.CHAT_ASK_TOOLS.includes(t));
     // answering the prompt for it is accepted from the user's own channels
     for (const channel of ['dashboard', 'termhub', 'cli']) assert.strictEqual(ev({ tool: t, action: 'approve', channel }).decision, 'allow', `${t} approve via ${channel}`);
     // ...and from `pa e2e`'s headless channel (8.4.12), which answers only approvals, never calls
@@ -42,9 +53,22 @@ const ev = (req, pol = policy) => P.evaluate({ action: 'call', channel: 'chat', 
 assert.strictEqual(ev({ tool: 'factory_merge', action: 'approve', channel: 'e2e' }).decision, 'ask');
 
 // built-in tools: only the reads, only from the chat; edits and shell commands ask
-for (const t of ['Read', 'Grep', 'Glob']) assert.strictEqual(ev({ tool: t }).decision, 'allow');
+for (const t of ['Read', 'Grep', 'Glob', 'ToolSearch']) assert.strictEqual(ev({ tool: t }).decision, 'allow');
 assert.strictEqual(ev({ tool: 'Read', channel: 'mcp' }).decision, 'ask');
+assert.strictEqual(ev({ tool: 'ToolSearch', channel: 'mcp' }).decision, 'ask');
 for (const t of ['Bash', 'Edit', 'Write']) assert.strictEqual(ev({ tool: t }).decision, 'ask');
+// ...except a shell command that only reads (D33): tagged read_only, allowed from the chat only.
+{
+  const bash = (command, channel = 'chat') => ev({ tool: 'Bash', channel, args: { command } });
+  assert.deepStrictEqual(P.classify('Bash', { command: 'git log --oneline -5' }), ['read_only']);
+  assert.deepStrictEqual([bash('cd C:/x/worktrees/run-1 && git log -3').decision, bash('ls').rule], ['allow', 'chat-readonly-bash-allow']);
+  assert.strictEqual(bash('ls', 'mcp').decision, 'ask');
+  for (const c of ['rm -rf build', 'ls > out.txt', 'cat .env', 'git push', 'echo $(whoami)']) {
+    assert.deepStrictEqual(P.classify('Bash', { command: c }), [], c);
+    assert.strictEqual(bash(c).decision, 'ask', c);
+  }
+  assert.deepStrictEqual(P.classify('PowerShell', { command: 'ls' }), [], 'only Bash is classified');
+}
 
 // ---- unknown things ask; first match wins; globs ----
 assert.strictEqual(ev({ tool: 'brand_new_tool' }).decision, 'ask');
@@ -133,7 +157,7 @@ function memoryRepo() {
 
   const a = await P.authorize({ tool: 'recall', channel: 'mcp', args: { question: 'secret plans' } }, { repo });
   assert.strictEqual(a.decision, 'allow');
-  const b = await P.authorize({ tool: 'session_start', channel: 'chat', args: { card: '412', delivery: 'pr' } }, { repo });
+  const b = await P.authorize({ tool: 'profile_delete', channel: 'chat', args: { card: '412', delivery: 'pr' } }, { repo });
   assert.strictEqual(b.decision, 'ask');
   await assert.rejects(
     () => P.enforce({ tool: 'session_start', action: 'approve', channel: 'voice', args: { delivery: 'auto_merge' }, subject: 'tu_1' }, { repo }),

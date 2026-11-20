@@ -39,10 +39,14 @@ test('remoteArgv passes plain flags, never --on/--report, and refuses shell-look
   assert.throws(() => C.remoteArgv({}, {}, { workflow: 'Bad Name' }), /cannot be passed/);
 });
 
-test('policyDry: a chat action prompts and takes the e2e channel\'s approval', () => {
+test('policyDry: a routine chat action runs unasked (D33); one that asks takes the e2e channel\'s approval', () => {
   const ok = G.policyDry('build_start');
   assert.deepStrictEqual([ok.view, ok.ok], ['policy', true], JSON.stringify(ok));
-  assert.strictEqual(G.policyDry('board').ok, false, 'a read is not prompted');
+  assert.match(ok.detail, /call allow \(chat-actions-allow\)/);
+  const del = G.policyDry('profile_delete');
+  assert.strictEqual(del.ok, true, JSON.stringify(del));
+  assert.match(del.detail, /call ask .*e2e answer allow/);
+  assert.strictEqual(G.policyDry('board').ok, false, 'a read is not an action');
 });
 
 test('owner and safely', async () => {

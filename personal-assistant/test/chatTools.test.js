@@ -105,7 +105,14 @@ async function main() {
     const chat = require('../src/chat');
     const s = chat.settingsJson();
     for (const t of T.CHAT_READ_TOOL_NAMES) assert.ok(s.permissions.allow.includes(`mcp__pa-chat__${t}`), `${t} is allowed`);
-    for (const t of T.CHAT_ACTION_TOOL_NAMES) assert.ok(!s.permissions.allow.some((r) => r.endsWith(`__${t}`)), `${t} asks`);
+    for (const t of T.CHAT_AUTO_TOOL_NAMES) assert.ok(s.permissions.allow.includes(`mcp__pa-chat__${t}`), `${t} runs unasked (D33)`);
+    for (const t of T.CHAT_ASK_TOOL_NAMES) assert.ok(!s.permissions.allow.some((r) => r.endsWith(`__${t}`)), `${t} asks`);
+    assert.deepStrictEqual([...T.CHAT_ASK_TOOL_NAMES].sort(), ['profile_delete', 'profile_reset']);
+    assert.ok(s.permissions.allow.includes('ToolSearch'), 'loading tool schemas runs unasked');
+    // The terminal engine's policy gate for built-in reads and shell commands (src/chat/toolHook.js).
+    const pre = s.hooks.PreToolUse[0];
+    assert.strictEqual(pre.matcher, 'Bash|Read|Grep|Glob');
+    assert.match(pre.hooks[0].command, /^node .*src\/chat\/toolHook\.js$/);
     // Microsoft 365 reads run unasked, one by one; no wildcard that would let a send through.
     assert.ok(s.permissions.allow.includes('mcp__claude_ai_Microsoft_365__outlook_email_search'));
     assert.ok(s.permissions.allow.includes('mcp__claude_ai_Claude_Docs__read'), 'reading a shared Claude doc runs unasked');
@@ -114,21 +121,25 @@ async function main() {
     assert.ok(!s.permissions.allow.some((r) => /Microsoft_365__.*(send|create|update|delete|reply)/i.test(r)), 'no M365 write is allowed');
     const cmd = 'claude --permission-mode default';
     assert.deepStrictEqual(chat.verifyClaudeHome({ settings: s, command: cmd }), []);
-    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__session_start'] } }, command: cmd }).join(), /action tool/);
-    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__*'] } }, command: cmd }).join(), /action tool/);
-    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat'] } }, command: cmd }).join(), /action tool/);
+    assert.deepStrictEqual(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__session_start'] } }, command: cmd }), [], 'a routine action may be allowed (D33)');
+    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__profile_delete'] } }, command: cmd }).join(), /must ask/);
+    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__*'] } }, command: cmd }).join(), /must ask/);
+    assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat'] } }, command: cmd }).join(), /must ask/);
 
     const agent = require('../src/chat/agent.ts');
     const rules = agent.opencodeRules();
     for (const t of T.CHAT_READ_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], 'allow');
-    for (const t of T.CHAT_ACTION_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], undefined, `${t} falls to "*": ask`);
+    for (const t of T.CHAT_AUTO_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], 'allow', `${t} runs unasked (D33)`);
+    for (const t of T.CHAT_ASK_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], undefined, `${t} falls to "*": ask`);
     assert.strictEqual(rules['*'], 'ask');
 
     const md = chat.claudeMd();
     assert.match(md, /`board`/);
     assert.match(md, /Build agent/);
     assert.ok(!/factory_start|factory_jobs/.test(md), 'the chat is not told about the removed factory tools');
-    assert.match(md, /permission prompt is the yes/);
+    assert.match(md, /run at once, without a prompt/, 'the chat is told its routine actions need no yes (D33)');
+    assert.match(md, /only `profile_delete` and `profile_reset` ask/);
+    assert.match(md, /Reading needs no yes/);
   }
 
   // --- what Talk shows while a prompt waits -------------------------------------------

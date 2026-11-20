@@ -218,11 +218,12 @@ const bad = async (p, re) => assert.rejects(p, (e) => re.test(e.message) && (e.s
     assert.strictEqual(got.passes.find((p) => p.key === 'draft').model, 'azure/pa');
     assert.ok(Array.isArray(got.profiles));
     await chatTools.handle('agent_settings_set', { pass_models: { draft: null }, chat_model: null });
-    // The policy: reads allowed, writes ask.
+    // The policy: reads allowed; set runs unasked from the chat (D33); delete and reset ask.
     const policy = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'policy', 'default.policy.json'), 'utf8'));
     const rule = (id) => policy.rules.find((r) => r.id === id).tools;
     for (const n of ['profile_list', 'profile_get', 'agent_settings_get']) assert.ok(rule('read-surface-allow').includes(n), `${n} is allowed`);
-    for (const n of ['profile_set', 'profile_delete', 'profile_reset', 'agent_settings_set']) assert.ok(rule('chat-actions-ask').includes(n) && !rule('read-surface-allow').includes(n), `${n} asks`);
+    for (const n of ['profile_set', 'agent_settings_set']) assert.ok(rule('chat-actions-allow').includes(n) && !rule('read-surface-allow').includes(n), `${n} runs as a chat action`);
+    for (const n of ['profile_delete', 'profile_reset']) assert.ok(rule('chat-destructive-ask').includes(n) && !rule('chat-actions-allow').includes(n), `${n} asks`);
   }
 
   // ------------------------------------------------------------------------------------- pa ----
@@ -283,7 +284,7 @@ const bad = async (p, re) => assert.rejects(p, (e) => re.test(e.message) && (e.s
     const chatTools = require('../src/mcp/chatTools.ts');
     assert.ok(chatTools.CHAT_ACTION_TOOL_NAMES.includes('card_build_settings') && !chatTools.CHAT_READ_TOOL_NAMES.includes('card_build_settings'));
     const policy = require('../src/policy/default.policy.json');
-    assert.ok(policy.rules.find((r) => r.id === 'chat-actions-ask').tools.includes('card_build_settings'), 'it asks in the policy');
+    assert.ok(policy.rules.find((r) => r.id === 'chat-actions-allow').tools.includes('card_build_settings'), 'it runs unasked from the chat (D33: "it should not ask me for this")');
     assert.ok(require('../src/chat').ASK_COMMANDS.includes('card settings'));
     await assert.rejects(() => chatTools.handle('card_build_settings', { card: '5' }), /nothing to set/);
     await assert.rejects(() => chatTools.handle('card_build_settings', { card: 'x', model: 'opus' }), /card id/);

@@ -955,20 +955,27 @@ merge gates, its own repo), which never worked well enough and was removed from 
 the last commit that has it is `4eee22f`). The flags are refused by name rather than ignored. The agent opens a
 draft PR (or writes a report) and never merges.
 
-**Telling the PA chat**: it starts one with `build_start` (or `session_start`, the same agent) behind a permission
-prompt, or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
+**Telling the PA chat**: it starts one with `build_start` (or `session_start`, the same agent) at once, without a
+permission prompt (D33; every call is in the audit log), or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
 (`pa answer <id> yes`) asks first.
 
 **Jarvis as coordinator**: the chat works every layer through structured MCP tools
 (`src/mcp/chatTools.ts`, listed only for the chat), one call each and compact JSON back. Reads run
 without a prompt: `board` (today's to-dos grouped todo / blocked / unblocked / looks done, with ids,
 who, due, repo, blockers, live run), `card <id>` (one card's full context: source excerpt, links,
-blockers, runs, offers), `sessions` (termhub), `build_runs` and `build_run <run>`. Actions ask on every
-call: `build_start`, `build_reply`, `build_send`, `build_stop`, `build_set_idle`, `session_start`, `card_build_settings` (a card's profile, model, effort and caps for its next run), `card_edit` (change a
+blockers, runs, offers), `sessions` (termhub), `build_runs` and `build_run <run>`. Routine actions run
+without a prompt too (D33: prompts for them blocked work), each call audited (`pa audit tail`): `build_start`, `build_reply`, `build_send`, `build_stop`, `build_set_idle`, `session_start`, `card_build_settings` (a card's profile, model, effort and caps for its next run), `card_edit` (change a
 card's title, details, due date, project or add a note in place, instead of dismissing and recreating it),
 `card_plan_propose` (no prompt: stores a whole set of card changes, close / edit / create, for you to untick and approve
-once on the dashboard) with `card_plan_apply` (one prompt for the set). They are `pa do` in-process.
-"What are my tasks today?" → `board`; "start on that one" → `build_start {card}` → one prompt in termhub.
+once on the dashboard) with `card_plan_apply` (one call for the set), `profile_set` and `agent_settings_set`.
+`profile_delete` and `profile_reset` still ask, and so does any call that would merge, push to main or
+reveal a secret. They are `pa do` in-process.
+"What are my tasks today?" → `board`; "start on that one" → `build_start {card}` → it starts.
+Reading needs no yes either: ToolSearch, Read/Grep/Glob in pa-home, the PA's data directory (agent
+worktrees, build runs and reports, logs) and the repos roots, and shell commands that only read (`ls`,
+`cat`, `git log|status|diff|show`, `gh pr view|checks`, …; `src/policy/readOnly.ts`). Secret-looking files
+(`.env*`, `.ssh`, `.aws`, `.azure`, `.config/gh`, `.npmrc`, keys, `*credential*`/`*secret*`/`*token*`)
+and anything else still ask. `pa audit check Bash --channel chat --command "git log -3"` shows a decision.
 
 **Which route works** was measured: every older run records its route, the reason, the ask's kind, and its
 outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs (history now) add pipeline, delivery, models,
@@ -1509,9 +1516,10 @@ same through termhub's `/pa/` proxy from a phone.
   it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
   permission prompt or question, the chat refuses the send (409); the page says once that it is
   waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
-  termhub: starting a session: fix the export") — and does not retry. When the prompt is
-  for one of the chat's own actions (`session_start`, `build_start`, …), Jarvis asks out loud —
-  "Start a Claude Code agent to fix the export. Shall I?" — and
+  termhub: starting a session: fix the export") — and does not retry. Routine actions never prompt
+  (D33), so there is nothing to answer for them. When the prompt is
+  for one of the chat's own actions that still asks (`profile_delete`, `profile_reset`), Jarvis asks out loud —
+  the action in one sentence, ending "Shall I?" — and
   your next words answer it: "yes", "do it", "go ahead" approve; "no", "cancel", "stop" deny; anything
   else is asked once more, then left on the dashboard. Only while it is awake (after "hey Jarvis", or
   push-to-talk), only from words you began after the question, within a minute. The server then reads
@@ -1531,7 +1539,8 @@ same through termhub's `/pa/` proxy from a phone.
   or **both** (it says what it knows and hands off the rest). Its words stream and are spoken
   sentence by sentence. It **never acts**: it has no tools, and an "answer" to something that reads
   like an action ("send…", "close…", "remind me…") is turned into a handoff before a word is spoken,
-  so actions always go through the PA chat's permission prompts. What is handed off is your own
+  so actions always go through the PA chat and its policy (routine ones run unasked, D33; the rest
+  ask). What is handed off is your own
   words, verbatim; the model's reading of the task rides along as a labelled hint, because the
   snapshot quotes other people's mail and must not be able to put words in your mouth. Turns it
   answered itself are not in the PA chat's history (it keeps the last few for its own context).

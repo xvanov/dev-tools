@@ -15,7 +15,7 @@ const HELP = `pa audit — every decision of the policy engine, hash-chained
                                   a log that was cut short.
   pa audit tail [-n 20] [--tool t] [--decision allow|deny|ask]
                                   the newest rows, newest first
-  pa audit check <tool> [--channel c] [--action call|approve] [--delivery level]
+  pa audit check <tool> [--channel c] [--action call|approve] [--delivery level] [--command "<shell command>"]
                                   what the policy would decide for a call, without running or logging it
                                   (channels: mcp chat voice dashboard termhub cli e2e)
 
@@ -46,13 +46,13 @@ function make(out: any, fail: any) {
         return;
       }
       if (sub === 'check') {
-        if (!args[1]) return fail('pa audit check <tool> [--channel c] [--action call|approve] [--delivery level]');
+        if (!args[1]) return fail('pa audit check <tool> [--channel c] [--action call|approve] [--delivery level] [--command "<shell command>"]');
         const P = require('../policy');
         const res = P.evaluate({
           tool: args[1],
           action: String(flags.action || 'call'),
           channel: String(flags.channel || 'cli'),
-          args: flags.delivery ? { delivery: String(flags.delivery) } : {},
+          args: { ...(flags.delivery ? { delivery: String(flags.delivery) } : {}), ...(flags.command ? { command: String(flags.command) } : {}) },
         });
         return out(`${res.decision} (rule ${res.rule}${res.tags.length ? `, tags ${res.tags.join('/')}` : ''})${res.reason ? ` — ${res.reason}` : ''}`);
       }

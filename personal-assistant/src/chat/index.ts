@@ -11,8 +11,9 @@
 //   CLAUDE.md               who it is, what it may do, what it must ask first
 //   .claude/settings.json   a SessionStart hook that loads `pa context` (the
 //                           profile, today's state, what is waiting on you),
-//                           and permissions: read-only `pa` commands allowed,
-//                           anything that acts asks
+//                           and permissions: reads and the routine chat
+//                           actions allowed (D33), a `pa` shell command, an
+//                           edit or a destructive action asks
 //   INBOX.md                not written here: the worker's pushes, which the
 //                           chat reads at the start of every turn and answers
 //                           with `pa` commands (src/notify/chat.js)
@@ -115,7 +116,8 @@ Mail, Teams and shared Claude pages (all read without asking):
   then \`read\` with ref \`{object: project, id: <the id at the end of the link>}\`, then each tab's node). The user
   talks by voice: never ask them to paste a link; only when nothing in the shared list matches, say what you saw.
 
-Actions — each asks the user to approve the call, so just make the call (no need to ask "shall I?" first):
+Actions — these run at once, without a prompt (each call is logged), so when the user asks for one just make the
+call (no "shall I?" first); only \`profile_delete\` and \`profile_reset\` ask the user to approve:
 
 - \`build_start {card?, task?, repo?, model?, idle_after_s?, second_opinion?}\` starts a Build agent (one Claude Code agent per task); \`build_set_idle <run> <seconds>\` changes its silence limit. \`second_opinion <profile>\` (research/report tasks only) also runs the task on that other read-only profile and fuses the two reports into one: \`build_run\` shows it under \`second_opinion\` once both ended.
 - \`build_reply <run> <text>\` answers a Build agent's question; a needs_you entry of kind \`decisions\` is a questionnaire: read its \`questions\` to the user (each with its options), and when they answer, send ONE \`build_reply <run> answers {<question id>: <answer>}\` mapping what they said onto the ids (an option must match one of the question's options, unless free text is allowed; leave out what they skipped; ask again only if you cannot tell which question an answer is for); \`build_send <run> <text>\` types at its session;
@@ -133,15 +135,15 @@ Actions — each asks the user to approve the call, so just make the call (no ne
   title, details?, due?, project?, reason}\`; always give each a short \`reason\`. It checks every card is open and
   every date reads, and returns all problems together: fix them and send again. Then say, in a line, that it is
   waiting on the dashboard ("Proposed card changes": the user unticks what they do not want and presses Apply), or ask
-  "apply all N?" and, on a yes, call \`card_plan_apply {plan, skip?}\` — one prompt for the whole set. A single change
+  "apply all N?" and, on a yes, call \`card_plan_apply {plan, skip?}\` — one call for the whole set. A single change
   still goes straight to \`card_edit\` / \`task_add\` / \`done\`.
 
 - \`session_start\` — the same Build agent as \`build_start\`, briefed with \`prompt\`.
 - Agent settings (the dashboard's Agents page): \`profile_list\`, \`profile_get {name}\` and \`agent_settings_get\` read the Build
   profiles and the chat's and passes' models (each with where it comes from: store, env or default) without asking.
   \`profile_set {name, model?, effort?, permission_mode?, prompt?, tools?, subagents?, cost_cap_usd?, …}\` changes only the fields
-  given ("set chore to fable medium"), \`profile_delete\` / \`profile_reset\` and \`agent_settings_set {chat_model?, pass_models?}\`
-  ask. Say what you will change in a line, then make the call.
+  given ("set chore to fable medium"), \`agent_settings_set {chat_model?, pass_models?}\` changes the models;
+  \`profile_delete\` / \`profile_reset\` ask. Say what you will change in a line, then make the call.
 - \`eval_build_report {eval?}\` reads the profile eval's results (finished Build runs replayed on other profiles: pass rate,
   median cost and wall time per profile) without asking. You cannot start an eval: it spends the subscription, and it is
   the owner's \`pa eval build --yes\` command.
@@ -165,7 +167,10 @@ ${how}
 | \`reply\` (writes a draft — the user sends it themselves) | the \`${TASK_TOOL}\` tool, only when the user explicitly asks for a task (below) |
 
 Before a shell action, say in one line what you will run and why, and wait for a yes. For the action
-tools above, say it in one line and make the call: the permission prompt is the yes. Never send mail
+tools above, say it in one line and make the call. Reading needs no yes: read-only shell commands (\`ls\`,
+\`cat\`, \`git status|log|diff|show\`, \`gh pr view\`, … with no redirection) and Read/Grep/Glob in this
+directory, the assistant's data directory (agent worktrees, build runs and reports, logs) and the repos
+run without asking; secret files (\`.env\`, keys, credentials, tokens) always ask. Never send mail
 or Teams messages — that is not possible from here, and drafts are sent by the user.
 
 **Tasks on the board.** When the user explicitly asks you to create a task, to-do or reminder ("create
@@ -263,11 +268,14 @@ const ALLOW_MCP_TOOLS = ['recall', 'memory_page', 'brief_me', 'open_commitments'
 // asked for (src/mcp/server.js TASK_TOOL; src/commitments/request.js).
 const TASK_TOOL = 'task_add';
 
-// The chat's structured tools (src/mcp/chatTools.js). The reads are allowed;
-// the actions (session_start, build_start, …) are on no allow list, so
-// Claude Code asks the user on every call — verifyClaudeHome refuses a home
-// that would let one through.
-const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTION_TOOLS } = require('../mcp/chatTools.ts');
+// The chat's structured tools (src/mcp/chatTools.js). The reads and the
+// routine actions (session_start, build_start, card_edit, …) are allowed;
+// profile_delete and profile_reset are on no allow list, so Claude Code asks
+// the user on every call — verifyClaudeHome refuses a home that would let one
+// through.
+// D33: the routine actions (CHAT_AUTO_TOOLS) are allowed and audited; the
+// ones that cannot be undone (CHAT_ASK_TOOLS) are on no allow list.
+const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTION_TOOLS, CHAT_ASK_TOOL_NAMES: CHAT_ASK_TOOLS, CHAT_AUTO_TOOL_NAMES: CHAT_AUTO_TOOLS } = require('../mcp/chatTools.ts');
 
 // The claude.ai Microsoft 365 connector's tools that only read (search mail,
 // calendar, chats, people, SharePoint). Named one by one, never `mcp__..._365__*`,
@@ -295,9 +303,14 @@ function mcpJson() {
 
 function settingsJson() {
   const pa = paCommand();
+  const toolHook = `node ${path.join(config.toolDir, 'src', 'chat', 'toolHook.js').replace(/\\/g, '/')}`;
   return {
     hooks: {
       SessionStart: [{ hooks: [{ type: 'command', command: `${pa} context`, timeout: 60 }] }],
+      // The terminal engine's policy gate for built-in reads and shell commands
+      // (D33, src/chat/toolHook.js); the SDK engine decides in-process and the
+      // hook exits at once there.
+      PreToolUse: [{ matcher: 'Bash|Read|Grep|Glob', hooks: [{ type: 'command', command: toolHook, timeout: 10 }] }],
     },
     // The user's global "caveman" plugin adds a prompt hook to every turn
     // (0.2–0.5 s, once a 5 s timeout) and makes replies terse fragments,
@@ -311,7 +324,8 @@ function settingsJson() {
       // Reads through MCP tools only. A Bash prefix rule cannot tell `pa memory`
       // from `pa memory run`, so no `pa` shell command is allowed — every one asks.
       allow: [...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__${CHAT_MCP}__${t}`), `mcp__${CHAT_MCP}__pa`, `mcp__${CHAT_MCP}__${TASK_TOOL}`,
-        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`), ...M365_READ_TOOLS.map((t) => `${M365}${t}`), ...DOCS_READ_TOOLS],
+        ...CHAT_READ_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`), ...CHAT_AUTO_TOOLS.map((t: any) => `mcp__${CHAT_MCP}__${t}`),
+        ...M365_READ_TOOLS.map((t) => `${M365}${t}`), ...DOCS_READ_TOOLS, 'ToolSearch'],
       ask: [`Bash(${pa}:*)`, `Bash(${pa} *)`, ...[...ASK_COMMANDS, ...ALLOW_COMMANDS, ...CARD_COMMANDS].map((c) => `Bash(${pa} ${c}:*)`)],
     },
   };
@@ -330,9 +344,9 @@ function verifyClaudeHome({ settings, local = null, command }: { settings?: any;
   if (bypass !== 'disable') problems.push('bypass-permissions mode is not disabled');
   const allow = [...(settings?.permissions?.allow || []), ...(local?.permissions?.allow || [])];
   if (allow.some((r) => /^Bash\(/.test(r) && r.includes('pa.js'))) problems.push('a `pa` shell command is allowed without asking');
-  // A server-wide rule (`mcp__pa-chat`, `mcp__pa-chat__*`) or an action tool by name would start work unasked.
-  const acts = allow.filter((r) => /^mcp__(pa-chat|personal-assistant)(__\*?)?$/.test(r) || CHAT_ACTION_TOOLS.some((t: any) => r.endsWith(`__${t}`)));
-  if (acts.length) problems.push(`an action tool is allowed without asking (${acts.join(', ')})`);
+  // A server-wide rule (`mcp__pa-chat`, `mcp__pa-chat__*`) or an asking action by name (profile_delete, profile_reset) would act unasked.
+  const acts = allow.filter((r) => /^mcp__(pa-chat|personal-assistant)(__\*?)?$/.test(r) || CHAT_ASK_TOOLS.some((t: any) => r.endsWith(`__${t}`)));
+  if (acts.length) problems.push(`an action that must ask is allowed without asking (${acts.join(', ')})`);
   if (!/(^|\s)--permission-mode[\s=]+default(\s|$)/.test(command || '')) problems.push('the command line does not pass --permission-mode default');
   return problems;
 }
@@ -419,4 +433,4 @@ async function ensureSession() {
   return { sessionId: created.id, created: true };
 }
 
-module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS, M365_READ_TOOLS, DOCS_READ_TOOLS };
+module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL, CHAT_READ_TOOLS, CHAT_ACTION_TOOLS, CHAT_ASK_TOOLS, CHAT_AUTO_TOOLS, M365_READ_TOOLS, DOCS_READ_TOOLS };
