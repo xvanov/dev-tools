@@ -47,11 +47,15 @@
     return data;
   }
 
+  // The current step shows in one place: inside the "thinking…" bubble while it is
+  // up, else on the line under the conversation (it showed in both, 2026-11-20).
   function say(text) {
     const n = $('chat-activity');
-    if (n) n.textContent = text;
     const t = $('chat-thinking');
-    if (t && text) t.querySelector('.chat-thinking-step').textContent = text;
+    if (t) {
+      if (text) t.querySelector('.chat-thinking-step').textContent = text;
+      if (n) n.textContent = '';
+    } else if (n) n.textContent = text;
   }
 
   // "Jarvis is thinking…" at the bottom of the conversation, from the moment a
@@ -70,6 +74,12 @@
         el('span', { class: 'chat-meta' }, 'Jarvis'),
         el('div', { class: 'chat-text' }, el('span', { class: 'chat-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')), ' thinking…'),
         el('div', { class: 'chat-thinking-step' }, ''));
+      // A step already on the line below moves into the bubble.
+      const n = $('chat-activity');
+      if (n && n.textContent) {
+        t.querySelector('.chat-thinking-step').textContent = n.textContent;
+        n.textContent = '';
+      }
     }
     if (!log) return;
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
