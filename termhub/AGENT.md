@@ -334,7 +334,9 @@ choice. ptyd runs as its own long-lived process from an installed copy
 Windows (`windows/ptyd.ps1 -Ensure|-Restart|-Remove [-DryRun]`, a `-Run` wrapper under
 `conhost --headless`), its own user unit on Linux (`linux/ptyd-unit.sh
 --ensure|--restart|--remove [--dry-run]`, `termhub-ptyd.service`). The update scripts keep that
-process in place and never restart a running ptyd. `-Restart` / `--restart` is the only way onto
+process in place and never restart a running ptyd. The unit sets `OOMPolicy=continue`: every terminal's
+processes share its cgroup, and under systemd's default (`stop`) one out-of-memory kill of a
+build in any terminal stopped the whole unit and ended every terminal (2026-11-18 and -22). `-Restart` / `--restart` is the only way onto
 a new binary, and it ends every terminal in it. The deploy and the rollback (the previous
 commit; `TERMHUB_PTYD=0` is not one): [JARVISD.md](../docs/native/JARVISD.md) (*Runbook: jarvisd
 front, and ptyd*). Proofs: `test/ptydConformance.test.js` runs one black-box protocol suite

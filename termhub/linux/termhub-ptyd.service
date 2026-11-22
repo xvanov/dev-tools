@@ -9,6 +9,12 @@ Type=simple
 ExecStart=__PTYD__ --port __PORT__
 Restart=on-failure
 RestartSec=2
+# Every terminal's processes live in this unit's cgroup. When the machine runs
+# out of memory the kernel kills ONE of them (the biggest: a tsc, an eslint, an
+# agent), and systemd's default OOMPolicy=stop then stops the whole unit: ptyd
+# and every other terminal die with it ("process exited" on all of them).
+# continue = only the process the kernel picked dies; the terminals stay.
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target
