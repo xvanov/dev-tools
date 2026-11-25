@@ -115,6 +115,9 @@ async function run({ commitmentId }: { commitmentId?: any }, ctx: any) {
     const c = await read(commitmentId);
     if (!c || c.status !== 'open') return null;
     const draft = await require('../../draft').composeNudge(commitmentId);
+    // The thread shows it delivered: no follow-up, and the reconciler has
+    // been asked to judge it (src/draft/draft.ts skipSettled).
+    if (!draft) return { at: new Date().toISOString(), draftId: null, settled: true };
     await require('../../notify').notify({
       kind: 'info',
       title: `Still waiting on ${c.who || 'someone'}: ${c.summary}`.slice(0, 200),
@@ -124,6 +127,7 @@ async function run({ commitmentId }: { commitmentId?: any }, ctx: any) {
     return { at: new Date().toISOString(), draftId: Number(draft.id) };
   });
   if (!nudged) return { result: 'closed before the nudge' };
+  if (nudged.settled) return { result: 'the thread shows it delivered; no follow-up drafted' };
 
   if (await closedBy(ctx, 'wait-second', commitmentId, C.secondChaseAt(nudged.at, plan.value))) return { result: 'closed after the nudge' };
 

@@ -42,6 +42,18 @@ function create(db: Db) {
       );
     },
 
+    /** Later messages in an item's thread (same source), oldest first, at most `limit`. */
+    async threadAfter(item: Row, limit: number) {
+      return db.rows(
+        `select occurred_at, author_identity, subject, body_text, json_extract(raw, '$.fromName') as from_name
+       from source_item
+      where source = $1 and thread_external_id = $2 and id <> $3
+        and occurred_at > $4
+      order by occurred_at, id limit $5`,
+        [item.source, item.thread_external_id, item.id, item.occurred_at, limit]
+      );
+    },
+
     /** A commitment with its counterparty's name and email (who, who_email), or null. */
     async askWithCounterparty(commitmentId: number | string) {
       return db.one(

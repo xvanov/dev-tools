@@ -34,6 +34,21 @@ module.exports = {
     assert.ok(a && b);
   },
 
+  'threadAfter: later messages in the thread and source, oldest first, limited': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const t0 = Date.now() - 3600_000;
+    await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(t0), body: 'before' });
+    const askId = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(t0 + 60_000), body: 'the ask' });
+    await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(t0 + 120_000), body: 'Done.', raw: { fromName: 'Jon' } });
+    await seed.item({ source: 'graph_mail', thread: thr, occurredAt: new Date(t0 + 150_000), body: 'other source' });
+    await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(t0 + 180_000), body: 'thanks' });
+    const ask = await repos.drafts.sourceItem(askId);
+    const got = await repos.drafts.threadAfter(ask, 8);
+    assert.deepStrictEqual(got.map((m) => m.body_text), ['Done.', 'thanks']);
+    assert.strictEqual(got[0].from_name, 'Jon');
+    assert.strictEqual((await repos.drafts.threadAfter(ask, 1)).length, 1);
+  },
+
   'askWithCounterparty: the commitment with who and who_email': async ({ repos, seed, assert }) => {
     const p = await seed.personWith({ name: 'Bo', email: 'bo@example.test' });
     const c = await seed.commitment();
