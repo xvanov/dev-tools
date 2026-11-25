@@ -25,9 +25,18 @@ function create(db: Db) {
   return {
     // ---- context --------------------------------------------------------------
 
-    /** My primary email ({primary_email}), or null. */
+    /**
+     * My email ({primary_email}): the person's primary email, else my first
+     * smtp identity; null without a me. With no primary email set, follow-ups
+     * were addressed to me: the draft could not tell my address from theirs.
+     */
     async myEmail() {
-      return db.one('select primary_email from person where is_me limit 1');
+      return db.one(
+        `select coalesce(p.primary_email,
+                         (select lower(pi.value) from person_identity pi
+                           where pi.person_id = p.id and pi.kind = 'smtp' order by pi.id limit 1)) as primary_email
+           from person p where p.is_me limit 1`
+      );
     },
 
     /** Earlier messages in an item's thread (same source), newest first, at most `limit`. */

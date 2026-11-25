@@ -16,6 +16,14 @@ module.exports = {
   'myEmail: my primary email, or null without a me': async ({ repos, seed, db, assert }) => {
     await ensureMe(db, seed, 'me@example.test');
     assert.strictEqual((await repos.drafts.myEmail()).primary_email, 'me@example.test');
+    // No primary email: my smtp identity stands in.
+    await db.query('update person set primary_email = null where is_me');
+    const me = await db.one('select id from person where is_me limit 1');
+    await db.query(`delete from person_identity where kind = 'smtp' and value = 'me-alias@example.test'`);
+    await db.query(`insert into person_identity (person_id, kind, value) values ($1, 'smtp', 'me-alias@example.test')`, [me.id]);
+    const got = (await repos.drafts.myEmail()).primary_email;
+    assert.ok(got && got.includes('@'), 'an address, not null');
+    await db.query('update person set primary_email = $1 where is_me', ['me@example.test']);
   },
 
   'threadBefore: earlier messages in the thread and source, newest first, limited': async ({ repos, seed, assert, uniq }) => {
