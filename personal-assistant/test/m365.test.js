@@ -130,6 +130,7 @@ const result = (id, content, isError = false) =>
   assert.deepStrictEqual(chat.channelIds(channelUri), { teamId: 'team-1', channelId: '19:chan@thread.tacv2' });
   assert.ok(chat.isTruncated('this goes on...'));
   assert.ok(!chat.isTruncated('done.'));
+  assert.ok(chat.isTruncated(`${'word '.repeat(50)}do`), 'cut at the cap with no ellipsis');
   assert.ok(chat.namesMe('hey Sam, can you check', me));
   assert.ok(!chat.namesMe('samples are in', me));
 

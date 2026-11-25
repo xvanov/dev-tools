@@ -40,8 +40,13 @@ function channelIds(channelUri: any) {
   return m ? { teamId: decodeURIComponent(m[1]), channelId: decodeURIComponent(m[2]) } : null;
 }
 
+// The summary is cut at about 255 characters, usually with "..." and
+// sometimes without: 50 Teams messages were stored as exactly 255 characters
+// of text ending mid-word. A summary that long is taken as cut.
+const SUMMARY_CAP = 245;
 function isTruncated(summary: any) {
-  return /(\.\.\.|…)\s*$/.test(String(summary || ''));
+  const s = String(summary || '');
+  return /(\.\.\.|…)\s*$/.test(s) || s.trim().length >= SUMMARY_CAP;
 }
 
 function namesMe(text: any, me: any) {

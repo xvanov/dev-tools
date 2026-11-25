@@ -421,8 +421,9 @@ function create(db: Db) {
             where source = 'graph_chat' and occurred_at > $3
               and (body_text = ''
                    or json_extract(raw, '$.partial') = 1
-                   or (json_extract(raw, '$.repaired') is null and length(body_text) between 200 and 300
-                       and (body_text like '%...' or body_text like '%…')))
+                   or (json_extract(raw, '$.repaired') is null
+                       and ((length(body_text) between 200 and 300 and (body_text like '%...' or body_text like '%…'))
+                            or length(body_text) between 245 and 256)))
               and coalesce(cast(json_extract(raw, '$.repairTries') as integer), 0) < $2
               and thread_external_id like '19:%' and instr(external_id, '/') > 0)
           where part2 <> '' and part2 not glob '*[^0-9]*'

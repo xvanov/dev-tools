@@ -418,8 +418,9 @@ module.exports = {
     const partial = await mk(1005, { body: 'short summary…', raw: { partial: true } });
     const legacy = await mk(1006, { body: clipped, raw: { partial: false } });
     const repaired = await mk(1007, { body: clipped, raw: { repaired: true } });
+    const capped = await mk(1008, { body: 'x'.repeat(255), raw: { partial: false } });
     const ids = (await repos.sources.incompleteChatMessages(1000, 3)).map((r) => Number(r.id));
-    for (const x of [empty, partial, legacy]) assert.ok(ids.includes(x), `includes ${x}`);
+    for (const x of [empty, partial, legacy, capped]) assert.ok(ids.includes(x), `includes ${x}`);
     for (const x of [full, tried, old, repaired]) assert.ok(!ids.includes(x), `excludes ${x}`);
   },
 

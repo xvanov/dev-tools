@@ -463,7 +463,8 @@ function create(db: Db) {
     /**
      * Teams chat messages of the last 30 days whose text is missing or only the
      * search's ~250-character summary — empty, marked `partial`, or (rows from
-     * before `partial` was kept) 200–300 characters ending in "..." or "…" and
+     * before `partial` was kept) 200–300 characters ending in "..." or "…", or
+     * 245–256 characters (the summary's cap, cut without an ellipsis), and
      * never repaired — that may be fetched again (fewer than `maxTries`
      * repairs), newest first.
      */
@@ -473,8 +474,9 @@ function create(db: Db) {
       where source = 'graph_chat' and occurred_at > now() - interval '30 days'
         and (body_text = ''
              or raw->>'partial' = 'true'
-             or (raw->>'repaired' is null and length(body_text) between 200 and 300
-                 and (body_text like '%...' or body_text like '%…')))
+             or (raw->>'repaired' is null
+                 and ((length(body_text) between 200 and 300 and (body_text like '%...' or body_text like '%…'))
+                      or length(body_text) between 245 and 256)))
         and coalesce((raw->>'repairTries')::int, 0) < $2
         and thread_external_id like '19:%' and split_part(external_id, '/', 2) ~ '^[0-9]+$'
       order by occurred_at desc limit $1`,
