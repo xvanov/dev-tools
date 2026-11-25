@@ -8,6 +8,7 @@
 <script src="nav.js" data-layer="dashboard"></script>
 <script src="events.js"></script>
 <script src="dispatchMenu.js"></script>
+<script src="projectColors.js"></script>
 <style>
   /* This page's names for the shared tokens in theme.css (the Jarvis design
      system). Colours are defined there, once, for light and dark. */
@@ -149,7 +150,15 @@
     .onme-cols:not(.one) .onme-col + .onme-col { border-left: 1px solid var(--line); padding-left: 28px; }
     .onme-cols.one .onme-col { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); column-gap: 28px; align-items: start; }
     .onme-cols.one .onme-col > h3 { grid-column: 1 / -1; }
+    .onme-cols.one .onme-col > h4 { grid-column: 1 / -1; }
   }
+  /* A project's group on the board: its chip and how many, then its cards, each
+     with a rule in the project's colour (theme.css .pc-N, projectColors.client.js). */
+  .onme-col > h4 { display: flex; align-items: baseline; gap: 6px; margin: 12px 0 0; padding-bottom: 2px;
+    font-size: 12px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .onme-col > h4 .n { font: 500 var(--text-xs) var(--font-mono); }
+  .onme-col > h4 + .item { border-top: 0; }
+  .item.has-proj { border-left: 3px solid var(--pc); padding-left: 10px; }
   /* Status as words: plain grey, and amber only where it waits on you or someone. */
   .flag { display: inline; font-size: 12px; font-weight: 500; color: var(--muted); margin-right: 10px; }
   .flag.ask, .flag.blocked { color: var(--warn); }
@@ -472,6 +481,13 @@ function due(iso) {
   if (days === 0) return el('span', { class: 'due-over' }, 'due today');
   return days === 1 ? 'due tomorrow' : `due in ${days}d`;
 }
+
+// A project's name in its colour (theme.css .j-proj); null for no project.
+function projectChip(name) {
+  if (!name) return null;
+  return el('span', { class: `j-proj pc-${JarvisProjects.slot(name)}`, title: `project ${name}` }, name);
+}
+const projectClass = (name) => (name ? ` has-proj pc-${JarvisProjects.slot(name)}` : '');
 
 function joinParts(parts) {
   const out = [];
@@ -825,7 +841,7 @@ function commitmentCard(c) {
   const sub = joinParts([
     `#${c.id}`, (c.also || []).length ? `also #${c.also.join(', #')}` : null,
     c.direction === 'owed_to_me' ? c.owedBy?.flag || `waiting on ${c.who || 'them'}` : c.who_is_me ? null : c.who,
-    SOURCE[c.source] || c.source, c.project, due(c.due_at),
+    SOURCE[c.source] || c.source, projectChip(c.project), due(c.due_at),
     c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at),
     // The server's links say what each one opens; this is the fallback.
     c.links ? null : link(c.thread_external_id, 'open'),
@@ -847,7 +863,7 @@ function commitmentCard(c) {
       c.owedBy?.flag || `waiting on ${c.who || 'them'}`) : null,
     (c.unblocked || []).length ? el('span', { class: 'flag unblocked', title: 'What blocked this was delivered' }, 'unblocked') : null,
   ];
-  return el('div', { class: settledOnly ? 'item settled' : 'item', id: `card-${c.id}` },
+  return el('div', { class: (settledOnly ? 'item settled' : 'item') + projectClass(c.project), id: `card-${c.id}` },
     el('div', { class: 'sum' }, ...flags, c.summary),
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
@@ -1330,7 +1346,7 @@ function askBlock(p, standalone) {
   buttons.push(no);
   return el('div', { class: standalone ? '' : 'ask-box' },
     el('div', { class: 'sum' }, p.title),
-    standalone ? el('div', { class: 'sub' }, ...joinParts([p.run_id ? `run #${p.run_id}` : null, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])) : null,
+    standalone ? el('div', { class: 'sub' }, ...joinParts([p.run_id ? `run #${p.run_id}` : null, SOURCE[p.source] || p.source, projectChip(p.project), ago(p.created_at)])) : null,
     offer && p.payload.suggestedBy ? el('div', { class: 'endstate loud' }, `Suggested by ${p.payload.suggestedBy} — check the end state before you accept.`) : null,
     offer ? (p.payload.why ? el('div', { class: 'sub' }, `Planner's note: ${p.payload.why}`) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
     ...(offer ? offer.nodes : []),
@@ -1338,7 +1354,17 @@ function askBlock(p, standalone) {
 }
 
 function boardCard(c) {
-  return c.standalone ? el('div', { class: 'item' }, askBlock(c.asks[0], true)) : commitmentCard(c);
+  return c.standalone ? el('div', { class: 'item' + projectClass(c.asks[0].project) }, askBlock(c.asks[0], true)) : commitmentCard(c);
+}
+
+// One column's cards under a small heading per project (projectColors.client.js:
+// name order, no project last); none when no card in it has a project.
+function byProject(cards) {
+  const groups = JarvisProjects.group(cards, (c) => (c.standalone ? c.asks[0].project : c.project));
+  if (!groups.some((g) => g.project)) return cards.map(boardCard);
+  return groups.flatMap((g) => [
+    el('h4', {}, g.project ? projectChip(g.project) : 'No project', el('span', { class: 'n' }, String(g.cards.length))),
+    ...g.cards.map(boardCard)]);
 }
 
 // On me, in two columns on a wide screen: the to-dos, and beside them what is
@@ -1352,12 +1378,12 @@ function renderOnMe(list) {
   const n = sec.querySelector('.n');
   n.textContent = list.length ? (settled.length ? `${todo.length} + ${settled.length} to confirm` : String(todo.length)) : '';
   const head = (text, count, title) => el('h3', title ? { title } : {}, text, el('span', { class: 'n' }, String(count)));
-  const left = [head('To do', open.length), ...(open.length ? open.map(boardCard) : [el('div', { class: 'empty' }, 'Nothing to do.')])];
+  const left = [head('To do', open.length), ...(open.length ? byProject(open) : [el('div', { class: 'empty' }, 'Nothing to do.')])];
   const right = [];
-  if (blocked.length) right.push(head('Blocked or waiting', blocked.length, 'Click "blocked on" to see what you are waiting for and why.'), ...blocked.map(boardCard));
+  if (blocked.length) right.push(head('Blocked or waiting', blocked.length, 'Click "blocked on" to see what you are waiting for and why.'), ...byProject(blocked));
   if (settled.length) {
     right.push(head('Looks done — confirm?', settled.length, 'The assistant found something that looks like it settles these, but was not sure enough to close them on its own. Confirm, or keep them open.'),
-      ...settled.map(boardCard));
+      ...byProject(settled));
   }
   const cols = [el('div', { class: 'onme-col' }, ...left)];
   if (right.length) cols.push(el('div', { class: 'onme-col' }, ...right));

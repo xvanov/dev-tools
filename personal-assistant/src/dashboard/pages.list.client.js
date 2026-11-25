@@ -4,8 +4,9 @@
 // bar, percent, what is being worked on, and a link to open it. Read-only:
 // GET api/pages (relative, so termhub's /pa/ works), refreshed every 30 s.
 // Self-contained: one <script src="pages.list.js"> in index.html; the card goes
-// in <main id="today"> after "On me". Hidden while there are no pages. Text
-// only - no HTML sinks.
+// in <main id="today"> after "On me". Hidden while there are no pages. A page's
+// project is a chip in its colour (projectColors.js, theme.css .j-proj). Text only -
+// no HTML sinks.
 
 (function () {
   const STYLE = `
@@ -13,6 +14,7 @@
 #pages-card .pg-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--line, #d9dce1); }
 #pages-card .pg-row:first-child { border-top: 0; }
 #pages-card .pg-title { font-weight: 600; }
+#pages-card .j-proj { margin-left: 8px; }
 #pages-card .pg-pct { font-variant-numeric: tabular-nums; }
 #pages-card .pg-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line, #e3e5e8); overflow: hidden; }
 #pages-card .pg-bar > span { display: block; height: 100%; background: var(--ok, #1f8a4c); }
@@ -52,12 +54,15 @@
     const fill = el('span');
     fill.style.width = Math.max(0, Math.min(100, Number(pr.percent) || 0)) + '%';
     const link = el('a', { className: 'pg-title', href: 'pages/' + encodeURIComponent(p.slug), textContent: p.title || p.slug });
+    const chip = p.project && typeof JarvisProjects !== 'undefined'
+      ? el('span', { className: 'j-proj pc-' + JarvisProjects.slot(p.project), title: 'project ' + p.project, textContent: p.project })
+      : null;
     const meta = [pr.done + '/' + pr.total + ' done'];
     if (pr.doing && pr.doing.length) meta.push('working on: ' + pr.doing.join(' · '));
-    if (p.project) meta.push('project ' + p.project);
+    if (p.project && !chip) meta.push('project ' + p.project);
     if (p.publishedUrl) meta.push('published');
     if (p.error) meta.push('error: ' + p.error);
-    const kids = [link, el('span', { className: 'pg-pct', textContent: pr.percent + '%' }), el('div', { className: 'pg-bar' }, [fill]), el('div', { className: 'pg-meta', textContent: meta.join(' · ') })];
+    const kids = [chip ? el('span', {}, [link, chip]) : link, el('span', { className: 'pg-pct', textContent: pr.percent + '%' }), el('div', { className: 'pg-bar' }, [fill]), el('div', { className: 'pg-meta', textContent: meta.join(' · ') })];
     if (p.publishedUrl && /^https:\/\/claude\.ai\//.test(p.publishedUrl)) {
       kids[3].append(' · ', el('a', { href: p.publishedUrl, target: '_blank', rel: 'noopener noreferrer', textContent: 'claude.ai copy' }));
     }

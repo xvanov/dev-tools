@@ -15,9 +15,10 @@
  *   2. Semantic  (--surface-*, --ink-*, --signal, ...) what the pages use. Light and
  *                dark come from one light-dark() each, keyed off `color-scheme`, so a
  *                value is never written twice.
- *   3. Components (.j-btn, .jnav-toggle, .jside, .jpanel-nav, .jx-frames)  buttons,
+ *   3. Components (.j-btn, .jnav-toggle, .jside, .jpanel-nav, .jx-frames, .j-proj)  buttons,
  *      the corner toggle, the panel that holds the navigation and each page's
- *      settings, and the layer of kept-alive frames nav.js switches between.
+ *      settings, the layer of kept-alive frames nav.js switches between, and a
+ *      project's colour chip.
  *
  * Swapping in a brand palette means overriding block 1 only, for example in a
  * file loaded after this one:  :root { --p-signal-day: #...; --p-signal-night: #...; }
@@ -64,6 +65,25 @@
   --p-ok-night: #5cbf89;
   --p-bad-day: #b0312a;
   --p-bad-night: #ee7a70;
+
+  /* Projects: eight hues a project name hashes into (projectColors.client.js), none of
+     them amber. Day ones read on paper, night ones on the panel, at 4.5:1 or more. */
+  --p-proj-0-day: #2d62b8;
+  --p-proj-0-night: #7fa8ee;
+  --p-proj-1-day: #17776c;
+  --p-proj-1-night: #5ec5b5;
+  --p-proj-2-day: #6a48bd;
+  --p-proj-2-night: #b49cf2;
+  --p-proj-3-day: #a03c8a;
+  --p-proj-3-night: #e28ccd;
+  --p-proj-4-day: #5a6e14;
+  --p-proj-4-night: #b4c95f;
+  --p-proj-5-day: #8a5536;
+  --p-proj-5-night: #d9a582;
+  --p-proj-6-day: #4a6380;
+  --p-proj-6-night: #9fb6cc;
+  --p-proj-7-day: #2c7a38;
+  --p-proj-7-night: #7cc98a;
 }
 
 /* ---- 2. Semantic tokens ---------------------------------------------------- */
@@ -86,6 +106,14 @@
   --amber-soft: color-mix(in srgb, var(--amber) 12%, transparent);
   --ok: light-dark(var(--p-ok-day), var(--p-ok-night));
   --bad: light-dark(var(--p-bad-day), var(--p-bad-night));
+  --proj-0: light-dark(var(--p-proj-0-day), var(--p-proj-0-night));
+  --proj-1: light-dark(var(--p-proj-1-day), var(--p-proj-1-night));
+  --proj-2: light-dark(var(--p-proj-2-day), var(--p-proj-2-night));
+  --proj-3: light-dark(var(--p-proj-3-day), var(--p-proj-3-night));
+  --proj-4: light-dark(var(--p-proj-4-day), var(--p-proj-4-night));
+  --proj-5: light-dark(var(--p-proj-5-day), var(--p-proj-5-night));
+  --proj-6: light-dark(var(--p-proj-6-day), var(--p-proj-6-night));
+  --proj-7: light-dark(var(--p-proj-7-day), var(--p-proj-7-night));
   --scrim: light-dark(rgb(14 22 32 / 0.35), rgb(0 0 0 / 0.55));
 
   /* The terminal: always night. Plain values (no light-dark) so termhub's
@@ -159,6 +187,19 @@
 button, .j-btn, [role="button"] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 :where(button, .j-btn, [role="button"]):active:not(:disabled) { transform: translateY(1px); filter: brightness(.94); }
 @media (prefers-reduced-motion: reduce) { :where(button, .j-btn, [role="button"]):active:not(:disabled) { transform: none; } }
+
+/* A project's name in its colour. .pc-N sets --pc for anything in that project:
+   the chip, and whatever else a page draws with it (a card's left rule). */
+.pc-0 { --pc: var(--proj-0); } .pc-1 { --pc: var(--proj-1); } .pc-2 { --pc: var(--proj-2); } .pc-3 { --pc: var(--proj-3); }
+.pc-4 { --pc: var(--proj-4); } .pc-5 { --pc: var(--proj-5); } .pc-6 { --pc: var(--proj-6); } .pc-7 { --pc: var(--proj-7); }
+.j-proj {
+  display: inline-block; max-width: 100%; vertical-align: baseline;
+  font-size: var(--text-xs); font-weight: 600; line-height: 1.5; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  color: var(--pc, var(--ink-2)); background: color-mix(in srgb, var(--pc, var(--ink-3)) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc, var(--ink-3)) 40%, transparent);
+  border-radius: var(--radius-pill); padding: 0 7px;
+}
 
 /* ---- 3b. The corner toggle and the panel's navigation (nav.js renders both) -- */
 /* No header bar: a page is its content plus one small » in the top-left corner,

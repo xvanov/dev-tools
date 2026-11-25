@@ -377,6 +377,8 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/chat.js', handle: file('chat.client.js', JS) },
   // A Plan card's ☰ dispatch settings menu (reads and writes …/dispatch-settings below).
   { method: 'GET', path: '/dispatchMenu.js', handle: file('dispatchMenu.client.js', JS) },
+  // A project's colour and the board's project groups (projectColors.client.js).
+  { method: 'GET', path: '/projectColors.js', handle: file('projectColors.client.js', JS) },
   {
     method: 'GET',
     path: '/api/secrets',
