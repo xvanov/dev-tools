@@ -431,12 +431,24 @@ function create(db: Db) {
       );
     },
 
-    /** Fills a repaired message's body (marked repaired and whole, so the reconciler may judge it again). */
-    async repairBody(id: number | string, text: string, hash: string) {
+    /** Mail of the last 30 days stored with only its preview (see the pg twin). */
+    async partialMailMessages(limit: number, maxTries: number) {
+      return db.rows(
+        `select id, external_id, thread_external_id, subject, author_identity, occurred_at, body_text, raw from source_item
+      where source = 'graph_mail' and occurred_at > $3
+        and json_extract(raw, '$.partial') = 1
+        and coalesce(cast(json_extract(raw, '$.repairTries') as integer), 0) < $2
+      order by occurred_at desc limit $1`,
+        [limit, maxTries, sinceMs(30 * DAY)]
+      );
+    },
+
+    /** Fills a repaired message's body (marked repaired and whole); `patch` adds fields to its raw. */
+    async repairBody(id: number | string, text: string, hash: string, patch: Record<string, unknown> = {}) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = ${NOW},
-                raw = json_set(raw, '$.repaired', json('true'), '$.partial', json('false')) where id = $1`,
-        [id, text, hash]
+                raw = json_set(json_patch(raw, $4), '$.repaired', json('true'), '$.partial', json('false')) where id = $1`,
+        [id, text, hash, JSON.stringify(patch)]
       );
     },
 

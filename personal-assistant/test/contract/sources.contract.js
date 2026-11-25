@@ -430,6 +430,25 @@ module.exports = {
     assert.deepStrictEqual([r.body_text, r.content_hash, r.raw], ['found it', 'h9', { a: 1, repaired: true, partial: false }]);
   },
 
+  'repairBody: a patch adds to raw': async ({ repos, seed, db, assert }) => {
+    const id = await seed.item({ source: 'graph_mail', body: 'preview', raw: { partial: true, to: [] } });
+    await repos.sources.repairBody(id, 'the whole mail', 'h1', { to: ['a@x.test'] });
+    const r = await db.one('select body_text, raw from source_item where id = $1', [id]);
+    assert.deepStrictEqual([r.body_text, r.raw], ['the whole mail', { partial: false, to: ['a@x.test'], repaired: true }]);
+  },
+
+  'partialMailMessages: recent preview-only mail worth another try': async ({ repos, seed, assert, uniq }) => {
+    const mk = (o = {}) => seed.item({ source: 'graph_mail', externalId: uniq('mail'), body: 'preview', ...o });
+    const partial = await mk({ raw: { partial: true } });
+    const whole = await mk({ raw: { partial: false } });
+    const tried = await mk({ raw: { partial: true, repairTries: 3 } });
+    const old = await mk({ raw: { partial: true }, occurredAt: new Date(Date.now() - 40 * 86400_000) });
+    const chat = await seed.item({ source: 'graph_chat', externalId: uniq('chat'), body: 'x', raw: { partial: true } });
+    const ids = (await repos.sources.partialMailMessages(1000, 3)).map((r) => Number(r.id));
+    assert.ok(ids.includes(partial));
+    for (const x of [whole, tried, old, chat]) assert.ok(!ids.includes(x), `excludes ${x}`);
+  },
+
   'countRepairTry: one more try each time': async ({ repos, seed, db, assert }) => {
     const id = await seed.item({ source: 'graph_chat', body: '' });
     await repos.sources.countRepairTry(id);

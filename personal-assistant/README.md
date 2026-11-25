@@ -196,7 +196,9 @@ Teams channel posts (`ChannelMessage.Read.All`). Two things it does not give:
 
 Each pass is a headless session: one search since the cursor, then one batch of `read_resource`
 calls for the bodies the search only previewed. The bodies are taken from the tool results in the
-event stream (and from the files Claude Code spills large results to), never retyped by the model.
+event stream (and from the files Claude Code spills large results to, copied while the session runs
+because Claude Code deletes them on exit), never retyped by the model. A message whose full read
+failed keeps its preview, marked partial, and is read again on later passes.
 Automated mail — GitHub and Jira notifications, no-reply senders — is skipped: those sources are
 ingested directly, with structure.
 

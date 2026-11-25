@@ -324,7 +324,9 @@ never estimated from a similar-sounding model — `openrouter/anthropic/…` is 
 **Connector data comes from tool results, never from model text.** Microsoft 365 is reached
 through a headless `claude -p` (`llm.toolCalls`), and the model's only job there is to make the
 calls. Items are built from the `tool_result` blocks in the event stream, or the file Claude Code
-spilled a large one to. A relay that asks the model to *copy* a message body into its reply is
+spilled a large one to — read while the session still runs (`llm.captureSpills`): Claude Code
+deletes a session's spilled files when it exits. Messages whose full read failed are re-read later
+(`graphChat.repairIncomplete`, `graphMail.repairPartial`). A relay that asks the model to *copy* a message body into its reply is
 a relay that will one day paraphrase someone's request. (Jira predates this and still parses the
 reply; moving it over is fine.)
 

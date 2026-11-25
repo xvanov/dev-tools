@@ -482,12 +482,32 @@ function create(db: Db) {
       );
     },
 
-    /** Fills a repaired message's body (marked repaired and whole, so the reconciler may judge it again). */
-    async repairBody(id: number | string, text: string, hash: string) {
+    /**
+     * Mail of the last 30 days stored with only its preview (`partial`: the
+     * full read failed) that may be read again (fewer than `maxTries`
+     * repairs), newest first.
+     */
+    async partialMailMessages(limit: number, maxTries: number) {
+      return db.rows(
+        `select id, external_id, thread_external_id, subject, author_identity, occurred_at, body_text, raw from source_item
+      where source = 'graph_mail' and occurred_at > now() - interval '30 days'
+        and raw->>'partial' = 'true'
+        and coalesce((raw->>'repairTries')::int, 0) < $2
+      order by occurred_at desc limit $1`,
+        [limit, maxTries]
+      );
+    },
+
+    /**
+     * Fills a repaired message's body (marked repaired and whole, so the
+     * reconciler may judge it again); `patch` adds fields to its raw (a mail's
+     * recipients, which only the full read has).
+     */
+    async repairBody(id: number | string, text: string, hash: string, patch: Record<string, unknown> = {}) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
-                raw = raw || '{"repaired": true, "partial": false}'::jsonb where id = $1`,
-        [id, text, hash]
+                raw = raw || $4::jsonb || '{"repaired": true, "partial": false}'::jsonb where id = $1`,
+        [id, text, hash, JSON.stringify(patch)]
       );
     },
 

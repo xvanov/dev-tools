@@ -21,7 +21,8 @@ type Db = import('../repo/types.ts').Db;
 
 const m365 = require('./m365.ts');
 const { saveItems, getCursor } = require('./store.ts');
-const { htmlToText, stripQuoted } = require('../util/text.ts');
+const repo = require('../repo');
+const { htmlToText, stripQuoted, contentHash } = require('../util/text.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('mail');
@@ -89,11 +90,41 @@ async function run() {
     state: { since: m365.nextSince(passStarted) },
   });
   log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, changed });
+  await repairPartial().catch((err: any) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
   return changed;
+}
+
+// Mail stored with only its preview — the full read failed (from 2026-11-12
+// to the spill fix in src/llm.ts every read did) — is read again by id, a
+// few at a time and three times at most, and gets its body and recipients.
+const REPAIR_TRIES = 3;
+async function repairPartial({ limit = 10 }: { limit?: number } = {}) {
+  const partial = await repo.sources.partialMailMessages(limit, REPAIR_TRIES);
+  if (!partial.length) return 0;
+  const uriOf = (r: any) => `mail:///messages/${r.external_id}`;
+  const full = await m365.readAll(partial.map(uriOf));
+  let fixed = 0;
+  for (const r of partial) {
+    const read = full.get(uriOf(r));
+    const text = read ? stripQuoted(bodyOf(read, {})).trim() : '';
+    if (text) {
+      const patch = {
+        to: (read.toRecipients || []).map(addressOf).filter(Boolean),
+        cc: (read.ccRecipients || []).map(addressOf).filter(Boolean),
+        isDraft: !!read.isDraft,
+      };
+      await repo.sources.repairBody(r.id, text, contentHash(r.subject, text, r.author_identity), patch);
+      fixed++;
+    } else {
+      await repo.sources.countRepairTry(r.id);
+    }
+  }
+  log.info('repaired partial mail', { tried: partial.length, fixed });
+  return fixed;
 }
 
 function isDraftFolder(hit: any) {
   return /drafts/i.test(String(hit.folderName || hit.parentFolder || ''));
 }
 
-module.exports = { run, id: 'graph_mail', toItem, FIRST_RUN_DAYS };
+module.exports = { run, id: 'graph_mail', toItem, repairPartial, FIRST_RUN_DAYS };

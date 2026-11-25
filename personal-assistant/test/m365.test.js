@@ -52,6 +52,24 @@ const result = (id, content, isError = false) =>
   const blocks = spilledBlocks(`<persisted-output>\nOutput too large (73.6KB). Full output saved to: ${spill2}\n\nPreview (first 2KB): ...`);
   fs.unlinkSync(spill2);
   assert.deepStrictEqual(blocks, ['{"id":"c"}']);
+
+  // Claude Code removes spilled files when the session exits: they are read
+  // from the stream line while it runs, and parsed from that copy afterwards.
+  const { captureSpills } = require('../src/llm.ts');
+  const spill3 = path.join(os.tmpdir(), `pa-spill3-${process.pid}.txt`);
+  fs.writeFileSync(spill3, '{"id":"d","body":{"contentType":"text","content":"the whole message"}}');
+  const note = `Error: result (1,192 characters across 1 line) exceeds maximum allowed tokens. Output has been saved to ${spill3}.\nFormat: Plain text`;
+  const streamLine = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't9', content: note }] } });
+  const spills = new Map();
+  captureSpills(spills)(streamLine);
+  fs.unlinkSync(spill3);
+  const stream = [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't9', name: `${PREFIX}read_resource`, input: { uri: 'teams:///x' } }] } }),
+    streamLine,
+    JSON.stringify({ type: 'result', subtype: 'success', result: 'done' }),
+  ].join('\n');
+  assert.strictEqual(parseToolStream(stream).at(0).results.length, 1, 'without the copy: only the note');
+  assert.strictEqual(parseToolStream(stream, { spills }).at(0).results[0].body.content, 'the whole message');
 }
 
 // paging: trailer means more; one failed page is tolerated, all failed is not

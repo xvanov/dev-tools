@@ -137,7 +137,7 @@ function cliAccount(dir: string | null = config.claudeConfigDir) {
 
 // The prompt goes in on stdin: Windows caps a command line at 32k characters
 // and a distillation prompt is routinely longer.
-function runCli(args: string[], prompt: unknown, timeoutMs: number, env: Record<string, string> | null = null) {
+function runCli(args: string[], prompt: unknown, timeoutMs: number, env: Record<string, string> | null = null, onLine: ((line: string) => void) | null = null) {
   return new Promise<CliResult>((resolve, reject) => {
     const child = spawn(config.claudeBin, args, {
       cwd: cliCwd(),
@@ -151,7 +151,20 @@ function runCli(args: string[], prompt: unknown, timeoutMs: number, env: Record<
       child.kill();
       reject(new Error(`claude -p timed out after ${Math.round(timeoutMs / 1000)}s`));
     }, timeoutMs);
-    child.stdout.on('data', (d: Buffer) => (out += d));
+    let seen = 0;
+    const lines = () => {
+      let i: number;
+      while ((i = out.indexOf('\n', seen)) >= 0) {
+        try {
+          onLine!(out.slice(seen, i));
+        } catch {}
+        seen = i + 1;
+      }
+    };
+    child.stdout.on('data', (d: Buffer) => {
+      out += d;
+      if (onLine) lines();
+    });
     child.stderr.on('data', (d: Buffer) => (err += d));
     child.on('error', (e: Error) => {
       clearTimeout(timer);
@@ -159,6 +172,10 @@ function runCli(args: string[], prompt: unknown, timeoutMs: number, env: Record<
     });
     child.on('close', (code: number | null) => {
       clearTimeout(timer);
+      if (onLine && seen < out.length) {
+        out += '\n';
+        lines();
+      }
       resolve({ code, out, err });
     });
     child.stdin.end(prompt);
@@ -827,10 +844,11 @@ async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, v
   const started = Date.now();
   let usage: Usage | null = null;
   try {
-    const { code, out, err } = await runCli(args, prompt, timeoutMs, env);
+    const spills = new Map<string, string>();
+    const { code, out, err } = await runCli(args, prompt, timeoutMs, env, captureSpills(spills));
     usage = cliUsage(out);
     noteCost(usage);
-    const calls = parseToolStream(out, { code, err });
+    const calls = parseToolStream(out, { code, err, spills });
     await recordCall(meta, started, usage, true);
     return calls;
   } catch (err) {
@@ -840,15 +858,38 @@ async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, v
 }
 
 // "...exceeds maximum allowed tokens. Output has been saved to C:\...\x.txt"
-// → the blocks that file holds: a JSON array of {type, text}.
-function spilledBlocks(text: string) {
-  // Two spellings across Claude Code versions: "Output has been saved to X"
-  // and "<persisted-output> … Full output saved to: X". Missing the newer one
-  // silently dropped every large page (a 25-event calendar page is ~70KB).
-  const m = String(text).match(/(?:Output has been saved to|Full output saved to:)\s*(.+?\.(?:txt|json))/);
+// → the blocks that file holds: a JSON array of {type, text}, or (newer
+// Claude Code, "Format: Plain text") the tool's one JSON result.
+// Two spellings across Claude Code versions: "Output has been saved to X"
+// and "<persisted-output> … Full output saved to: X". Missing the newer one
+// silently dropped every large page (a 25-event calendar page is ~70KB).
+const SPILL_PATH = /(?:Output has been saved to|Full output saved to:)\s*(.+?\.(?:txt|json))/;
+
+// Claude Code 2.1.3xx removes a `--no-session-persistence` session's spilled
+// files when it exits, and the stream is parsed after it exits: every full
+// Teams and mail read came back as nothing from 2026-11-12, and every message
+// kept its 250-character search summary. So the files are read while the
+// session still runs, from each stream line that names one (`captureSpills`),
+// and parsed from that copy.
+function captureSpills(into: Map<string, string>) {
+  return (line: string) => {
+    if (!line.includes('saved to')) return;
+    for (const m of line.replace(/\\\\/g, '\\').matchAll(new RegExp(SPILL_PATH.source, 'g'))) {
+      const file = m[1]!.trim();
+      if (into.has(file)) continue;
+      try {
+        into.set(file, fs.readFileSync(file, 'utf8'));
+      } catch {}
+    }
+  };
+}
+
+function spilledBlocks(text: string, captured: Map<string, string> | null = null) {
+  const m = String(text).match(SPILL_PATH);
   if (!m) return null;
   try {
-    const parsed = JSON.parse(require('fs').readFileSync(m[1]!.trim(), 'utf8'));
+    const file = m[1]!.trim();
+    const parsed = JSON.parse(captured?.get(file) ?? require('fs').readFileSync(file, 'utf8'));
     const blocks = Array.isArray(parsed) ? parsed : [parsed];
     return blocks.map((b: unknown) => (b && typeof b === 'object' && 'text' in b ? b.text : JSON.stringify(b)));
   } catch {
@@ -856,7 +897,7 @@ function spilledBlocks(text: string) {
   }
 }
 
-function parseToolStream(out: unknown, { code = 0, err = '' }: { code?: number | null; err?: string } = {}) {
+function parseToolStream(out: unknown, { code = 0, err = '', spills = null }: { code?: number | null; err?: string; spills?: Map<string, string> | null } = {}) {
   const calls = new Map<unknown, { name: string; input: Json; results: unknown[]; error: string | null }>();
   let final: Json | null = null;
   for (const line of String(out).split(/\r?\n/)) {
@@ -881,7 +922,7 @@ function parseToolStream(out: unknown, { code = 0, err = '' }: { code?: number |
         let parts: string[] = Array.isArray(block.content)
           ? block.content.filter((p: Json) => p.type === 'text').map((p: Json) => p.text)
           : [String(block.content ?? '')];
-        const spilled = parts.length === 1 ? spilledBlocks(parts[0] ?? '') : null;
+        const spilled = parts.length === 1 ? spilledBlocks(parts[0] ?? '', spills) : null;
         if (spilled) parts = spilled as string[];
         if (block.is_error) {
           call.error = parts.join('\n').slice(0, 500);
@@ -933,6 +974,7 @@ module.exports = {
   toolCalls,
   parseToolStream,
   spilledBlocks,
+  captureSpills,
   backend,
   childEnv,
   cliAccount,
