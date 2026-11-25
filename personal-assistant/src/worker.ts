@@ -357,7 +357,10 @@ async function main() {
   // the Teams fast path above also starts it.
   if (config.reconcile.enabled) {
     every(60, 'reconcile', async () => {
-      await require('./ledger/reconcile.ts').pass();
+      const reconcile = require('./ledger/reconcile.ts');
+      await reconcile.pass();
+      // A few open commitments judged whole again (reconcile.rejudge).
+      await reconcile.rejudge();
     });
   }
 

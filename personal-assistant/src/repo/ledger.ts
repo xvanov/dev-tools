@@ -27,12 +27,14 @@ const FORMS_OF = (personExpr: unknown) => `(select case pi.kind when 'smtp' then
          from person_identity pi where pi.person_id = ${personExpr})`;
 
 // $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
-// $4 = only these commitment ids (null: all).
+// $4 = only these commitment ids (null: all), $5 = full: every related item
+// in the window, as if never checked (the re-judge).
 const DIRTY = `
   select o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source,
          array_agg(r.id order by r.fetched_at, r.id) as item_ids, max(r.fetched_at) as through
     from (
-      select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
+      select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id,
+             case when $5::boolean then null else c.ledger_checked_at end as ledger_checked_at,
              si.id as item_id, si.source, si.thread_external_id, si.occurred_at as asked_at,
              si.body_text as ask_text, per.display_name as counterparty,
              pr.gitlab_path, pr.repo_path
@@ -192,8 +194,30 @@ function create(db: Db) {
      * waiting.
      * @param {{myForms: string[], limit: number, perCommitment: number, ids?: number[]|null}} o
      */
-    async dirty({ myForms, limit, perCommitment, ids = null }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null }) {
-      return db.rows(DIRTY, [myForms, limit, perCommitment, ids && ids.length ? ids : null]);
+    async dirty({ myForms, limit, perCommitment, ids = null, full = false }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null; full?: boolean }) {
+      return db.rows(DIRTY, [myForms, limit, perCommitment, ids && ids.length ? ids : null, Boolean(full)]);
+    },
+
+    /**
+     * Open commitments due a full re-judge: never judged whole, or last judged
+     * whole more than `days` ago; the longest waiting first. Their ids.
+     */
+    async rejudgeDue(limit: number, days: number) {
+      const rows = await db.rows(
+        `select id from commitment
+          where status = 'open' and superseded_by is null
+            and (ledger_full_at is null or ledger_full_at < now() - make_interval(days => $2::int))
+          order by ledger_full_at nulls first, id
+          limit $1`,
+        [limit, days]
+      );
+      return rows.map((r) => Number(r.id));
+    },
+
+    /** Marks commitments judged whole now. */
+    async markFull(ids: unknown[]) {
+      if (!ids.length) return;
+      await db.query('update commitment set ledger_full_at = now() where id = any($1::bigint[])', [ids.map(Number)]);
     },
 
     /** Which of these commitments you reopened yourself (and did not undo): their ids, as strings. */

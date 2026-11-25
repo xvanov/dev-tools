@@ -88,6 +88,24 @@ const { prompt, cRefs, eRefs } = R.buildPrompt(commitments, items);
 }
 
 {
+  // A close may split off other open work the item raised; only a close does.
+  const v = R.parseVerdicts(
+    {
+      verdicts: [
+        { commitment: 'C1', effect: 'closes', evidence: 'E1', quote: 'Just added your role.', confidence: 0.9, remaining: '  Brannoc to   accept the transfer ' },
+        { commitment: 'C2', effect: 'progresses', evidence: 'E2', quote: 'raise the export timeout', confidence: 0.9, remaining: 'something' },
+      ],
+    },
+    cRefs,
+    eRefs
+  );
+  assert.strictEqual(v[0].remaining, 'Brannoc to accept the transfer');
+  assert.strictEqual(v[1].remaining, null);
+  assert.match(R.reasonFor(v[0]), /; still open, as its own task: Brannoc to accept the transfer$/);
+  assert.ok(R.SYSTEM.includes('"Done."'), 'a terse reply counts as a delivery');
+}
+
+{
   // A quote that is not in the item, an unknown item, or no quote: nothing.
   const v = R.parseVerdicts(
     {

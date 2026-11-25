@@ -104,6 +104,12 @@ Kubernetes-style: desired vs observed state, re-checked continuously.
   reply.
 - **Sweep** every 15 min over *all* open items: evaluate closing conditions; items with new
   related activity since their last check get a judge call. Items with none cost nothing.
+- **Re-judge whole** (`reconcile.rejudge`, a few per minute): every open item is judged again against
+  *every* related item in its window every 3 days (`commitment.ledger_full_at`, sql/051). Judging
+  only what is new made one wrong verdict final: Jon's "Done." read as progress kept the card open.
+- **Split on close:** when the item that settles a commitment also raises other open work ("the
+  installs went through; the transfers didn't"), the judge closes it and names the rest, which
+  becomes its own commitment on the same message and person (`extracted_by reconcile-split-v1`).
 - **Auto-apply** a close/progress when it is deterministic (merged PR linked by id, Jira Done) or
   the judge is confident and the change is internal and reversible. Below that, it becomes a
   one-tap proposal ("Looks done — PR #1842 merged. Close?"). Everything auto-applied shows in a

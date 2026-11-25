@@ -101,8 +101,34 @@ async function write(v: any, decision: string) {
       r
     );
     if (t.changed) await r.ledger.markEvidenceApplied(evId);
-    return { evidenceId: evId, applied: t.changed };
+    const split = t.changed && v.remaining ? await splitRemaining(r, v) : null;
+    return { evidenceId: evId, applied: t.changed, split };
   });
+}
+
+// The work a closing item raised that the closed commitment did not cover
+// ("the installs went through; the transfers didn't") becomes its own
+// commitment: same message, same person, same project, so the next pass
+// judges it in the same thread. Before, the whole card stayed "progresses"
+// and nothing ever closed it.
+const SPLIT_BY = 'reconcile-split-v1';
+async function splitRemaining(r: any, v: any) {
+  const c = await r.commitments.byId(v.commitment.id);
+  if (!c) return null;
+  const row = await r.commitments.insertRequested({
+    itemId: c.source_item_id,
+    direction: c.direction,
+    summary: v.remaining,
+    detail: `Left open when #${c.id} closed ("${R.clip(c.summary, 120)}"), from: "${R.clip(v.quote, 200)}"`,
+    personId: c.counterparty_person_id,
+    dueAt: null,
+    projectId: c.project_id,
+    repoPath: c.repo_path,
+    projectConfidence: c.project_confidence,
+    projectRationale: c.project_id ? `as #${c.id}` : null,
+    extractedBy: SPLIT_BY,
+  });
+  return row ? Number(row.id) : null;
 }
 
 /**
@@ -110,10 +136,12 @@ async function write(v: any, decision: string) {
  * @param {number}  [o.limit]   commitments judged per pass
  * @param {boolean} [o.dryRun]  judge and report; write nothing, not even the checked mark
  * @param {number[]} [o.ids]   only these commitments
+ * @param {boolean} [o.full]   every related item in the window, not only those fetched since the last check
+ * @param {number}  [o.perCommitment]  items judged per commitment
  */
-async function pass({ limit = 24, dryRun = false, ids = null }: { limit?: number; dryRun?: boolean; ids?: any[] | null } = {}) {
+async function pass({ limit = 24, dryRun = false, ids = null, full = false, perCommitment = 10 }: { limit?: number; dryRun?: boolean; ids?: any[] | null; full?: boolean; perCommitment?: number } = {}) {
   const me = await myForms();
-  const dirty = (await repo.ledger.dirty({ myForms: me, limit, perCommitment: 10, ids })).filter((d: any) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
+  const dirty = (await repo.ledger.dirty({ myForms: me, limit, perCommitment, ids, full })).filter((d: any) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
   const out = { dirty: dirty.length, judged: 0, closed: 0, proposed: 0, progressed: 0, errors: 0, results: [] as any[] };
   if (!dirty.length) return out;
 
@@ -144,13 +172,15 @@ async function pass({ limit = 24, dryRun = false, ids = null }: { limit?: number
         quote: v.quote,
         itemId: v.item ? Number(v.item.id) : null,
         reason: v.reason,
+        remaining: v.remaining || null,
       };
       if (decision !== 'skip' && !dryRun) {
         const w = await write(v, decision);
         result.applied = w.applied;
+        if (w.split) result.split = w.split;
         if (w.applied) {
           out.closed++;
-          log.info('closed on evidence', { commitment: result.commitmentId, item: result.itemId, effect: v.effect });
+          log.info('closed on evidence', { commitment: result.commitmentId, item: result.itemId, effect: v.effect, split: w.split || undefined });
         }
       }
       if (decision === 'propose') out.proposed++;
@@ -172,6 +202,23 @@ async function pass({ limit = 24, dryRun = false, ids = null }: { limit?: number
   }
   log.info('pass', { dirty: out.dirty, judged: out.judged, closed: out.closed, proposed: out.proposed, errors: out.errors, dryRun });
   return out;
+}
+
+// Each pass judges only what arrived since the last check, so one wrong
+// verdict was final: a "progresses" on the engineer's "installs went through,
+// transfers didn't" left the card open after Jon's "Done.", for good. Every
+// open commitment is judged whole again — every related item in its window —
+// every REJUDGE_DAYS, a few per pass.
+const REJUDGE_DAYS = 3;
+const REJUDGE_ITEMS = 20;
+
+async function rejudge({ limit = 3, dryRun = false, days = REJUDGE_DAYS }: { limit?: number; dryRun?: boolean; days?: number } = {}) {
+  const ids = await repo.ledger.rejudgeDue(limit, days);
+  if (!ids.length) return { due: 0, judged: 0, closed: 0, proposed: 0, progressed: 0, errors: 0, results: [] as any[] };
+  const out = await pass({ ids, full: true, limit: ids.length, perCommitment: REJUDGE_ITEMS, dryRun });
+  // A failed judgement is tried again next pass; the rest wait REJUDGE_DAYS.
+  if (!dryRun && !out.errors) await repo.ledger.markFull(ids);
+  return { due: ids.length, ...out };
 }
 
 /** Closes the judge was not sure enough to apply, newest per commitment, still open. */
@@ -216,4 +263,4 @@ async function stats() {
   return repo.ledger.reconcileStats();
 }
 
-module.exports = { pass, proposals, decide, stats, DIRTY };
+module.exports = { pass, rejudge, proposals, decide, stats, DIRTY, REJUDGE_DAYS };

@@ -11,7 +11,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { STATUS_COLUMNS, WINDOW_DAYS } = require('../ledger.ts');
-const { NOW, sinceMs, atLeastChars } = require('./_sql.ts');
+const { NOW, DAY, sinceMs, atLeastChars } = require('./_sql.ts');
 
 const SESSION_SETTLE_MINUTES = 10;
 
@@ -33,7 +33,8 @@ const BASENAME = (x: unknown) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x
 
 // $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
 // $4 = only these commitment ids (null: all), $5 = sessions settled before,
-// $6 = "fresh" evidence after. See src/repo/ledger.js DIRTY for the why of each rule.
+// $6 = "fresh" evidence after, $7 = 1: every related item in the window, as if
+// never checked (the re-judge). See src/repo/ledger.js DIRTY for the why of each rule.
 // Used for commitments never checked (ledger_checked_at is null): their window
 // is the occurred_at index (sql-sqlite/008). A checked commitment does not use
 // this. Walking every ask's 30-day window on source_item_window_idx was
@@ -42,7 +43,8 @@ const BASENAME = (x: unknown) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x
 // sql-sqlite/011) and matches them in process. An idle pass is one index seek.
 const DIRTY = `
   with o as (
-    select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
+    select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id,
+           case when $7 = 1 then null else c.ledger_checked_at end as ledger_checked_at,
            si.id as item_id, si.source, si.thread_external_id, si.occurred_at as asked_at,
            si.body_text as ask_text, per.display_name as counterparty,
            pr.gitlab_path, pr.repo_path, ${BASENAME('pr.repo_path')} as repo_base
@@ -360,7 +362,7 @@ function create(db: Db) {
     },
 
     /** Open asks with items the judge has not seen (see src/repo/ledger.js). */
-    async dirty({ myForms, limit, perCommitment, ids = null }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null }) {
+    async dirty({ myForms, limit, perCommitment, ids = null, full = false }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null; full?: boolean }) {
       const idList = ids && ids.length ? ids.map(Number) : null;
       const open = await db.rows(OPEN, [idList]);
       if (!open.length) return [];
@@ -368,13 +370,14 @@ function create(db: Db) {
       const per = perCommitment == null ? 10 : Number(perCommitment);
       const freshAfter = sinceMs(15 * 60_000);
       const settledBefore = sinceMs(SESSION_SETTLE_MINUTES * 60_000);
-      const unchecked = open.filter((c: Row) => !c.ledger_checked_at);
-      const checked = open.filter((c: Row) => c.ledger_checked_at);
+      // A full re-judge walks every ask's window, as a never-checked ask does.
+      const unchecked = full ? open : open.filter((c: Row) => !c.ledger_checked_at);
+      const checked = full ? [] : open.filter((c: Row) => c.ledger_checked_at);
       const parts: Row[] = [];
       if (unchecked.length) {
         // Never-checked asks still walk their window. There are few of them
         // (a new ask), and they sort ahead of a checked ask with nothing fresh.
-        const rows = await db.rows(DIRTY, [myForms || [], cap, per, unchecked.map((c: Row) => Number(c.id)), settledBefore, freshAfter]);
+        const rows = await db.rows(DIRTY, [myForms || [], cap, per, unchecked.map((c: Row) => Number(c.id)), settledBefore, freshAfter, full ? 1 : 0]);
         for (const r of rows) {
           r.item_ids = JSON.parse(String(r.item_ids));
           r.ledger_checked_at = '';
@@ -475,6 +478,25 @@ function create(db: Db) {
     },
 
     /** The judge saw these items: ledger_checked_at moves to the newest of their fetched_at, never backwards. */
+    /** Open commitments due a full re-judge, longest waiting first (see the pg twin). */
+    async rejudgeDue(limit: number, days: number) {
+      const rows = await db.rows(
+        `select id from commitment
+          where status = 'open' and superseded_by is null
+            and (ledger_full_at is null or ledger_full_at < $2)
+          order by ledger_full_at is not null, ledger_full_at, id
+          limit $1`,
+        [limit, sinceMs(Number(days) * DAY)]
+      );
+      return rows.map((r: Row) => Number(r.id));
+    },
+
+    /** Marks commitments judged whole now. */
+    async markFull(ids: unknown[]) {
+      if (!ids.length) return;
+      await db.query(`update commitment set ledger_full_at = ${NOW} where id in (select value from json_each($1))`, [ids.map(Number)]);
+    },
+
     async markChecked(commitmentId: number | string, itemIds: unknown[]) {
       await db.query(
         `update commitment set ledger_checked_at = max(coalesce(ledger_checked_at, t.through), t.through)

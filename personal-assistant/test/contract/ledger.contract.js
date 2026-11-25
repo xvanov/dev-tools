@@ -115,6 +115,43 @@ module.exports = {
     assert.ok(!got.includes(elsewhere));
   },
 
+  'dirty full: a checked ask is judged again against its whole window': async ({ repos, seed, assert }) => {
+    const ask = await seed.sourceItem({ thread: 'thr-full', body: 'can you approve the install?', occurredAt: new Date(Date.now() - 3600_000) });
+    const c = await seed.commitment({ sourceItemId: ask });
+    const done = await seed.sourceItem({ thread: 'thr-full', body: 'Done, approved.', occurredAt: new Date(Date.now() - 1800_000) });
+    const first = await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] });
+    await repos.ledger.markChecked(c, first[0].item_ids);
+    assert.deepStrictEqual(await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] }), [], 'nothing new');
+    const again = await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c], full: true });
+    assert.strictEqual(again.length, 1);
+    assert.ok(again[0].item_ids.map(Number).includes(done), 'the old reply is judged again');
+  },
+
+  'rejudgeDue: open asks not judged whole lately, longest waiting first': async ({ repos, seed, db, assert }) => {
+    const a = await seed.commitment();
+    const b = await seed.commitment();
+    const closed = await seed.commitment();
+    await db.query(`update commitment set status = 'done' where id = $1`, [closed]);
+    let due = await repos.ledger.rejudgeDue(1000, 3);
+    assert.ok(due.includes(a) && due.includes(b) && !due.includes(closed));
+    await repos.ledger.markFull([a]);
+    due = await repos.ledger.rejudgeDue(1000, 3);
+    assert.ok(!due.includes(a) && due.includes(b), 'judged whole just now');
+    await db.query(`update commitment set ledger_full_at = now() - interval '4 days' where id = $1`, [a]);
+    due = await repos.ledger.rejudgeDue(1000, 3);
+    assert.ok(due.includes(a), 'due again after the interval');
+    assert.ok(due.indexOf(b) < due.indexOf(a), 'never judged whole goes first');
+    await repos.ledger.markFull([]);
+  },
+
+  'markFull: judged whole now; an empty list is a no-op': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    await repos.ledger.markFull([]);
+    assert.strictEqual((await db.one('select ledger_full_at from commitment where id = $1', [c])).ledger_full_at, null);
+    await repos.ledger.markFull([c]);
+    assert.ok((await db.one('select ledger_full_at from commitment where id = $1', [c])).ledger_full_at);
+  },
+
   'markChecked: never moves back, and ignores items it cannot find': async ({ repos, seed, db, assert }) => {
     const c = await seed.commitment();
     const late = await seed.sourceItem();
