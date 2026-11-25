@@ -45,6 +45,22 @@ const STOP = new Set(
   'the and for with that this from have will your you are was were not but can all any its into out our their them then than about after before over under also just only some what when where which while who how why fix pr prs a an to of in on at by be is it or as do if so up'.split(' ')
 );
 
+/**
+ * How much of `rest` is the commitment's own summary: the share of rest's
+ * words (stop words left out) that the summary also has. A "remaining" that is
+ * the commitment itself is no close at all.
+ */
+function overlap(rest: any, summary: any) {
+  const words = (s: any) => new Set((String(s || '').toLowerCase().match(/[a-z0-9][a-z0-9._#/-]{2,}/g) || []).filter((w) => !STOP.has(w)));
+  const a = words(rest);
+  if (!a.size) return 0;
+  const b = words(summary);
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return n / a.size;
+}
+const SAME_WORK = 0.6;
+
 /** Words worth looking for in a long item: from the commitments it is judged against. */
 function terms(commitments: any) {
   const out = new Set();
@@ -267,8 +283,13 @@ function parseVerdicts(parsed: any, cRefs: any, eRefs: any, { verify = verifyQuo
       out.push({ ...base, effect: 'progresses', item, quote, reason: 'quote reads as a promise' });
       continue;
     }
-    // Other open work the item raised: only a close splits it off.
+    // Other open work the item raised: only a close splits it off. When what
+    // remains is the commitment itself, nothing was closed: it is progress.
     const rest = effect === 'closes' && v?.remaining ? clip(String(v.remaining).replace(/\s+/g, ' ').trim(), 200) : '';
+    if (rest && overlap(rest, c.summary) >= SAME_WORK) {
+      out.push({ ...base, effect: 'progresses', item, quote, reason: 'what remains is the commitment itself' });
+      continue;
+    }
     out.push({ ...base, effect, item, quote, remaining: rest || null });
   }
   return out;
@@ -309,6 +330,7 @@ module.exports = {
   batches,
   buildPrompt,
   parseVerdicts,
+  overlap,
   decide,
   reasonFor,
   describe,

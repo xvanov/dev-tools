@@ -128,7 +128,13 @@ async function splitRemaining(r: any, v: any) {
     projectRationale: c.project_id ? `as #${c.id}` : null,
     extractedBy: SPLIT_BY,
   });
-  return row ? Number(row.id) : null;
+  if (!row) return null;
+  // It starts from the item that closed its parent: only what comes after is
+  // news for it. Judged against the whole window, the parent's own evidence
+  // closed it again and split the same work off once more.
+  await r.ledger.markChecked(row.id, [v.item.id]);
+  await r.ledger.markFull([row.id]);
+  return Number(row.id);
 }
 
 /**

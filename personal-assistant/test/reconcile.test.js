@@ -103,6 +103,15 @@ const { prompt, cRefs, eRefs } = R.buildPrompt(commitments, items);
   assert.strictEqual(v[1].remaining, null);
   assert.match(R.reasonFor(v[0]), /; still open, as its own task: Brannoc to accept the transfer$/);
   assert.ok(R.SYSTEM.includes('"Done."'), 'a terse reply counts as a delivery');
+  // What remains is the commitment itself: progress, not a close.
+  const same = R.parseVerdicts(
+    { verdicts: [{ commitment: 'C1', effect: 'closes', evidence: 'E1', quote: 'Just added your role.', confidence: 0.95, remaining: cRefs.get('C1').summary }] },
+    cRefs,
+    eRefs
+  );
+  assert.deepStrictEqual([same[0].effect, same[0].remaining, same[0].reason], ['progresses', null, 'what remains is the commitment itself']);
+  assert.strictEqual(R.decide(same[0]), 'record');
+  assert.ok(R.overlap('accept the app transfer', 'approve the app install') < 0.6);
 }
 
 {
