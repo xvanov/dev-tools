@@ -192,6 +192,13 @@ function msg(over = {}) {
     contentHash(settled.subject, settled.body_text, settled.author_identity)
   );
   assert.strictEqual(chat.mergeCached(conn, null), conn);
+  // a cached row with no text takes the connector's summary, and stays partial
+  const emptyCached = { ...cached, body_text: '' };
+  const fromSummary = chat.mergeCached(conn, emptyCached);
+  assert.strictEqual(fromSummary.bodyText, 'Could you send the rollout plan by…');
+  assert.strictEqual(fromSummary.raw.partial, true, 'a summary is never marked whole');
+  const fullRead = chat.toItem(hit, { body: { contentType: 'text', content: 'Could you send the rollout plan by Friday?' } }, chats, me);
+  assert.strictEqual(chat.mergeCached(fullRead, emptyCached).raw.partial, false, 'a full read is whole');
 }
 
 // reader output: JSON lines, torn lines ignored, conversations keyed by id

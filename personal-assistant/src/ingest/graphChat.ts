@@ -91,32 +91,35 @@ function bodyOf(hit: any, full: any) {
 }
 
 // Messages saved with no text — the Teams cache sometimes has none for an
-// edited reply, and the search can miss it — are read again by id, a few
-// times at most. Their text is what lets the reconciler see an answer.
+// edited reply, and the search can miss it — or with only the search's
+// ~250-character summary (`partial`, or an older row that ends in "..." at
+// that length) are read again by id, a few times at most. Their full text is
+// what lets the reconciler see an answer and a draft see the whole ask.
 const REPAIR_TRIES = 3;
 // Only a person's message in a real chat (not the `48:` system threads, not an
 // id the cache could not read): the relay balks at a batch of junk URIs.
-async function repairEmpty({ limit = 5 }: { limit?: number } = {}) {
-  const empty = await repo.sources.emptyChatMessages(limit, REPAIR_TRIES);
-  if (!empty.length) return 0;
+async function repairIncomplete({ limit = 5 }: { limit?: number } = {}) {
+  const incomplete = await repo.sources.incompleteChatMessages(limit, REPAIR_TRIES);
+  if (!incomplete.length) return 0;
   const uriOf = (r: any) => {
     const id = r.raw?.messageId || String(r.external_id).split('/').pop();
     return r.raw?.teamId && r.raw?.channelId
       ? `teams:///teams/${r.raw.teamId}/channels/${r.raw.channelId}/messages/${id}`
       : `teams:///chats/${r.thread_external_id}/messages/${id}`;
   };
-  const full = await m365.readAll(empty.map(uriOf));
+  const full = await m365.readAll(incomplete.map(uriOf));
   let fixed = 0;
-  for (const r of empty) {
-    const text = bodyOf({}, full.get(uriOf(r))).trim();
-    if (text) {
+  for (const r of incomplete) {
+    const read = full.get(uriOf(r));
+    const text = read ? bodyOf({}, read).trim() : '';
+    if (text && text !== String(r.body_text || '').trim()) {
       await repo.sources.repairBody(r.id, text, contentHash(r.subject, text, r.author_identity));
       fixed++;
     } else {
       await repo.sources.countRepairTry(r.id);
     }
   }
-  log.info('repaired empty messages', { tried: empty.length, fixed });
+  log.info('repaired incomplete messages', { tried: incomplete.length, fixed });
   return fixed;
 }
 
@@ -182,7 +185,11 @@ async function recentChats() {
 // it is kept; the connector only *upgrades* what the cache could not know — a
 // sender address where only an AAD id was known, a chat's real topic where
 // the cache had none — and otherwise leaves the content hash alone, so the
-// item is not distilled twice.
+// item is not distilled twice. A cached row with no text takes the
+// connector's body, and with it the connector's `partial`: when that body is
+// the search summary (the full read was capped or failed), the row stays
+// marked partial so repairIncomplete reads it in full later. Marking it whole
+// once kept a 250-character summary ending "and..." as the message for good.
 function mergeCached(item: any, cached: any) {
   if (!cached) return item;
   const author = String(cached.author_identity || '');
@@ -201,7 +208,7 @@ function mergeCached(item: any, cached: any) {
       ...(cached.raw || {}),
       ...fill,
       mentionsMe: Boolean(cached.raw?.mentionsMe || item.raw.mentionsMe),
-      partial: false,
+      partial: cached.body_text ? false : Boolean(item.raw.partial),
       via: 'teams-cache',
     },
   };
@@ -273,8 +280,8 @@ async function run() {
   });
   await learnSenders(learned);
   log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, fromCache: cached.size, changed });
-  await repairEmpty().catch((err: any) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
+  await repairIncomplete().catch((err: any) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
   return changed;
 }
 
-module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe, mergeCached, quotedOf, bodyOf, repairEmpty };
+module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe, mergeCached, quotedOf, bodyOf, repairIncomplete };

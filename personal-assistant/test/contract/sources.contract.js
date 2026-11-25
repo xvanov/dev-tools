@@ -407,24 +407,27 @@ module.exports = {
     assert.strictEqual((await repos.sources.m365Mail()).mail, 'me@m365.test');
   },
 
-  'emptyChatMessages: recent empty Teams messages worth another try': async ({ repos, seed, db, assert, uniq }) => {
+  'incompleteChatMessages: recent empty or summary-only Teams messages worth another try': async ({ repos, seed, assert, uniq }) => {
     const thr = `19:${uniq('chat')}`;
     const mk = (n, o = {}) => seed.item({ source: 'graph_chat', thread: thr, externalId: `${thr}/${n}`, body: '', ...o });
+    const clipped = `${'word '.repeat(50)}and...`;
     const empty = await mk(1001);
     const full = await mk(1002, { body: 'has text' });
     const tried = await mk(1003, { raw: { repairTries: 3 } });
-    const old = await mk(1004, { occurredAt: new Date(Date.now() - 20 * 86400_000) });
-    const ids = (await repos.sources.emptyChatMessages(1000, 3)).map((r) => Number(r.id));
-    assert.ok(ids.includes(empty));
-    for (const x of [full, tried, old]) assert.ok(!ids.includes(x));
-    assert.ok(db);
+    const old = await mk(1004, { occurredAt: new Date(Date.now() - 40 * 86400_000) });
+    const partial = await mk(1005, { body: 'short summary…', raw: { partial: true } });
+    const legacy = await mk(1006, { body: clipped, raw: { partial: false } });
+    const repaired = await mk(1007, { body: clipped, raw: { repaired: true } });
+    const ids = (await repos.sources.incompleteChatMessages(1000, 3)).map((r) => Number(r.id));
+    for (const x of [empty, partial, legacy]) assert.ok(ids.includes(x), `includes ${x}`);
+    for (const x of [full, tried, old, repaired]) assert.ok(!ids.includes(x), `excludes ${x}`);
   },
 
-  'repairBody: the text, a new hash, marked repaired': async ({ repos, seed, db, assert }) => {
+  'repairBody: the text, a new hash, marked repaired and whole': async ({ repos, seed, db, assert }) => {
     const id = await seed.item({ source: 'graph_chat', body: '', raw: { a: 1 } });
     await repos.sources.repairBody(id, 'found it', 'h9');
     const r = await db.one('select body_text, content_hash, raw from source_item where id = $1', [id]);
-    assert.deepStrictEqual([r.body_text, r.content_hash, r.raw], ['found it', 'h9', { a: 1, repaired: true }]);
+    assert.deepStrictEqual([r.body_text, r.content_hash, r.raw], ['found it', 'h9', { a: 1, repaired: true, partial: false }]);
   },
 
   'countRepairTry: one more try each time': async ({ repos, seed, db, assert }) => {

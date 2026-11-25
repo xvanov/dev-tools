@@ -406,31 +406,36 @@ function create(db: Db) {
     },
 
     /**
-     * Teams chat messages of the last 14 days that arrived empty and may be
-     * fetched again (fewer than `maxTries` repairs), newest first. pg's
+     * Teams chat messages of the last 30 days whose text is missing or only the
+     * search's ~250-character summary (see the pg twin), that may be fetched
+     * again (fewer than `maxTries` repairs), newest first. pg's
      * split_part(external_id, '/', 2) ~ '^[0-9]+$' is spelled with instr/substr/glob.
      */
-    async emptyChatMessages(limit: number, maxTries: number) {
+    async incompleteChatMessages(limit: number, maxTries: number) {
       return db.rows(
-        `select id, external_id, thread_external_id, subject, author_identity, raw from (
+        `select id, external_id, thread_external_id, subject, author_identity, body_text, raw from (
            select *, case when instr(substr(external_id, instr(external_id, '/') + 1), '/') > 0
                           then substr(substr(external_id, instr(external_id, '/') + 1), 1, instr(substr(external_id, instr(external_id, '/') + 1), '/') - 1)
                           else substr(external_id, instr(external_id, '/') + 1) end as part2
              from source_item
-            where source = 'graph_chat' and body_text = '' and occurred_at > $3
+            where source = 'graph_chat' and occurred_at > $3
+              and (body_text = ''
+                   or json_extract(raw, '$.partial') = 1
+                   or (json_extract(raw, '$.repaired') is null and length(body_text) between 200 and 300
+                       and (body_text like '%...' or body_text like '%…')))
               and coalesce(cast(json_extract(raw, '$.repairTries') as integer), 0) < $2
               and thread_external_id like '19:%' and instr(external_id, '/') > 0)
           where part2 <> '' and part2 not glob '*[^0-9]*'
           order by occurred_at desc limit $1`,
-        [limit, maxTries, sinceMs(14 * DAY)]
+        [limit, maxTries, sinceMs(30 * DAY)]
       );
     },
 
-    /** Fills a repaired message's body (marked repaired, so the reconciler may judge it again). */
+    /** Fills a repaired message's body (marked repaired and whole, so the reconciler may judge it again). */
     async repairBody(id: number | string, text: string, hash: string) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = ${NOW},
-                raw = json_set(raw, '$.repaired', json('true')) where id = $1`,
+                raw = json_set(raw, '$.repaired', json('true'), '$.partial', json('false')) where id = $1`,
         [id, text, hash]
       );
     },

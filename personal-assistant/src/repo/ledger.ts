@@ -48,7 +48,7 @@ const DIRTY = `
              (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id) as same_thread
         from source_item r
        -- Not the message the ask came from — unless its text arrived only
-       -- later (graphChat.repairEmpty): then it may hold the answer itself, as
+       -- later (graphChat.repairIncomplete): then it may hold the answer itself, as
        -- a reply quoting the question did once.
        where (r.id <> o.item_id or r.raw->>'repaired' is not null)
          and (r.occurred_at > o.asked_at or r.id = o.item_id)

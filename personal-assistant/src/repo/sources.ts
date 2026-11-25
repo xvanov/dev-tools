@@ -461,13 +461,20 @@ function create(db: Db) {
     // --- for src/ingest/graphChat.js
 
     /**
-     * Teams chat messages of the last 14 days that arrived empty and may be
-     * fetched again (fewer than `maxTries` repairs), newest first.
+     * Teams chat messages of the last 30 days whose text is missing or only the
+     * search's ~250-character summary — empty, marked `partial`, or (rows from
+     * before `partial` was kept) 200–300 characters ending in "..." or "…" and
+     * never repaired — that may be fetched again (fewer than `maxTries`
+     * repairs), newest first.
      */
-    async emptyChatMessages(limit: number, maxTries: number) {
+    async incompleteChatMessages(limit: number, maxTries: number) {
       return db.rows(
-        `select id, external_id, thread_external_id, subject, author_identity, raw from source_item
-      where source = 'graph_chat' and body_text = '' and occurred_at > now() - interval '14 days'
+        `select id, external_id, thread_external_id, subject, author_identity, body_text, raw from source_item
+      where source = 'graph_chat' and occurred_at > now() - interval '30 days'
+        and (body_text = ''
+             or raw->>'partial' = 'true'
+             or (raw->>'repaired' is null and length(body_text) between 200 and 300
+                 and (body_text like '%...' or body_text like '%…')))
         and coalesce((raw->>'repairTries')::int, 0) < $2
         and thread_external_id like '19:%' and split_part(external_id, '/', 2) ~ '^[0-9]+$'
       order by occurred_at desc limit $1`,
@@ -475,11 +482,11 @@ function create(db: Db) {
       );
     },
 
-    /** Fills a repaired message's body (marked repaired, so the reconciler may judge it again). */
+    /** Fills a repaired message's body (marked repaired and whole, so the reconciler may judge it again). */
     async repairBody(id: number | string, text: string, hash: string) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
-                raw = raw || '{"repaired": true}'::jsonb where id = $1`,
+                raw = raw || '{"repaired": true, "partial": false}'::jsonb where id = $1`,
         [id, text, hash]
       );
     },

@@ -1517,7 +1517,7 @@ not in the Map is not done, and a new one gets added there first.
     `chatType: group`: 149 items, 57 commitments (10 open). Drafts are the owner's unsent or
     sent text: 55 of 62 are also stored from the real chat. Their cards name the owner and link
     to the drafts thread instead of the chat. Keep only the self chat (the notes thread) and drop the
-    rest, as `graphChat.repairEmpty` already does.
+    rest, as `graphChat.repairIncomplete` already does.
     Done: the reader drops every `48:` thread but `48:notes`, which it keeps as `chatType: self`
     and distills at once even though it is yours (see 8.4.34 for the cleanup). (fb34f2f)
   - [x] **8.4.36 teams-ask: distill skips any message under 40 characters.** `MIN_BODY_CHARS`
