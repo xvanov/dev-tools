@@ -239,6 +239,14 @@ classifies as `serve-holds-http-port` in `http` mode on a healthy single-port ma
 cause of the loss unknown, node `Running`). The repair is only `tailscale serve --bg
 --https=<publishPort> http://127.0.0.1:<publishPort>`; `watchdog/remedies/serve-holds-http-port.ps1`
 does that whenever a front answers on loopback, and never turns Serve off on such a machine.
+If the node has meanwhile **re-registered as a new node** (2026-11-26, LAP-US101: tailnet IPs
+changed `100.126.164.21` → `100.103.204.112`, cause unknown), tailscaled's stale sockets sit on the
+*old* address, the new one is empty, and the same loss classifies as `front-bound-wrong-address`.
+Serve cannot be re-asserted there: on a new node `tailscale serve --bg` prints "Serve is not enabled
+on your tailnet. To enable, visit: …" and **blocks** until someone clicks the link, so anything
+unattended must run it under a timeout. `watchdog/remedies/front-bound-wrong-address.ps1` tries it
+for 15s, then falls back to `start-http.ps1`, which leaves the box plain-HTTP until a human enables
+Serve for the node and re-runs `start.ps1`.
 `restart-front.ps1` used to read equal ports as plain-HTTP and so, on the *default* layout, tried to
 bind `<tailnet-ip>:7000` — a port `tailscaled` already holds for Serve. It failed the health check
 and left no front at all; since `restart-sessiond.ps1` calls it, a deliberate sessiond restart took
