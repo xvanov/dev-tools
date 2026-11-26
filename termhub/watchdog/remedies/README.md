@@ -109,7 +109,7 @@ process. So the split below is not about difficulty, it is about cost:
 | `service-missing` | no unit file at all | ✋ escalates — reinstalling is a judgement call, not a reflex |
 | `not-listening` | unit active, nothing bound (usually `TERMHUB_BIND` names an address the machine no longer has) | ✋ escalates: **live PTYs exist**, and a restart would kill them |
 | `http-unhealthy` | unit active, `/api/health` not ok | ✋ escalates for the same reason — killing running work to fix a health blip is not a repair |
-| `port-squatted` | the port is held by something that is not termhub's main process | ✋ escalates; killing an unidentified process is worse than the outage |
+| `port-squatted` | the port is held by something that is not termhub's main process | ✅ **only** when the holder is proven to be termhub's own jarvisd front (child of MainPID, in the unit's cgroup, `front --port <port>` command line) stuck on an address the machine no longer has — e.g. after the tailnet IP changed. SIGTERM it; `server.js` respawns it on the current address, and the PTYs (in ptyd) are untouched. Any other holder: ✋ escalates, killing an unidentified process is worse than the outage |
 
 ## Signatures — Windows
 
