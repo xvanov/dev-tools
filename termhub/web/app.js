@@ -83,7 +83,7 @@ async function api(path, opts) {
   const res = await fetch(path, withGuard(opts));
   const text = await res.text();
   const body = text ? JSON.parse(text) : {};
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { status: res.status });
   return body;
 }
 
@@ -194,7 +194,14 @@ function refresh() {
       $('#status-line').textContent =
         `${n} session${n === 1 ? '' : 's'} (${live} running)` + (r ? ` · ${r} restorable` : '');
     } catch (e) {
-      $('#status-line').textContent = 'server unreachable';
+      // 401 = the passkey sign-in (shared with the PA) expired, not a dead server:
+      // say so and link the sign-in page instead of a misleading "unreachable".
+      const line = $('#status-line');
+      if (e && e.status === 401) {
+        line.innerHTML = 'signed out · <a href="/pa/login">sign in</a>';
+      } else {
+        line.textContent = 'server unreachable';
+      }
     }
     const sig = uiSignature();
     if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); updateChrome(); renderVoice(); }
