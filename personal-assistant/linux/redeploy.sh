@@ -52,7 +52,18 @@ if [ "$PULL" = 1 ]; then
 fi
 HEAD_SHA="$(git -C "$PA_DIR" rev-parse HEAD 2>/dev/null)"
 
-if unit pa-voice.service && changed personal-assistant/voice; then
+# PA_VOICE_URL=off (config.voice.url empty): this machine keeps pa-voice off, so a
+# redeploy stops and disables it rather than restarting it.
+VOICE_URL="$(cd "$PA_DIR" && "$NODE" -p 'require("./src/config").config.voice.url' 2>/dev/null || echo unknown)"
+if unit pa-voice.service && [ -z "$VOICE_URL" ]; then
+  if systemctl --user is-enabled --quiet pa-voice.service || systemctl --user is-active --quiet pa-voice.service; then
+    if [ "$DRY" = 1 ]; then say "would stop and disable pa-voice (PA_VOICE_URL=off)"
+    else
+      say "PA_VOICE_URL=off: stopping and disabling pa-voice"
+      systemctl --user disable --now pa-voice.service >/dev/null 2>&1 || say "pa-voice did not stop - continuing."
+    fi
+  fi
+elif unit pa-voice.service && changed personal-assistant/voice; then
   if [ "$DRY" = 1 ]; then say "would restart pa-voice"
   else
     say "restarting pa-voice"

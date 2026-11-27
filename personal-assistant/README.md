@@ -1653,6 +1653,8 @@ The same steps with the CPU build of PyTorch by default (a fifth of the download
 16-core CPU still has the first sentence out in about half a second), under
 `~/.local/share/personal-assistant/voice-venv` and `voice-models`, then a `pa-voice` systemd user
 unit (`linux/pa-voice.service`, rendered by `linux/units.js --voice`), enabled and started.
+With `PA_VOICE_URL=off` in `.env` the machine keeps the service off: `install-voice.sh` leaves the
+unit disabled, and `linux/redeploy.sh` stops and disables one that is running (frees ~1.5 GB of RAM).
 `voice/selftest.py --device cpu` is its self-test. `server.py` falls back to the CPU on its own
 when the venv has CUDA but the driver does not answer.
 

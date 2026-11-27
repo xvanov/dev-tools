@@ -106,6 +106,16 @@ say "self-test (loads Kokoro on the $DEVICE: ~30 s the first time)"
 
 # --- the service ------------------------------------------------------------------
 
+# PA_VOICE_URL=off in .env (config.voice.url empty) = this machine keeps the
+# voice service off: no unit is enabled or started, and one already there is
+# stopped and disabled. The venv and models above stay, ready for when it's on.
+VOICE_URL="$(cd "$ROOT" && node -p 'require("./src/config").config.voice.url')"
+if [ "$UNIT" = 1 ] && [ -z "$VOICE_URL" ]; then
+  say "PA_VOICE_URL=off: leaving the pa-voice unit off"
+  systemctl --user disable --now pa-voice.service >/dev/null 2>&1 || true
+  UNIT=0
+fi
+
 if [ "$UNIT" = 1 ]; then
   say "writing the pa-voice user unit"
   ( cd "$ROOT" && node "$HERE/units.js" --voice )
