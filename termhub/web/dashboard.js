@@ -707,13 +707,22 @@ async function boot() {
   await selectDay(state.selected || todayKey());
 
   // Today keeps moving while the page is open; anything older never changes.
+  // One refresh at a time: a slow tick must not overlap the next. Overlapping
+  // ticks each hold a request open, and six of them fill the browser's
+  // connection limit for this host, stalling every other request on the page.
+  let ticking = false;
   setInterval(async () => {
-    if (state.selected !== todayKey()) return;
-    await loadMachines().catch(() => {});   // keep the strip's per-machine numbers live
-    await loadHistory();
-    await loadLiveSessions();
-    renderCalendar();
-    await selectDay(todayKey());
+    if (ticking || state.selected !== todayKey()) return;
+    ticking = true;
+    try {
+      await loadMachines().catch(() => {});   // keep the strip's per-machine numbers live
+      await loadHistory();
+      await loadLiveSessions();
+      renderCalendar();
+      await selectDay(todayKey());
+    } finally {
+      ticking = false;
+    }
   }, 15000);
 }
 

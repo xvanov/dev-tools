@@ -163,7 +163,13 @@ function lookup(hostname: any, options: any, cb: any) {
 function fetchJson(url: any, { timeoutMs = PROBE_TIMEOUT_MS }: { timeoutMs?: any } = {}) {
   return new Promise<any>((resolve) => {
     let settled = false;
-    const done = (v: any) => { if (!settled) { settled = true; resolve(v); } };
+    let timer: any = null;
+    const done = (v: any) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(v);
+    };
     let target;
     try { target = new URL(url); } catch { return done(null); }
     const lib = target.protocol === 'http:' ? http : https;
@@ -188,6 +194,14 @@ function fetchJson(url: any, { timeoutMs = PROBE_TIMEOUT_MS }: { timeoutMs?: any
     });
     req.on('timeout', () => { req.destroy(); done(null); });
     req.on('error', () => done(null));
+    // A wall-clock deadline of our own, not just the `timeout` option above.
+    // Under Bun (the jarvisd front) that option never fires while the TCP
+    // connect is still pending, so a peer whose firewall drops packets held
+    // the probe until the kernel gave up (~130s on Linux). The dashboard asks
+    // every 15s, so those hung probes filled the browser's six connections to
+    // this host and every other request on the page — creating a terminal
+    // among them — queued behind them for two minutes.
+    timer = setTimeout(() => { req.destroy(); done(null); }, timeoutMs);
   });
 }
 
