@@ -48,6 +48,7 @@ const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = req
 const { parseEnvSpec } = require('./lib/sessionEnv.ts');
 const { parseNoRc } = require('./lib/shell.ts');
 const ptydClient = require('./lib/ptydClient.ts');
+const resources = require('./lib/resources.ts');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -650,6 +651,11 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           if (e && e.busy) res.setHeader('Retry-After', '2');
           return sendJson(res, 503, { error: String(e && e.message ? e.message : e) });
         }
+      }
+
+      // RAM, swap, disk and GPU headroom for the sidebar's resource strip (lib/resources.ts).
+      if (req.method === 'GET' && pathname === '/api/resources') {
+        return sendJson(res, 200, { machine: MACHINE_NAME, ...(await resources.snapshot()) });
       }
 
       // ---- idle tracking ------------------------------------------------------

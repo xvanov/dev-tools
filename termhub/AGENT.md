@@ -107,7 +107,7 @@ Every request that changes something (any method but GET/HEAD/OPTIONS under `/ap
 `curl -X POST` answers `403 missing X-Termhub: 1 header`; `curl -d` without `-H
 'content-type: application/json'` answers 415.
 
-HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`
+HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/resources` (RAM/swap/disk/GPU for the sidebar strip, `lib/resources.ts`), `GET /api/sessions`
 (returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows, links?}` — `links` is what the session belongs to, `{card?, run?, job?, step?, story?, external?, pr?}`, ids only, unknown or malformed entries dropped (`lib/sessionLinks.js`); returned on every session in `GET /api/sessions` and rendered as Plan/Build links under its name in Run), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an

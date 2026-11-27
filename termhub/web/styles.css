@@ -146,6 +146,18 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* ---- resource strip: RAM / swap / disk / GPU headroom (renderResources in app.js) ---- */
+.res-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(48px, 1fr)); gap: 6px; padding: 6px 14px 4px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.res-strip[hidden] { display: none; }
+.res-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; cursor: default; }
+.res-cell .res-top { display: flex; justify-content: space-between; gap: 4px; white-space: nowrap; }
+.res-cell .res-val { color: var(--fg); font-weight: 600; }
+.res-cell .res-bar { height: 3px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
+.res-cell .res-bar > i { display: block; height: 100%; background: var(--accent); }
+.res-cell.warn .res-val { color: var(--amber); }
+.res-cell.warn .res-bar > i { background: var(--amber); }
+.res-cell.danger .res-val, .res-cell.danger .res-lbl { color: var(--danger); }
+.res-cell.danger .res-bar > i { background: var(--danger); }
 .sidebar-foot { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
 
 /* ---- main ---- */

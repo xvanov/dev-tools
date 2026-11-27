@@ -62,6 +62,9 @@
         <span id="idle-total">—</span>
       </a>
       <div id="session-list"></div>
+      <!-- This machine's headroom (GET /api/resources, lib/resources.ts): RAM, swap, disk, GPU.
+           Amber, then red, as a swarm of agents eats into it. Hover for the numbers. -->
+      <div id="res-strip" class="res-strip" hidden></div>
       <div class="sidebar-foot"><span id="machine-name"></span><span id="status-line">connecting…</span></div>
     </aside>
 

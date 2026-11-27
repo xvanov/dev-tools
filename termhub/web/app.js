@@ -4072,6 +4072,36 @@ window.addEventListener('hashchange', () => {
   if (/^#session=/.test(location.hash || '')) refresh().then(openDeepLink);
 });
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
+// ---- resource strip: this machine's RAM / swap / disk / GPU (GET /api/resources) ----
+// Amber past the server's `warn` level, red past `danger` (lib/resources.ts LEVELS).
+// A machine whose sessiond predates the route (404) or a signed-out tab just hides it.
+function resGb(n) { const g = n / 1024 ** 3; return g >= 100 ? g.toFixed(0) : g.toFixed(1); }
+function renderResources(r) {
+  const el = $('#res-strip');
+  const cells = [];
+  const add = (key, lbl, pair, levels, extra) => {
+    if (!pair || !pair.total) return;
+    const f = Math.min(1, pair.used / pair.total);
+    const cls = f >= levels.danger ? 'danger' : f >= levels.warn ? 'warn' : '';
+    const tip = `${lbl}: ${resGb(pair.used)} of ${resGb(pair.total)} GB used (${Math.round(f * 100)}%)${extra || ''}`;
+    cells.push(`<div class="res-cell ${cls}" data-res="${key}" title="${escapeHtml(tip)}">` +
+      `<div class="res-top"><span class="res-lbl">${lbl}</span><span class="res-val">${Math.round(f * 100)}%</span></div>` +
+      `<div class="res-bar"><i style="width:${(f * 100).toFixed(1)}%"></i></div></div>`);
+  };
+  const L = r.levels || {};
+  add('mem', 'RAM', r.mem, L.mem || { warn: 0.8, danger: 0.9 });
+  add('swap', 'Swap', r.swap, L.swap || { warn: 0.5, danger: 0.75 });
+  add('disk', 'Disk', r.disk, L.disk || { warn: 0.85, danger: 0.93 });
+  (r.gpus || []).forEach((g, i) => add('gpu' + i, r.gpus.length > 1 ? 'GPU' + i : 'GPU', g, L.gpu || { warn: 0.85, danger: 0.95 },
+    `, ${g.name}${g.util != null ? `, ${g.util}% busy` : ''}`));
+  el.innerHTML = cells.join('');
+  el.hidden = !cells.length;
+}
+async function refreshResources() {
+  try { renderResources(await api('/api/resources')); } catch { $('#res-strip').hidden = true; }
+}
+refreshResources();
+setInterval(refreshResources, 5000);
 refreshIdle();
 setInterval(refreshIdle, 5000);      // today's totals; the badges tick locally
 setInterval(renderIdleBar, 1000);   // in-place text, no sidebar rebuild
