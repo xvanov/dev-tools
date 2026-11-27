@@ -64,8 +64,8 @@ other machines to maintain.
   own push and **stops** the clock — you can't un-idle a session that's out of tokens. Off until
   you write a topic into `notify.json`; the measuring runs regardless. See
   [Agent time & idle tracking](#agent-time--idle-tracking).
-- **Update from the UI** — the system-wide **Update** at the top of every page's » panel (with the running version) checks GitHub (once a day in the background, and
-  on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
+- **Update from the UI** — the system-wide **Update** at the top of every page's » panel (with the running version) checks GitHub and what is running (hourly in the background, and
+  on demand) and, when the stack changed or runs code older than the checkout, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
 - **Run a command, get its output** — `POST /api/exec {argv, cwd?, timeoutMs?}` returns
   `{code, stdout, stderr}`. argv is never given to a shell. It is for programs (the personal
@@ -262,11 +262,13 @@ first when one of them has died.
   filesystem as you type; leave blank for home) and a command. The **Command** box is a
   single editable combobox: type a command, pick a preset from the list, or clear it for a
   plain shell. The command runs in a fresh shell, so when it exits you still have a shell.
-- **Update** (top of the » panel on every page; opens Run with `#update`) — a panel showing whether the system is behind GitHub and
-  whether the tool itself changed, with the incoming commit list. **Update now** opens a
+- **Update** (top of the » panel on every page; opens Run with `#update`) — a panel showing whether the system is behind GitHub,
+  whether the tool itself changed (with the incoming commit list), and whether a running part
+  (termhub's front, the PA worker) is older than the checkout - a commit made on this machine is
+  never behind GitHub, but what runs can still be old. **Update now** opens a
   terminal that runs the safe updater (see below); it stays clickable even when the check says
   up to date (**Re-deploy**) or could not run, and uncommitted edits are stashed around the pull
-  and put back. It also checks once a day in the background
+  and put back. It also checks hourly in the background
   and highlights the button when an update is waiting. The panel also reports your **Claude Code
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old

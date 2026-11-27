@@ -48,6 +48,22 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   assert.ok(!/['"]ci['"]/.test(src), 'no npm ci in deploy.js');
 }
 
+// ---- diffBase: measure from what is served ----
+// termhub's updater passed the HEAD from before its pull. Commits made in the
+// checkout itself were never "pulled", so every update found nothing changed
+// and the worker ran a 12-day-old build.
+{
+  const { diffBase } = require('../src/supervisor/deploy.ts');
+  const has = (r) => r !== 'deadbee';
+  const from = 'a'.repeat(40);
+  const serving = 'b'.repeat(40);
+  assert.strictEqual(diffBase({ from, serving, resolves: has }), serving, 'an older serving commit wins over the caller');
+  assert.strictEqual(diffBase({ from, serving: from, resolves: has }), from);
+  assert.strictEqual(diffBase({ from, serving: null, resolves: has }), from, 'no supervisor answering keeps from');
+  assert.strictEqual(diffBase({ from, serving: 'started-1795791983072', resolves: has }), from, 'no git at start keeps from');
+  assert.strictEqual(diffBase({ from, serving: 'deadbee', resolves: has }), from, 'a commit this clone lacks keeps from');
+}
+
 // ---- plan ----
 {
   const p = (o) => plan({ from: 'abc', sourceOnDisk: 'aaaaaaaaaaaa', supervisor: live, ...o });

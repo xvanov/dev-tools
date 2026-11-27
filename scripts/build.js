@@ -153,7 +153,13 @@ const TARGETS = {
       // changed; a compiled binary cannot read its source back, so embed it.
       const supSrc = fs.readFileSync(path.join(REPO, 'personal-assistant', 'src', 'supervisor', 'index.ts'));
       const supHash = require('crypto').createHash('sha1').update(supSrc).digest('hex').slice(0, 12);
-      const args = ['build', '--compile', 'src/main.ts', '--outfile', target, '--define', `process.env.PA_SUPERVISOR_SOURCE_BUILT=${JSON.stringify(supHash)}`];
+      // Likewise the commit it was built from. The worker reports the commit it
+      // serves (/healthz, /api/version) and deploys compare it with HEAD; read
+      // from git at start, a binary built weeks ago claims today's checkout.
+      const built = spawnSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).stdout?.trim() || '';
+      const args = ['build', '--compile', 'src/main.ts', '--outfile', target,
+        '--define', `process.env.PA_SUPERVISOR_SOURCE_BUILT=${JSON.stringify(supHash)}`,
+        '--define', `process.env.PA_BUILT_COMMIT=${JSON.stringify(built)}`];
       if (profile !== 'debug') args.push('--minify-syntax', '--minify-whitespace');
       return { cmd: bun, args, cwd: path.join(REPO, 'jarvisd'), env: { ...process.env }, artifacts: [`${target}${EXE}`] };
     },

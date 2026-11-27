@@ -3,7 +3,8 @@
 // Update check for the front tier.
 //
 // termhub lives in a subdirectory (`termhub/`) of the `dev-tools` git repo. This
-// module fetches the upstream branch and reports whether HEAD is behind it, with
+// module fetches the upstream branch and reports whether HEAD is behind it, which
+// running parts are older than HEAD (staleParts), with
 // a flag for whether the termhub tool *itself* changed (so the UI can nudge the
 // user to update only when it matters). It does NOT apply anything — applying is
 // done by opening a terminal that runs the platform updater (windows/update.ps1),
@@ -18,11 +19,22 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 const claudeCli = require('./claudeCli.ts');
+const build = require('./build.ts');
+const { resolvePaUrl } = require('./paProxy.ts');
 
 const PROJECT_DIR = path.join(__dirname, '..'); // .../termhub
 // The parts of the repo one update deploys.
 const STACK_PARTS = ['termhub', 'personal-assistant'];
+// Which files each running part is made of. The front runs termhub/ (through
+// jarvisd/src on a jarvisd front); the PA worker is personal-assistant/, and a
+// compiled jarvisd also bundles jarvisd/ and schemas/ (supervisor/deploy.ts plan).
+const PART_PATHS: Record<string, string[]> = {
+  termhub: ['termhub/', 'jarvisd/'],
+  'personal-assistant': ['personal-assistant/', 'jarvisd/', 'schemas/'],
+};
+const PA_PROBE_MS = 2000;
 
 // Re-running `git fetch` on every poll is wasteful; serve a recent result unless
 // the caller forces a refresh (the "Check again" button).
@@ -75,6 +87,51 @@ function updateCommand() {
   return `git pull --ff-only && { ${claudeCli.updateCommand()} || true; } && systemctl --user restart termhub`;
 }
 
+// The commit the PA's serving generation reports (GET /healthz), or null. With a
+// wall-clock deadline of its own: the http `timeout` option does not cover a
+// pending connect under Bun (see lib/peers.ts fetchJson).
+function paServingCommit(base: string | null = resolvePaUrl()) {
+  return new Promise<string | null>((resolve) => {
+    if (!base) return resolve(null);
+    let done = false;
+    const finish = (v: string | null) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    let req: any;
+    const timer = setTimeout(() => { if (req) req.destroy(); finish(null); }, PA_PROBE_MS);
+    try {
+      req = http.get(new URL('/healthz', base), (res: any) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: any) => { raw += c; });
+        res.on('end', () => {
+          try { finish((JSON.parse(raw) || {}).commit || null); } catch { finish(null); }
+        });
+      });
+      req.on('error', () => finish(null));
+    } catch { finish(null); }
+  });
+}
+
+// Is a running part older than the checkout? Updates used to be offered only when
+// HEAD was behind upstream, but this checkout is also where commits are MADE and
+// pushed from — so HEAD is never behind, the button never lit, and the PA worker
+// ran a 12-day-old build. A part is stale when files it is made of changed between
+// the commit it runs and HEAD. Pure but for `git`; exported for the test.
+async function staleParts(head: string, running: Record<string, string | null>, gitFn: any = git) {
+  const out: any[] = [];
+  for (const [part, commit] of Object.entries(running)) {
+    if (!commit || !/^[0-9a-f]{7,40}$/i.test(commit) || head.startsWith(commit) || commit.startsWith(head)) continue;
+    const paths = PART_PATHS[part] || [`${part}/`];
+    // The repo root, so pathspecs are repo-relative wherever git runs from.
+    const names = await gitFn(['diff', '--name-only', commit, head, '--', ...paths.map((p) => `:/${p}`)]);
+    if (!names.ok) continue; // not in this clone (shallow): say nothing rather than guess
+    const files = names.out.split('\n').filter(Boolean);
+    if (!files.length) continue;
+    const count = await gitFn(['rev-list', '--count', `${commit}..${head}`, '--', ...paths.map((p) => `:/${p}`)]);
+    out.push({ part, running: commit.slice(0, 7), files: files.length, commits: Number(count.out) || null });
+  }
+  return out;
+}
+
 async function compute() {
   const head = await git(['rev-parse', 'HEAD']);
   const version = await gitDescribe();
@@ -86,6 +143,13 @@ async function compute() {
     return { available: false, version, claudeCli: claude, error: 'not a git checkout', checkedAt: Date.now() };
   }
 
+  // What is running against what is checked out, before any upstream question:
+  // a checkout with no upstream still runs code, and that code can still be old.
+  const stale = await staleParts(head.out, {
+    termhub: build.commit(),
+    'personal-assistant': await paServingCommit(),
+  });
+
   // Best-effort fetch; if it fails (offline, auth), fall back to comparing the
   // refs we already have rather than erroring out.
   const fetched = await git(['fetch', '--quiet']);
@@ -93,7 +157,8 @@ async function compute() {
   const upstreamRef = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
   if (!upstreamRef.ok || !upstreamRef.out) {
     return {
-      available: false,
+      available: stale.length > 0,
+      stale,
       version,
       claudeCli: claude,
       current: head.out.slice(0, 7),
@@ -133,7 +198,8 @@ async function compute() {
   }
 
   return {
-    available: behind > 0,
+    available: behind > 0 || stale.length > 0,
+    stale,
     version,
     claudeCli: claude,
     behind,
@@ -173,4 +239,4 @@ async function checkForUpdate({ force = false }: { force?: boolean | undefined }
 // updateCommand is exported for test/update.test.js: it decides how every machine
 // applies every update, and a wrong string there is a machine that cannot update
 // itself — the one bug you cannot fix by shipping a fix.
-module.exports = { checkForUpdate, updateCommand, PROJECT_DIR };
+module.exports = { checkForUpdate, updateCommand, staleParts, paServingCommit, PROJECT_DIR };

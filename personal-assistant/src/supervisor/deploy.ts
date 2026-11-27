@@ -121,6 +121,18 @@ function verdict(probes: Probe[], { head, done = false, failsInARow = FAILS_IN_A
   return { state: 'healthy' };
 }
 
+/**
+ * The commit to measure a deploy's changes from: the one the generation that
+ * answers is serving, when it names a commit this clone has; else `from`.
+ * Only consulted when a `from` was given (no `from` already means "everything
+ * changed"). A serving commit of 'started-<ms>' (no git at start) or one
+ * missing from a shallow clone keeps `from`.
+ */
+function diffBase({ from, serving, resolves: has }: { from: string; serving: string | null | undefined; resolves: (rev: string) => boolean }) {
+  if (!serving || !/^[0-9a-f]{7,40}$/i.test(serving) || serving === from) return from;
+  return has(serving) ? serving : from;
+}
+
 // ---- effects ----
 
 const JARVISD_DIR = path.join(__dirname, '..', '..', '..', 'jarvisd');
@@ -377,6 +389,18 @@ async function deployUnlocked(argv: string[], { say }: { say?: ((line: string) =
     say(`previous commit ${from} is not in this clone (shallow?) - treating everything as changed`);
     from = null;
   }
+  // Measure from what is SERVED, not from what the caller last pulled. termhub's
+  // updater passes the HEAD it had before its pull, so a commit made in this
+  // checkout (and pushed from it) was never "pulled" and never deployed: the
+  // worker sat 53 commits behind while every update said nothing changed.
+  if (from) {
+    const serving = (await probeOnce(port)).commit;
+    const base = diffBase({ from, serving, resolves });
+    if (base !== from) {
+      say(`serving ${String(serving).slice(0, 7)}, not ${from.slice(0, 7)} - deploying from what is serving`);
+      from = base;
+    }
+  }
   if (from) {
     const repo = git(['rev-parse', '--show-toplevel']);
     changed = execFileSync('git', ['-C', repo, 'diff', '--name-only', from, head], { encoding: 'utf8', windowsHide: true }).split('\n').filter(Boolean);
@@ -553,4 +577,4 @@ function cli(argv: string[] = process.argv.slice(2)) {
 
 if (require.main === module) cli();
 
-module.exports = { cli, plan, wantRuntime, verdict, deploy, parseArgs, acquireDeployLock, bunInstallPlan, bunDir, pinnedBun };
+module.exports = { cli, plan, wantRuntime, verdict, diffBase, deploy, parseArgs, acquireDeployLock, bunInstallPlan, bunDir, pinnedBun };

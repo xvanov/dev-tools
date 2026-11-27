@@ -395,7 +395,9 @@ sessions don't (they restore via `--resume`, and their keystrokes would be noise
 
 The **⟳ Update** button in the UI is a front-end over this: the front answers
 `GET /api/update/check` (it `git fetch`es and reports how far HEAD is behind `@{u}`, plus a
-`toolChanged` flag set when a changed file lives under the `termhub/` prefix), and **Update
+`toolChanged` flag set when a changed file lives under the `termhub/` prefix, and `stale`: each
+running part - the front's start commit, the PA's `/healthz` commit - whose files changed between
+that commit and HEAD; any stale part makes `available` true), and **Update
 now** just opens a normal session whose command is `update.ps1` — so the updater runs inside a
 `sessiond`-owned PTY and survives the front swap it triggers, exactly like running it by hand.
 The button is **never gated on the check**: every `/api/update/check` answer — including the error

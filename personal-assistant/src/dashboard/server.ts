@@ -655,9 +655,15 @@ async function handle(req: Req, res: Res) {
 
 // The commit this process started from; read once, at start() (a pull without
 // a restart does not change what is served). Falls back to the start time.
+// A compiled jarvisd carries the commit it was built from (scripts/build.js
+// defines PA_BUILT_COMMIT): its code is frozen at build time, so the checkout's
+// HEAD at start says nothing about what it runs, and a deploy that trusted it
+// saw an old binary as up to date.
 let commitCache: string | undefined;
 function servedCommit() {
   if (commitCache !== undefined) return commitCache;
+  const built = process.env.PA_BUILT_COMMIT;
+  if (built) return (commitCache = built);
   try {
     commitCache = require('child_process').execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: __dirname, encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],

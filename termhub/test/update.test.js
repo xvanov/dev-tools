@@ -127,6 +127,31 @@ check('process.platform was restored', process.platform === realPlatform, proces
   check('update.ps1 stashes uncommitted work instead of refusing it', /Save-LocalChanges/.test(code));
   check('update.ps1 rolls back via Reset-TreeTo, never a bare reset --hard', !/reset --hard/.test(code));
 
+  // A running part older than HEAD is an update, even when HEAD is not behind
+  // upstream: commits made in this checkout were never offered, and the PA
+  // worker ran a 12-day-old build (staleParts).
+  {
+    const { staleParts } = require('../lib/update.ts');
+    const head = 'c'.repeat(40);
+    const fakeGit = (changed) => async (args) => {
+      if (args[0] === 'diff') return changed === null ? { ok: false, out: '' } : { ok: true, out: changed.join('\n') };
+      if (args[0] === 'rev-list') return { ok: true, out: '3' };
+      return { ok: true, out: '' };
+    };
+    const old = 'a'.repeat(40);
+    let s = await staleParts(head, { 'personal-assistant': old }, fakeGit(['personal-assistant/src/worker.ts']));
+    check('a part running an older commit with changed files is stale',
+      s.length === 1 && s[0].part === 'personal-assistant' && s[0].running === 'aaaaaaa' && s[0].commits === 3, JSON.stringify(s));
+    s = await staleParts(head, { 'personal-assistant': old }, fakeGit([]));
+    check('older commit but none of its files changed is not stale', s.length === 0);
+    s = await staleParts(head, { termhub: head, 'personal-assistant': null }, fakeGit(['x']));
+    check('running HEAD, or nothing answering, is not stale', s.length === 0);
+    s = await staleParts(head, { 'personal-assistant': 'started-1795791983072' }, fakeGit(['x']));
+    check('a non-commit serving id is not stale', s.length === 0);
+    s = await staleParts(head, { termhub: old }, fakeGit(null));
+    check('a commit git cannot diff (shallow clone) says nothing', s.length === 0);
+  }
+
   console.log(`\nupdate: ${pass} checks passed, ${failures.length} failed`);
   if (failures.length) {
     for (const f of failures) console.log('  FAIL ' + f);

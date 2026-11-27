@@ -1771,14 +1771,17 @@ async function submitDialog() {
 }
 
 // ---- update check ---------------------------------------------------------
-// Asks the front (which owns the git checkout) whether HEAD is behind upstream
-// and whether termhub itself changed. Runs once a day in the background to nudge
+// Asks the front (which owns the git checkout) whether HEAD is behind upstream,
+// whether termhub itself changed, and whether a running part is older than HEAD.
+// Runs hourly in the background to nudge
 // the user; the panel lets them check on demand and apply. Applying just opens a
 // terminal running the platform updater (windows/update.ps1) — the blue-green
 // swap survives the front being replaced under it, so the update is visible and
 // the running terminals keep their sessions.
 
-const UPDATE_POLL_MS = 24 * 60 * 60 * 1000; // once a day
+// Hourly: the check also notices a running part older than this checkout (a
+// commit made here is never "behind upstream"), and that should not wait a day.
+const UPDATE_POLL_MS = 60 * 60 * 1000;
 let lastUpdateInfo = null;
 
 async function fetchUpdate(force) {
@@ -1804,13 +1807,23 @@ function reflectUpdateButton(info) {
     btn.classList.toggle('available', avail || cliStale);
     btn.textContent = avail || cliStale ? '⟳ Update ●' : '⟳ Update';
     btn.title = avail
-      ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})`
+      ? (info.behind ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})` : staleSummary(info))
       : cliStale
         ? `Claude CLI ${info.claudeCli.installed} is older than the pinned ${info.claudeCli.minVersion}`
         : 'Check for updates';
   }
   const ver = $('#version-line');
   if (ver) ver.textContent = info && info.version ? info.version : '';
+}
+
+// Running parts older than the checkout (lib/update.ts staleParts): commits made
+// on this machine are never behind upstream, but what runs can still be old.
+function staleSummary(info) {
+  const list = (info && info.stale) || [];
+  if (!list.length) return '';
+  return 'Running code is older than this checkout: ' + list.map((p) =>
+    `${p.part} runs ${p.running}` + (p.commits ? ` (${p.commits} commit${p.commits === 1 ? '' : 's'} behind)` : '')).join(', ')
+    + '. Update deploys it.';
 }
 
 // The Claude CLI row in the panel: version, pin, and — only when it matters — a
@@ -1870,7 +1883,8 @@ function renderUpdatePanel(info, loading) {
   if (info.error) {
     status.className = 'warn';
     status.textContent = 'Update check unavailable: ' + info.error
-      + (info.command ? ' — you can still run the updater.' : '');
+      + (info.command ? ' — you can still run the updater.' : '')
+      + (info.stale && info.stale.length ? ' ' + staleSummary(info) : '');
     return;
   }
   if (!info.available) {
@@ -1880,7 +1894,9 @@ function renderUpdatePanel(info, loading) {
     return;
   }
   status.className = 'warn';
+  if (!info.behind) { status.textContent = staleSummary(info); return; }
   status.textContent =
+    (info.stale && info.stale.length ? staleSummary(info) + ' ' : '') +
     `${info.behind} commit${info.behind === 1 ? '' : 's'} behind ${info.upstream || 'upstream'} — `
     + (info.toolChanged
       ? `changes to ${(info.parts && info.parts.length ? info.parts : ['termhub']).join(', ')}.`
