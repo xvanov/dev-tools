@@ -47,6 +47,11 @@
     <aside id="sidebar" data-jside aria-label="Navigation, sessions and settings">
       <div data-jside-nav></div>
       <h2 class="jside-title run-title">Sessions</h2>
+      <!-- Run tab's two views: the terminals (default) and the Keys page (web/keys.js). -->
+      <div class="run-views" role="group" aria-label="Run tab view">
+        <button type="button" data-run-view="terminals" aria-pressed="true">Terminals</button>
+        <button type="button" data-run-view="keys" aria-pressed="false">Keys</button>
+      </div>
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>
@@ -61,6 +66,8 @@
     </aside>
 
     <main id="main">
+      <!-- The Keys view. Shown instead of the terminals while #app has view-keys (web/keys.js). -->
+      <section id="keys-view" class="keys-view" aria-label="Keys"></section>
       <!-- Shown only on desktop while the active terminal runs a full-screen
            mouse-mode app (Claude Code, vim, less), where a plain drag is sent to
            the app instead of selecting text. Explains the Shift-to-select trick. -->
@@ -249,5 +256,6 @@
   <script src="/speechErrors.js"></script>
   <script src="/voiceCapture.js"></script>
   <script src="/app.js"></script>
+  <script src="/keys.js"></script>
 </body>
 </html>

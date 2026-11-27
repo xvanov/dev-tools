@@ -1468,14 +1468,16 @@
           "POST /api/sessions/:id/input (type into a session)",
           "POST /api/exec: one argv, no shell, {code, stdout, stderr}",
           "GET /api/claude/transcripts (read-only ~/.claude/projects)",
-          "GET /api/health"
+          "GET /api/health",
+          "GET /api/secrets (names and status, never a value), POST /api/secrets/{add,set,clear,spec,spec-remove}"
         ],
         "/pa/ proxy": "the one sanctioned way to the dashboard off loopback (TERMHUB_PA_URL)",
         "Peers": "<dataDir>/peers.json lists other machines; the browser merges their agent time",
         "Idle tracking": "per-session working/waiting state and ntfy escalation; append-only <dataDir>/idle/YYYY-MM-DD.jsonl",
         "Data dir": "%LOCALAPPDATA%\\termhub on Windows, ~/.local/termhub on Linux",
         "Updates": "git pull --ff-only and restart the front only; sessions survive in sessiond",
-        "Passkey gate (plan 7.1)": "Off unless PA_PASSKEYS=on in the front's environment. On: a remote request to /api/* or /ws/* (not /api/health, /api/version or /pa/*) must carry a live passkey session; the front holds no passkeys and asks the PA dashboard's GET /api/auth/check with the browser's Cookie (answers cached 10 s), so there is one sign-in at /pa/login. A request straight from this machine (loopback peer, no X-Forwarded-For or Tailscale-* header) is never refused; a PA that does not answer refuses remote requests with 503."
+        "Passkey gate (plan 7.1)": "Off unless PA_PASSKEYS=on in the front's environment. On: a remote request to /api/* or /ws/* (not /api/health, /api/version or /pa/*) must carry a live passkey session; the front holds no passkeys and asks the PA dashboard's GET /api/auth/check with the browser's Cookie (answers cached 10 s), so there is one sign-in at /pa/login. A request straight from this machine (loopback peer, no X-Forwarded-For or Tailscale-* header) is never refused; a PA that does not answer refuses remote requests with 503.",
+        "Keys (secrets)": "Run tab > Keys (web/keys.js, lib/secretsApi.ts). Values only in `pass` (~/.password-store/termhub/<NAME>.gpg); the spec (names, descriptions, readers, allowed requesters) in ~/.config/termhub/secrets.json; changes logged by name and time to ~/.config/termhub/secrets-audit.log. A remote caller needs PA_PASSKEYS=on, a registered passkey and a signed-in session; this machine (loopback) always may. lib/secrets-cli.ts is the agents' and terminal's way in; its popup (lib/secretsPopup.ts) listens on 127.0.0.1:7040 only (TERMHUB_SECRETS_PORT)."
       },
       "code": [
         "termhub/front.ts",
@@ -1488,7 +1490,10 @@
         "termhub/test/passkeyGate.test.js",
         "termhub/lib/launch.ts",
         "termhub/windows/common.ps1",
-        "termhub/test/launch.test.js"
+        "termhub/test/launch.test.js",
+        "termhub/lib/secrets.ts",
+        "termhub/lib/secretsApi.ts",
+        "termhub/web/keys.js"
       ]
     },
     {

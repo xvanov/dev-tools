@@ -63,3 +63,6 @@ termhub/test/mobile/out/
 
 # scripts/build.js output (plan T7)
 /dist/
+
+# npm download caches (termhub/.cache/npm from an install run with npm_config_cache)
+.cache/

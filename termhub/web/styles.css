@@ -573,3 +573,34 @@ body.focus .term-pane { padding: 4px 6px; }
 @media (min-width: 761px) {
   body.focus #keybar { display: none; }
 }
+
+/* ---- Run tab > Keys view (web/keys.js) ---------------------------------- */
+.run-views { display: flex; gap: 6px; margin: 0 0 10px; }
+.run-views button { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid currentColor; background: transparent; color: inherit; opacity: .7; cursor: pointer; font: inherit; }
+.run-views button[aria-pressed="true"] { opacity: 1; font-weight: 600; }
+.keys-view { display: none; overflow-y: auto; padding: 16px; max-width: 760px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+#app.view-keys .keys-view { display: block; }
+#app.view-keys #main > :not(#keys-view) { display: none !important; }
+.keys-title { font-size: 20px; margin: 4px 0 8px; }
+.keys-intro, .keys-foot { font-size: 13px; opacity: .75; margin: 6px 0 12px; }
+.keys-list { display: grid; gap: 12px; }
+.key-card, .key-add { border: 1px solid rgba(127,127,127,.35); border-radius: 10px; padding: 12px; }
+.key-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.key-name { font-weight: 600; word-break: break-all; }
+.key-desc, .key-dest { font-size: 13px; opacity: .8; margin-top: 4px; }
+.key-badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.key-present { color: #1a7f37; }
+.key-missing { color: #9a6700; }
+.key-row { display: flex; gap: 8px; margin-top: 10px; }
+.key-row input, .key-add input { flex: 1; min-width: 0; padding: 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.5); background: transparent; color: inherit; font: inherit; }
+.key-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.key-card button, .key-add button { padding: 8px 14px; border-radius: 8px; border: 0; background: #0a66c2; color: #fff; font: inherit; cursor: pointer; }
+.key-card button.secondary, .key-add button.secondary { background: transparent; color: inherit; border: 1px solid rgba(127,127,127,.5); }
+.key-card button.danger { color: #b42318; }
+.key-card button:disabled { opacity: .5; }
+.key-msg { font-size: 13px; margin-top: 6px; min-height: 1em; }
+.key-add summary { cursor: pointer; font-weight: 600; }
+.key-field { display: grid; gap: 4px; margin-top: 8px; font-size: 13px; }
+.key-add button { margin-top: 10px; }
+
+.key-signin { display: inline-block; margin-top: 8px; padding: 8px 14px; border-radius: 8px; background: #0a66c2; color: #fff; text-decoration: none; }

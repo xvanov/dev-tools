@@ -45,6 +45,7 @@ const cursorTranscripts = require('./lib/cursorTranscripts.ts');
 const { createClientLog } = require('./lib/clientLog.ts');
 const { createPasskeyGate } = require('./lib/passkeyGate.ts');
 const { createTranscriber } = require('./lib/transcribe.ts');
+const secretsApi = require('./lib/secretsApi.ts');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -204,6 +205,10 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     // (lib/exec.js). Here, not in sessiond, for the same reason as transcripts;
     // guarded against cross-origin and rebound-DNS browsers (lib/requestGuard.js).
     if (execRoute.handle(req, res, url, { sendJson })) return undefined;
+
+    // The Keys view (Run tab > Keys): names and status only, never values. Remote
+    // callers need passkey sign-in on (lib/secretsApi.ts).
+    if (secretsApi.handle(req, res, url, { sendJson, gate })) return undefined;
 
     // Browser-side failures (the phone's mic errors, mostly), one JSON line
     // each, so they can be read off the machine — lib/clientLog.js.

@@ -34,6 +34,13 @@ other machines to maintain.
   supervisor (`sessiond`), separate from the swappable web/proxy tier (`front`). Close your
   phone and reopen later, *or* deploy a new version with `update.ps1`, and your sessions keep
   running; the browser auto-reconnects and replays scrollback either way.
+- **Keys** — Run tab > **Keys**: API keys and account passwords for the stack, saved into `pass`
+  (the Linux password store, one GPG-encrypted file each under `~/.password-store/termhub/`).
+  The page shows names and whether each is saved, never a value. From another device it needs
+  passkey sign-in (`PA_PASSKEYS=on` and a registered passkey); every change is logged by name and
+  time to `~/.config/termhub/secrets-audit.log`. Agents ask through
+  `node lib/secrets-cli.ts request NAME --requester <who>` (exit 0 present, 2 missing, 3 denied);
+  `set-missing` fills every empty key from a terminal with hidden typing.
 - **Claude Code launcher** — a directory field that autocompletes against the filesystem
   as you type (recents when blank), and a single editable command box (default
   `claude --dangerously-skip-permissions`, with presets you can pick or type over, or clear
@@ -576,6 +583,9 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 |---|---|
 | `sessiond.js` | **Persistent supervisor**: HTTP API + terminal WebSocket; owns the PTYs (loopback) |
 | `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond`, and `/pa/*` to the personal assistant |
+| `lib/secrets.ts` | The secrets store: names, descriptions, readers and allowed requesters in `~/.config/termhub/secrets.json` (never a value); values in `pass` under `termhub/`, written on stdin |
+| `lib/secretsApi.ts`, `web/keys.js` | Run tab > Keys: `GET /api/secrets` (status only) and `POST /api/secrets/{add,set,clear,spec,spec-remove}`; remote callers need a passkey session |
+| `lib/secrets-cli.ts`, `lib/secretsPopup.ts` | The command line (`list`, `status`, `request`, `set`, `clear`, `spec-add`, `spec-remove`, `set-missing`, `serve`) and the loopback-only popup page on `127.0.0.1:7040` (`TERMHUB_SECRETS_PORT`) it opens on a desktop |
 | `lib/paProxy.js` | The `/pa/*` proxy to the personal assistant's loopback dashboard (`TERMHUB_PA_URL`) |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
 | `lib/session.js` | PTY lifecycle (a client of ptyd), attach/snapshot, size ownership across browsers |
