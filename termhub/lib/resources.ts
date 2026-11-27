@@ -35,7 +35,7 @@ function parseMeminfo(text: string): { mem: Pair; swap: Pair } {
   const kb: Record<string, number> = {};
   for (const line of text.split('\n')) {
     const m = /^(\w+):\s+(\d+)\s*kB/.exec(line);
-    if (m) kb[m[1]] = Number(m[2]) * 1024;
+    if (m && m[1] && m[2]) kb[m[1]] = Number(m[2]) * 1024;
   }
   const mem = kb.MemTotal && kb.MemAvailable != null ? { used: kb.MemTotal - kb.MemAvailable, total: kb.MemTotal } : null;
   const swap = kb.SwapTotal ? { used: kb.SwapTotal - (kb.SwapFree || 0), total: kb.SwapTotal } : null;
